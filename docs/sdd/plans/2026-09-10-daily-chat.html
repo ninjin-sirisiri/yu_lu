@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none';">
+  <meta name="sdd-source-digest" content="sha256:87f8f75a6a16ad4ff881074693f51bd008498db1e92edf62513606c706c8f8b2">
+  <title>Daily Chat Implementation Plan</title>
+  <link rel="stylesheet" href="../assets/sdd.css">
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <header class="document-header">
+    <p class="document-kind">Plan</p>
+  </header>
+  <div class="document-layout">
+    <aside class="document-outline" aria-label="Document outline">
+      <details open>
+        <summary>On this page</summary>
+        <nav aria-label="On this page">
+          <ol>
+            <li><a href="#global-constraints">Global Constraints</a></li>
+            <li><a href="#file-structure">File structure</a></li>
+            <li><a href="#task-1-scaffold-app-and-backend">Task 1: Scaffold app and backend</a></li>
+            <li><a href="#task-2-database-schema-and-storage">Task 2: Database schema and storage</a></li>
+            <li><a href="#task-3-daily-settlement-and-draw-job">Task 3: Daily settlement and draw job</a></li>
+            <li><a href="#task-4-messaging-with-images-edit-withdrawal">Task 4: Messaging with images edit withdrawal</a></li>
+            <li><a href="#task-5-completion-and-streak-engine">Task 5: Completion and streak engine</a></li>
+            <li><a href="#task-6-relationship-guard-and-visibility">Task 6: Relationship guard and visibility</a></li>
+            <li><a href="#task-7-notifications-and-offline-resend">Task 7: Notifications and offline resend</a></li>
+            <li><a href="#task-8-verification-and-regression-coverage">Task 8: Verification and regression coverage</a></li>
+          </ol>
+        </nav>
+      </details>
+    </aside>
+    <main id="content" tabindex="-1">
+      <h1 id="daily-chat-implementation-plan">Daily Chat Implementation Plan</h1>
+      <div class="metadata">
+        <p><strong>Goal:</strong> Build the Daily Chat daily assignment, chat, and streak experience for iOS and Android.</p>
+        <p><strong>Architecture:</strong> The Expo client talks to Supabase for data, auth, storage, and realtime delivery. One scheduled server job owns daily settlement, reservation application, and the next draw in a single ordered transaction. Push and background resend keep strict server-accepted-time judgments visible on the client.</p>
+        <p><strong>Tech Stack:</strong> Expo React Native TypeScript, Supabase Postgres Auth Storage Realtime Edge Functions pg_cron, EAS Build, Expo Notifications with FCM and APNs, Jest</p>
+        <p><strong>Spec:</strong> docs/sdd/specs/2026-09-10-daily-chat-design.md</p>
+      </div>
+      <section>
+        <h2 id="global-constraints">Global Constraints</h2>
+        <ul>
+          <li>Day boundary: 04:00 Japan time</li>
+          <li>Assignment notification: 07:00 Japan time</li>
+          <li>Pre-deadline warnings: 22:00 and 02:30 Japan time</li>
+          <li>Images per message: Up to 4 images</li>
+          <li>Image size: Up to 10 MB per image</li>
+          <li>Supported image formats: JPEG, PNG, and HEIC</li>
+          <li>Body limit: 10000 characters</li>
+          <li>Notification body preview: Up to 100 characters</li>
+          <li>Notification image thumbnail: One image at 512 px long edge</li>
+          <li>Automatic resend: Exponential backoff for up to 24 hours</li>
+          <li>Edit history: Latest 20 generations</li>
+          <li>Image retention: Indefinite in the first version</li>
+          <li>Daily processing at 04:00 follows settlement, then reservation and relationship reflection, then draw.</li>
+          <li>A reply requires Reply Target receipt time strictly before own send time. Equal timestamps do not count as a reply.</li>
+          <li>Once a Reply Target is achieved for the day, later incoming messages do not revert it.</li>
+          <li>Editing does not change send time or order.</li>
+          <li>Withdrawal does not change achievement or receipt facts.</li>
+          <li>Reply duty remains even when the original message was withdrawn before replying.</li>
+          <li>Automatic resend after the deadline does not count for the previous day.</li>
+          <li>The truth for send and receive time is server acceptance time.</li>
+          <li>Server is the only place that decides completion, Streak increment, and Streak reset.</li>
+          <li>Blank-only body with no image cannot be sent.</li>
+          <li>Friends see only the count with no breakdown.</li>
+          <li>Do not allow blocking or unfriending daily targets during the day except by reservation.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="file-structure">File structure</h2>
+        <ul>
+          <li><code>app/app.json</code></li>
+          <li><code>app/package.json</code></li>
+          <li><code>app/tsconfig.json</code></li>
+          <li><code>app/.env.example</code></li>
+          <li><code>app/src/chat/ChatScreen.tsx</code></li>
+          <li><code>app/src/daily/progress.ts</code></li>
+          <li><code>app/src/streak/StreakScreen.tsx</code></li>
+          <li><code>app/src/messages/send.ts</code></li>
+          <li><code>app/src/messages/states.ts</code></li>
+          <li><code>app/src/media/images.ts</code></li>
+          <li><code>app/src/notify/push.ts</code></li>
+          <li><code>app/src/relations/blocks.ts</code></li>
+          <li><code>supabase/migrations/0001_daily_chat_core.sql</code></li>
+          <li><code>supabase/migrations/0002_daily_cycle.sql</code></li>
+          <li><code>supabase/functions/daily-settlement/index.ts</code></li>
+          <li><code>supabase/functions/notify-scheduler/index.ts</code></li>
+          <li><code>supabase/seed.test.sql</code></li>
+          <li><code>docs/sdd/specs/2026-09-10-daily-chat-design.md</code></li>
+        </ul>
+      </section>
+      <article class="plan-task" data-task-number="1">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">01</span></div>
+        <h2 id="task-1-scaffold-app-and-backend">Task 1: Scaffold app and backend</h2>
+        <p>Create the Expo client in <code>app</code> and the Supabase working directory at the repo root. Wire environment variables, typecheck, and a first passing test.</p>
+        <ol>
+          <li>Scaffold the Expo app into <code>app</code> with a blank TypeScript template.
+            <pre tabindex="0"><code>npx create-expo-app@latest app --template blank-typescript</code></pre>
+          </li>
+          <li>Install client libraries inside <code>app</code>.
+            <pre tabindex="0"><code>cd app
+npx expo install @supabase/supabase-js expo-notifications expo-image-picker expo-file-system
+npm install --save-dev jest @types/jest typescript</code></pre>
+          </li>
+          <li>Initialize Supabase at the repo root.
+            <pre tabindex="0"><code>npx supabase@latest init</code></pre>
+          </li>
+          <li>Create <code>app/.env.example</code> with public connection placeholders.
+            <pre tabindex="0"><code>cat app/.env.example</code></pre>
+            <pre tabindex="0"><code>EXPO_PUBLIC_SUPABASE_URL=https://xyzcompany.supabase.co
+EXPO_PUBLIC_SUPABASE_ANON_KEY=put-anon-key-here</code></pre>
+          </li>
+          <li>Add <code>app/package.json</code> scripts for typecheck and tests.
+            <pre tabindex="0"><code>{
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "jest"
+  }
+}</code></pre>
+          </li>
+          <li>Verify the scaffold with typecheck and the test runner.
+            <pre tabindex="0"><code>cd app
+npm run typecheck
+npm test -- --passWithNoTests</code></pre>
+          </li>
+        </ol>
+        <p>Acceptance: <code>npm run typecheck</code> passes and <code>npm test -- --passWithNoTests</code> passes from <code>app</code>.</p>
+      </article>
+      <article class="plan-task" data-task-number="2">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">02</span></div>
+        <h2 id="task-2-database-schema-and-storage">Task 2: Database schema and storage</h2>
+        <p>Create all core tables, constraints, indexes, row level security, and image storage in <code>supabase/migrations/0001_daily_chat_core.sql</code>. This task owns the data model. Later tasks only add the cycle job and functions.</p>
+        <ol>
+          <li>Create the migration file.
+            <pre tabindex="0"><code>npx supabase@latest migration new daily_chat_core</code></pre>
+          </li>
+          <li>Write the full core schema into <code>supabase/migrations/0001_daily_chat_core.sql</code>.
+            <pre tabindex="0"><code>create extension if not exists pgcrypto;
+
+create table profiles (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  display_name text not null,
+  created_at timestamptz not null default now()
+);
+
+create table friendships (
+  user_a uuid not null references profiles(user_id) on delete cascade,
+  user_b uuid not null references profiles(user_id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (user_a, user_b),
+  check (user_a &lt; user_b)
+);
+
+create table daily_cycles (
+  daily_key date primary key,
+  draw_failed boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create table assignments (
+  daily_key date not null references daily_cycles(daily_key) on delete cascade,
+  user_id uuid not null references profiles(user_id) on delete cascade,
+  partner_id uuid not null references profiles(user_id) on delete cascade,
+  direction text not null check (direction in ('send', 'reply')),
+  primary key (daily_key, user_id, partner_id, direction)
+);
+
+create table messages (
+  message_id uuid primary key default gen_random_uuid(),
+  sender_id uuid not null references profiles(user_id) on delete cascade,
+  recipient_id uuid not null references profiles(user_id) on delete cascade,
+  body text not null default '',
+  image_paths text[] not null default '{}',
+  accepted_at timestamptz not null default now(),
+  edited_count int not null default 0,
+  withdrawn boolean not null default false,
+  client_key uuid not null,
+  check (body &lt;&gt; '' or cardinality(image_paths) &gt; 0),
+  check (char_length(body) &lt;= 10000),
+  check (cardinality(image_paths) &lt;= 4),
+  unique (sender_id, client_key)
+);
+
+create table message_edits (
+  message_id uuid not null references messages(message_id) on delete cascade,
+  version int not null,
+  body text not null,
+  image_paths text[] not null,
+  edited_at timestamptz not null default now(),
+  primary key (message_id, version)
+);
+
+create table streaks (
+  user_id uuid primary key references profiles(user_id) on delete cascade,
+  current_count int not null default 0,
+  last_achieved_key date null,
+  updated_at timestamptz not null default now()
+);
+
+create table block_reservations (
+  user_id uuid not null references profiles(user_id) on delete cascade,
+  blocked_user_id uuid not null references profiles(user_id) on delete cascade,
+  reserved_at timestamptz not null default now(),
+  applied_at timestamptz null,
+  primary key (user_id, blocked_user_id)
+);
+
+create table blocks (
+  user_id uuid not null references profiles(user_id) on delete cascade,
+  blocked_user_id uuid not null references profiles(user_id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (user_id, blocked_user_id)
+);
+
+create table mutes (
+  user_id uuid not null references profiles(user_id) on delete cascade,
+  muted_user_id uuid not null references profiles(user_id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (user_id, muted_user_id)
+);
+
+create table reports (
+  report_id uuid primary key default gen_random_uuid(),
+  reporter_id uuid not null references profiles(user_id) on delete cascade,
+  message_id uuid not null references messages(message_id) on delete cascade,
+  reason text not null,
+  created_at timestamptz not null default now()
+);
+
+alter table profiles enable row level security;
+alter table friendships enable row level security;
+alter table assignments enable row level security;
+alter table messages enable row level security;
+alter table message_edits enable row level security;
+alter table streaks enable row level security;
+alter table block_reservations enable row level security;
+alter table blocks enable row level security;
+alter table mutes enable row level security;
+alter table reports enable row level security;
+
+insert into storage.buckets (id, name, public)
+values ('chat-images', 'chat-images', false)
+on conflict (id) do nothing;</code></pre>
+          </li>
+          <li>Apply the migration to the local database.
+            <pre tabindex="0"><code>npx supabase@latest db push</code></pre>
+          </li>
+          <li>Verify tables and the storage bucket exist.
+            <pre tabindex="0"><code>npx supabase@latest db lint --level warning</code></pre>
+          </li>
+        </ol>
+        <p>Acceptance: local database accepts the migration and <code>chat-images</code> exists with a 10 MB per object policy to be tightened in Task 4.</p>
+      </article>
+      <article class="plan-task" data-task-number="3">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">03</span></div>
+        <h2 id="task-3-daily-settlement-and-draw-job">Task 3: Daily settlement and draw job</h2>
+        <p>Implement the ordered 04:00 Japan time cycle as one server transaction plus a scheduled Edge Function. This task owns <code>supabase/migrations/0002_daily_cycle.sql</code> and <code>supabase/functions/daily-settlement/index.ts</code>.</p>
+        <ol>
+          <li>Create the cycle migration and the function scaffold.
+            <pre tabindex="0"><code>npx supabase@latest migration new daily_cycle
+npx supabase@latest functions new daily-settlement</code></pre>
+          </li>
+          <li>Write JST day helpers and the ordered cycle into <code>supabase/migrations/0002_daily_cycle.sql</code>.
+            <pre tabindex="0"><code>create or replace function jst_daily_key(ts timestamptz)
+returns date language sql immutable as
+$$ select ((ts at time zone 'Asia/Tokyo') - interval '4 hours')::date $$;
+
+create or replace function day_window_start(daily_key date)
+returns timestamptz language sql immutable as
+$$ select ((daily_key::timestamp + interval '4 hours') at time zone 'Asia/Tokyo') $$;
+
+create or replace function run_daily_cycle(target_key date)
+returns void language plpgsql as
+$$
+begin
+  insert into daily_cycles (daily_key) values (target_key)
+  on conflict (daily_key) do nothing;
+
+  update streaks s
+  set current_count = 0, updated_at = now()
+  where not exists (
+    select 1 from daily_completion c
+    where c.daily_key = target_key - 1
+    and c.user_id = s.user_id
+    and c.completed
+  )
+  and s.last_achieved_key = target_key - 1;
+
+  insert into blocks (user_id, blocked_user_id)
+  select user_id, blocked_user_id from block_reservations
+  where applied_at is null;
+
+  update block_reservations
+  set applied_at = now()
+  where applied_at is null;
+
+  delete from friendships f
+  using blocks b
+  where (b.user_id = f.user_a and b.blocked_user_id = f.user_b)
+  or (b.user_id = f.user_b and b.blocked_user_id = f.user_a);
+
+  insert into assignments (daily_key, user_id, partner_id, direction)
+  select target_key, u.user_id, p.friend_id, 'send'
+  from (select distinct user_id from v_user_friends) u
+  cross join lateral (
+    select friend_id from v_user_friends v
+    where v.user_id = u.user_id
+    order by random()
+    limit 1
+  ) p;
+
+  insert into assignments (daily_key, user_id, partner_id, direction)
+  select daily_key, partner_id, user_id, 'reply'
+  from assignments
+  where daily_key = target_key and direction = 'send';
+end;
+$$;</code></pre>
+          </li>
+          <li>Write the scheduler Edge Function in <code>supabase/functions/daily-settlement/index.ts</code>.
+            <pre tabindex="0"><code>import { createClient } from '@supabase/supabase-js';
+
+const url = Deno.env.get('SUPABASE_URL') as string;
+const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') as string;
+const client = createClient(url, key);
+
+Deno.serve(async (req: Request): Promise&lt;Response&gt; =&gt; {
+  const body = await req.json();
+  const targetKey = body.target_key as string;
+  const result = await client.rpc('run_daily_cycle', { target_key: targetKey });
+  if (result.error) {
+    await client.from('daily_cycles').upsert({ daily_key: targetKey, draw_failed: true });
+    return new Response('cycle failed', { status: 500 });
+  }
+  return new Response('cycle ok', { status: 200 });
+});</code></pre>
+          </li>
+          <li>Deploy the function and schedule it for 04:00 Japan time.
+            <pre tabindex="0"><code>npx supabase@latest functions deploy daily-settlement
+npx supabase@latest db push</code></pre>
+          </li>
+          <li>Exercise the cycle on a test key and inspect assignments.
+            <pre tabindex="0"><code>npx supabase@latest functions invoke daily-settlement --body '{"target_key":"2026-09-11"}'</code></pre>
+          </li>
+        </ol>
+        <p>Acceptance: invoking with a test key creates one send row per eligible user plus mirrored reply rows, or marks <code>draw_failed</code> with no assignments on failure.</p>
+      </article>
+      <article class="plan-task" data-task-number="4">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">04</span></div>
+        <h2 id="task-4-messaging-with-images-edit-withdrawal">Task 4: Messaging with images edit withdrawal</h2>
+        <p>Implement send, image upload, edit history, and withdrawal in the client plus database guards. This task owns <code>app/src/messages/send.ts</code>, <code>app/src/messages/states.ts</code>, and <code>app/src/media/images.ts</code>.</p>
+        <ol>
+          <li>Create <code>app/src/messages/states.ts</code> with send states.
+            <pre tabindex="0"><code>export type SendState = 'draft' | 'sending' | 'sent' | 'failed';
+
+export function labelForState(state: SendState): string {
+  if (state === 'draft') return 'Draft';
+  if (state === 'sending') return 'Sending';
+  if (state === 'sent') return 'Sent';
+  return 'Failed';
+}</code></pre>
+          </li>
+          <li>Create <code>app/src/media/images.ts</code> with picker and limit checks.
+            <pre tabindex="0"><code>export const MAX_IMAGES = 4;
+export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+export function validImageCount(count: number): boolean {
+  return count &gt;= 0 &amp;&amp; count &lt;= MAX_IMAGES;
+}
+
+export function validImageSize(bytes: number): boolean {
+  return bytes &gt; 0 &amp;&amp; bytes &lt;= MAX_IMAGE_BYTES;
+}</code></pre>
+          </li>
+          <li>Create <code>app/src/messages/send.ts</code> with upload then insert flow.
+            <pre tabindex="0"><code>import { createClient } from '@supabase/supabase-js';
+
+const url = process.env.EXPO_PUBLIC_SUPABASE_URL as string;
+const anon = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY as string;
+const client = createClient(url, anon);
+
+export async function sendMessage(input: {
+  recipientId: string;
+  body: string;
+  localImageUris: string[];
+  clientKey: string;
+}): Promise&lt;string&gt; {
+  if (input.body.trim() === '' &amp;&amp; input.localImageUris.length === 0) {
+    throw new Error('Blank-only body with no image cannot be sent');
+  }
+  const paths: string[] = [];
+  for (const uri of input.localImageUris.slice(0, 4)) {
+    paths.push(uri);
+  }
+  const row = {
+    recipient_id: input.recipientId,
+    body: input.body,
+    image_paths: paths,
+    client_key: input.clientKey,
+  };
+  const result = await client.from('messages').insert(row).select('message_id').single();
+  if (result.error) throw new Error(result.error.message);
+  return result.data.message_id as string;
+}</code></pre>
+          </li>
+          <li>Add a unit test run for message guards.
+            <pre tabindex="0"><code>cd app
+npm test -- src/messages src/media</code></pre>
+          </li>
+        </ol>
+        <p>Acceptance: blank-only with no image is rejected, up to 4 images pass, server <code>accepted_at</code> is the recorded truth, edits keep history, withdrawal hides content without deleting the row.</p>
+      </article>
+      <article class="plan-task" data-task-number="5">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">05</span></div>
+        <h2 id="task-5-completion-and-streak-engine">Task 5: Completion and streak engine</h2>
+        <p>Implement server-side completion checks and Streak increments plus the client progress reader. This task owns the <code>daily_completion</code> view, the evaluator function, and <code>app/src/daily/progress.ts</code>.</p>
+        <ol>
+          <li>Add the completion view and evaluator with a new migration.
+            <pre tabindex="0"><code>npx supabase@latest migration new completion_engine</code></pre>
+          </li>
+          <li>Write the evaluator so equal timestamps do not count and achieved rows stay achieved.
+            <pre tabindex="0"><code>create or replace function is_reply_valid(peer_at timestamptz, own_at timestamptz)
+returns boolean language sql immutable as
+$$ select peer_at &lt; own_at $$;</code></pre>
+          </li>
+          <li>Create <code>app/src/daily/progress.ts</code> for per-person progress.
+            <pre tabindex="0"><code>export type PersonProgress = {
+  partnerId: string;
+  sent: boolean;
+  received: boolean;
+  replied: boolean;
+};
+
+export function pendingPartners(rows: PersonProgress[]): string[] {
+  return rows.filter((r) =&gt; r.received &amp;&amp; !r.replied).map((r) =&gt; r.partnerId);
+}</code></pre>
+          </li>
+          <li>Run completion scenarios from <code>supabase/seed.test.sql</code>.
+            <pre tabindex="0"><code>npx supabase@latest db push
+cd app
+npm test -- src/daily</code></pre>
+          </li>
+        </ol>
+        <p>Acceptance: mutual assignment needs one more message for the second achievement, silent Reply Targets fail the day, last-minute reception has no grace, pre-reply withdrawal still requires a reply.</p>
+      </article>
+      <article class="plan-task" data-task-number="6">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">06</span></div>
+        <h2 id="task-6-relationship-guard-and-visibility">Task 6: Relationship guard and visibility</h2>
+        <p>Enforce day-long protection for daily targets, block reservations, mute and hide and report, and the two visibility levels. This task owns <code>app/src/relations/blocks.ts</code>, the friendship guard trigger, and the visibility views.</p>
+        <ol>
+          <li>Create <code>app/src/relations/blocks.ts</code> for reservations.
+            <pre tabindex="0"><code>import { createClient } from '@supabase/supabase-js';
+
+const url = process.env.EXPO_PUBLIC_SUPABASE_URL as string;
+const anon = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY as string;
+const client = createClient(url, anon);
+
+export async function reserveBlock(blockedUserId: string): Promise&lt;void&gt; {
+  const result = await client.from('block_reservations').insert({
+    blocked_user_id: blockedUserId,
+  });
+  if (result.error) throw new Error(result.error.message);
+}
+
+export async function cancelReservation(blockedUserId: string): Promise&lt;void&gt; {
+  const result = await client.from('block_reservations')
+    .delete()
+    .is('applied_at', null)
+    .eq('blocked_user_id', blockedUserId);
+  if (result.error) throw new Error(result.error.message);
+}</code></pre>
+          </li>
+          <li>Add a guard migration that rejects same-day unfriend and block of daily targets.
+            <pre tabindex="0"><code>npx supabase@latest migration new relationship_guard</code></pre>
+          </li>
+          <li>Add visibility views so friends see only the count.
+            <pre tabindex="0"><code>create or replace view friend_streaks as
+select user_id, current_count from streaks;</code></pre>
+          </li>
+          <li>Verify guard behavior and visibility queries.
+            <pre tabindex="0"><code>npx supabase@latest db push
+cd app
+npm test -- src/relations</code></pre>
+          </li>
+        </ol>
+        <p>Acceptance: daily targets cannot be blocked or unfriended during the day, reservations cancel before apply and exclude from the next draw, friends see only the count.</p>
+      </article>
+      <article class="plan-task" data-task-number="7">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">07</span></div>
+        <h2 id="task-7-notifications-and-offline-resend">Task 7: Notifications and offline resend</h2>
+        <p>Implement fixed-time pushes, per-message pushes with preview and thumbnail, and client resend with visible states. This task owns <code>supabase/functions/notify-scheduler/index.ts</code> and <code>app/src/notify/push.ts</code>.</p>
+        <ol>
+          <li>Scaffold the notify function.
+            <pre tabindex="0"><code>npx supabase@latest functions new notify-scheduler</code></pre>
+          </li>
+          <li>Write the scheduler skeleton with Japan time slots.
+            <pre tabindex="0"><code>const slots = ['07:00', '22:00', '02:30'];
+
+Deno.serve(async (_req: Request): Promise&lt;Response&gt; =&gt; {
+  return new Response(JSON.stringify({ slots }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+});</code></pre>
+          </li>
+          <li>Create <code>app/src/notify/push.ts</code> with resend backoff constants.
+            <pre tabindex="0"><code>export const RESEND_LIMIT_HOURS = 24;
+export const PREVIEW_CHARS = 100;
+
+export function previewBody(body: string): string {
+  return body.slice(0, PREVIEW_CHARS);
+}
+
+export function backoffMs(attempt: number): number {
+  return Math.min(60000 * 2 ** attempt, 3600000);
+}</code></pre>
+          </li>
+          <li>Deploy and smoke test notifications.
+            <pre tabindex="0"><code>npx supabase@latest functions deploy notify-scheduler
+cd app
+npm test -- src/notify</code></pre>
+          </li>
+        </ol>
+        <p>Acceptance: assignment push at 07:00, warnings at 22:00 and 02:30 Japan time, per-message push carries up to 100 chars plus one 512 px thumbnail, failed sends show failed state and resend up to 24 hours.</p>
+      </article>
+      <article class="plan-task" data-task-number="8">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">08</span></div>
+        <h2 id="task-8-verification-and-regression-coverage">Task 8: Verification and regression coverage</h2>
+        <p>Seed representative friendships and assignments, then run the full regression mapped to the spec Testing section. This task owns <code>supabase/seed.test.sql</code> and the final checklist.</p>
+        <ol>
+          <li>Write <code>supabase/seed.test.sql</code> with two mutual friends plus one extra friend.
+            <pre tabindex="0"><code>insert into profiles (user_id, display_name) values
+  ('11111111-1111-1111-1111-111111111111', 'Aoi'),
+  ('22222222-2222-2222-2222-222222222222', 'Ren'),
+  ('33333333-3333-3333-3333-333333333333', 'Mio')
+on conflict (user_id) do nothing;</code></pre>
+          </li>
+          <li>Run typecheck, unit tests, and migration lint together.
+            <pre tabindex="0"><code>cd app
+npm run typecheck
+npm test -- --coverage</code></pre>
+          </li>
+          <li>Verify lint and local function invocation once more.
+            <pre tabindex="0"><code>npx supabase@latest db lint --level warning
+npx supabase@latest functions invoke daily-settlement --body '{"target_key":"2026-09-12"}'</code></pre>
+          </li>
+          <li>Walk the regression list: new friendships apply next day, failed day preserves counts, equal timestamps fail, mutual needs one more message, silent target fails, no grace, withdrawal keeps duty, edits keep order, Streak resets at 04:00, reservations apply before draw, blank-only rejected, image failure resends, history display correct, Japan time notifications, friend count only, user progress visible.</li>
+        </ol>
+        <p>Acceptance: <code>npm run typecheck</code> passes, <code>npm test -- --coverage</code> passes, lint passes, and every spec Testing bullet is checked off.</p>
+      </article>
+    </main>
+  </div>
+</body>
+</html>
