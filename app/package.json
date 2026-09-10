@@ -26,5 +26,26 @@
     "typecheck": "tsc --noEmit",
     "test": "jest"
   },
-  "private": true
+  "private": true,
+  "jest": {
+    "transform": {
+      "^.+\\.[jt]sx?$": [
+        "babel-jest",
+        {
+          "configFile": false,
+          "babelrc": false,
+          "presets": [
+            [
+              "@babel/preset-typescript",
+              {
+                "isTSX": false,
+                "allExtensions": false
+              }
+            ]
+          ],
+          "plugins": ["@babel/plugin-transform-modules-commonjs"]
+        }
+      ]
+    }
+  }
 }
