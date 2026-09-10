@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none';">
+  <meta name="sdd-source-digest" content="sha256:cabd8abf63c6b731dad14cef405fd241cc7ce61409070faf093a9e2607bfe676">
+  <title>Daily Chat design</title>
+  <link rel="stylesheet" href="../assets/sdd.css">
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <header class="document-header">
+    <p class="document-kind">Spec</p>
+  </header>
+  <div class="document-layout">
+    <aside class="document-outline" aria-label="Document outline">
+      <details open>
+        <summary>On this page</summary>
+        <nav aria-label="On this page">
+          <ol>
+            <li><a href="#goals">Goals</a></li>
+            <li><a href="#non-goals">Non-goals</a></li>
+            <li><a href="#architecture">Architecture</a></li>
+            <li><a href="#components">Components</a></li>
+            <li><a href="#data-flow">Data flow</a></li>
+            <li><a href="#ordering-guarantees">Ordering guarantees</a></li>
+            <li><a href="#numeric-defaults">Numeric defaults</a></li>
+            <li><a href="#error-handling">Error handling</a></li>
+            <li><a href="#negative-requirements">Negative requirements</a></li>
+            <li><a href="#testing">Testing</a></li>
+            <li><a href="#consuming-paths">Consuming paths</a></li>
+          </ol>
+        </nav>
+      </details>
+    </aside>
+    <main id="content" tabindex="-1">
+      <h1 id="daily-chat-design">Daily Chat design</h1>
+      <p class="metadata"><strong>Classification:</strong> architectural</p>
+      <p class="metadata"><strong>Chosen approach:</strong> Cross-platform single codebase plus managed backend. The client uses one codebase for iOS and Android. The backend uses a managed platform with database, auth, storage, realtime delivery, scheduled jobs, and push integration. Strict daily ordering lives in one server-side job. If stricter control becomes necessary, extract only that part to a custom API.</p>
+      <section>
+        <h2 id="goals">Goals</h2>
+        <ul>
+          <li>Assign a random daily chat partner from existing friends every day.</li>
+          <li>Continue the Streak by sending to the Send Target and replying to all Reply Targets.</li>
+          <li>Show the current Streak count to all friends to acknowledge continuation.</li>
+          <li>Support iOS and Android with a small team.</li>
+          <li>Keep receiving, sending, images, editing, withdrawal, blocking reservation, notifications, and visibility in one coherent daily-chat scope.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="non-goals">Non-goals</h2>
+        <ul>
+          <li>Registration and friend request and approval flow design.</li>
+          <li>Automatic image moderation.</li>
+          <li>Ranking display.</li>
+          <li>Support for languages other than Japanese.</li>
+          <li>Support for time zones other than Japan time.</li>
+          <li>Scoring the value of chat content.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="architecture">Architecture</h2>
+        <ul>
+          <li>Client with one codebase for iOS and Android.</li>
+          <li>Client holds the authenticated session, conversation screen, send states, daily progress for the user, Streak count, image selection and upload and display, edit and withdrawal and history, block reservation and mute and hide and report, and push reception.</li>
+          <li>Server side provides auth, database, image storage, realtime delivery, scheduled jobs, and push integration.</li>
+          <li>Server is the only place that decides completion, Streak increment, and Streak reset.</li>
+          <li>The truth for send and receive time is server acceptance time.</li>
+          <li>External push delivery uses platform push services.</li>
+          <li>Device background execution is used only within OS limits for automatic resend.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="components">Components</h2>
+        <ul>
+          <li><strong>Assignment:</strong> Creates and stores the daily Send Target and Reply Targets. New friendships apply from the next day. A failed day creates no assignment and is out of scope.</li>
+          <li><strong>Message:</strong> Handles one message as optional body plus zero or more images. Blank-only body with no image cannot be sent. Edit history is kept. Withdrawn content is not shown.</li>
+          <li><strong>Completion:</strong> Checks Send Target transmission and per Reply Target receive-then-send order. Achieved Reply Targets stay achieved for the day. Withdrawal does not change existing achievement or receipt facts.</li>
+          <li><strong>Streak:</strong> Adds one on the day conditions are all met. Resets to zero at 04:00 when unmet. Restarts from one on next achievement.</li>
+          <li><strong>Relationship Guard:</strong> Forbids blocking and unfriending the daily targets during the day. Accepts block reservations during the day and applies them after daily settlement before the next draw. Allows mute, hide, and report without changing conditions.</li>
+          <li><strong>Notification:</strong> Sends assignment confirmation, per-message reception, and pre-deadline warnings at fixed Japan times in Japanese.</li>
+          <li><strong>Visibility:</strong> Shows only the current count to friends. Shows per-person sent and received and replied state only to the user.</li>
+          <li><strong>Media and Report:</strong> Enforces image size and count limits. Accepts reports with manual handling and no automatic moderation.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="data-flow">Data flow</h2>
+        <ol>
+          <li>Client sends a message to the server.</li>
+          <li>Server accepts the message and records acceptance time.</li>
+          <li>Server delivers the message through realtime delivery.</li>
+          <li>Recipient conversation screen reflects the message.</li>
+          <li>Server evaluates completion and increments the Streak at the moment conditions are met.</li>
+          <li>Image upload goes to storage first, then links to the message, then delivers to recipients.</li>
+          <li>Daily job runs settlement, then relationship changes, then the next draw.</li>
+          <li>Notification job creates push requests at fixed times for delivery through platform push services.</li>
+        </ol>
+      </section>
+      <section>
+        <h2 id="ordering-guarantees">Ordering guarantees</h2>
+        <ul>
+          <li>Daily processing at 04:00 follows settlement, then reservation and relationship reflection, then draw.</li>
+          <li>A reply requires Reply Target receipt time strictly before own send time. Equal timestamps do not count as a reply.</li>
+          <li>Once a Reply Target is achieved for the day, later incoming messages do not revert it.</li>
+          <li>Editing does not change send time or order.</li>
+          <li>Withdrawal does not change achievement or receipt facts.</li>
+          <li>Reply duty remains even when the original message was withdrawn before replying.</li>
+          <li>Automatic resend after the deadline does not count for the previous day.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="numeric-defaults">Numeric defaults</h2>
+        <table>
+          <caption>First-version numeric defaults</caption>
+          <thead>
+            <tr><th scope="col">Area</th><th scope="col">Default</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Day boundary</td><td>04:00 Japan time</td></tr>
+            <tr><td>Assignment notification</td><td>07:00 Japan time</td></tr>
+            <tr><td>Pre-deadline warnings</td><td>22:00 and 02:30 Japan time</td></tr>
+            <tr><td>Images per message</td><td>Up to 4 images</td></tr>
+            <tr><td>Image size</td><td>Up to 10 MB per image</td></tr>
+            <tr><td>Supported image formats</td><td>JPEG, PNG, and HEIC</td></tr>
+            <tr><td>Body limit</td><td>10000 characters</td></tr>
+            <tr><td>Notification body preview</td><td>Up to 100 characters</td></tr>
+            <tr><td>Notification image thumbnail</td><td>One image at 512 px long edge</td></tr>
+            <tr><td>Automatic resend</td><td>Exponential backoff for up to 24 hours</td></tr>
+            <tr><td>Edit history</td><td>Latest 20 generations</td></tr>
+            <tr><td>Image retention</td><td>Indefinite in the first version</td></tr>
+          </tbody>
+        </table>
+      </section>
+      <section>
+        <h2 id="error-handling">Error handling</h2>
+        <ul>
+          <li>When the daily draw fails, create no assignment for that day, keep counts unchanged, and allow read-only access to prior history.</li>
+          <li>Before server acceptance, show sending or failed states and resend automatically within OS limits.</li>
+          <li>Unaccepted messages do not count toward completion.</li>
+          <li>Show that resend may miss the deadline.</li>
+          <li>Push delay or loss does not change server deadlines or judgments.</li>
+          <li>The app shows current targets and progress when opened.</li>
+          <li>Treat duplicate acceptance of the same message as one message.</li>
+          <li>Late acceptance after the deadline does not count for the previous day.</li>
+          <li>Accept reports and handle them manually without automatic moderation.</li>
+          <li>Allow block reservation cancellation before application and exclude reserved users from the next draw after application.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="negative-requirements">Negative requirements</h2>
+        <ul>
+          <li>Do not design registration and friend request and approval flow here.</li>
+          <li>Do not build ranking display.</li>
+          <li>Do not add automatic image moderation.</li>
+          <li>Do not support languages or time zones beyond Japanese and Japan time.</li>
+          <li>Do not score chat content value.</li>
+          <li>Do not change achieved completion or receipt facts on withdrawal.</li>
+          <li>Do not judge completion by device clock or read state.</li>
+          <li>Do not show unmet breakdown or responsibility to anyone except the user.</li>
+          <li>Do not add grace for last-minute reception.</li>
+          <li>Do not allow blocking or unfriending daily targets during the day except by reservation.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="testing">Testing</h2>
+        <ul>
+          <li>New friendships apply from the next day.</li>
+          <li>A failed day is out of scope and preserves counts.</li>
+          <li>Messages link to the correct friends.</li>
+          <li>Send Target transmission satisfies its condition.</li>
+          <li>Only post-receipt sends count as replies per Reply Target.</li>
+          <li>Equal timestamps do not count as replies.</li>
+          <li>Mutual assignment needs one more message for the second achievement.</li>
+          <li>A silent Reply Target makes the day unmet.</li>
+          <li>Last-minute reception has no grace.</li>
+          <li>Reply duty remains after pre-reply withdrawal.</li>
+          <li>Editing does not change send time or order.</li>
+          <li>Streak increments at achievement and resets at 04:00 when unmet.</li>
+          <li>Next achievement restarts from one.</li>
+          <li>Daily targets cannot be blocked or unfriended during the day.</li>
+          <li>Block reservations apply before the next draw.</li>
+          <li>Blank-only body with no image cannot be sent.</li>
+          <li>Image failure is unsent and subject to resend.</li>
+          <li>Edit history and withdrawal display follow the rules.</li>
+          <li>Scheduled notifications use Japan time.</li>
+          <li>Friends see only the count with no breakdown.</li>
+          <li>The user sees per-person progress.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="consuming-paths">Consuming paths</h2>
+        <ul>
+          <li><code>CONTEXT.md</code></li>
+          <li><code>CONTEXT.html</code></li>
+          <li><code>docs/sdd/assets/sdd.css</code></li>
+          <li><code>docs/sdd/specs/2026-09-10-daily-chat-design.md</code></li>
+          <li><code>docs/sdd/specs/2026-09-10-daily-chat-design.html</code></li>
+        </ul>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
