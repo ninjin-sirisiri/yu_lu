@@ -26,3 +26,18 @@ _Avoid_: reply target
 A friend to whom the user is assigned for the day. The user must reply after receiving that friend's message for Streak continuation.
 
 _Avoid_: send target
+
+**User ID**:
+An identifier chosen by a user so another person can find and confirm them before sending a Friend Request.
+
+_Avoid_: display name, internal identifier, friend code
+
+**Friend Request**:
+A request from one user to another to become Friends. It establishes a friendship only when the recipient approves it.
+
+_Avoid_: invitation
+
+**Invitation**:
+A link or QR code shared by a user that lets another person find them and start a Friend Request.
+
+_Avoid_: friend request, invite code

@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none';">
+  <meta name="sdd-source-digest" content="sha256:245f86e91f6d1e70d782e194e52fc6408cc8dd42f42e33a60f40b2c7198f06aa">
+  <title>Friend registration and approval design</title>
+  <link rel="stylesheet" href="../assets/sdd.css">
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <header class="document-header">
+    <p class="document-kind">Spec</p>
+  </header>
+  <div class="document-layout">
+    <aside class="document-outline" aria-label="Document outline">
+      <details open>
+        <summary>On this page</summary>
+        <nav aria-label="On this page">
+          <ol>
+            <li><a href="#goals">Goals</a></li>
+            <li><a href="#non-goals">Non-goals</a></li>
+            <li><a href="#architecture">Architecture</a></li>
+            <li><a href="#components">Components</a></li>
+            <li><a href="#data-flow">Data flow</a></li>
+            <li><a href="#ordering-guarantees">Ordering guarantees</a></li>
+            <li><a href="#numeric-defaults">Numeric defaults</a></li>
+            <li><a href="#error-handling">Error handling</a></li>
+            <li><a href="#negative-requirements">Negative requirements</a></li>
+            <li><a href="#testing">Testing</a></li>
+            <li><a href="#consuming-paths">Consuming paths</a></li>
+          </ol>
+        </nav>
+      </details>
+    </aside>
+    <main id="content" tabindex="-1">
+      <h1 id="friend-registration-and-approval-design">Friend registration and approval design</h1>
+      <p class="metadata"><strong>Classification:</strong> architectural</p>
+      <p class="metadata"><strong>Chosen approach:</strong> Supabase single stack with acceptance of same verified-email auto-linking. The client uses Apple or Google OAuth only, with no shared mandatory contact. Supabase Auth plus data storage is used. Apple and Google logins that share the same verified email are accepted as one account under Supabase Auth standard behavior. OAuth logins with different emails are never auto-linked. Adding a different-email method requires explicit linking after signing into the existing account and verifying the new method.</p>
+      <section>
+        <h2 id="goals">Goals</h2>
+        <ul>
+          <li>Complete OAuth registration through profile creation.</li>
+          <li>Find a partner by User ID, Invitation link or QR, and ID search, then send and approve a Friend Request.</li>
+          <li>Return an unregistered Invitation opener to the Invitation automatically after registration and User ID confirmation.</li>
+          <li>Keep request, approval, expiry, notification, and zero-friend handling consistent.</li>
+          <li>Connect with the existing daily draw, Streak, and relationship protection.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="non-goals">Non-goals</h2>
+        <ul>
+          <li>Email or SMS authentication, passwords, recovery codes, and operator recovery.</li>
+          <li>Merging two separately created accounts.</li>
+          <li>In-request block and report flows, except post-report restriction.</li>
+          <li>Ranking, automatic image moderation, and support beyond Japanese and Japan time.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="architecture">Architecture</h2>
+        <ul>
+          <li>Client with one codebase for iOS and Android.</li>
+          <li>Client holds the OAuth session, User ID decision, profile creation and editing, request inbox and outbox, Invitation display and opening, pre-request confirmation, zero-friend guidance, and push reception.</li>
+          <li>Server side provides auth, database, image storage, and push integration.</li>
+          <li>Server is the only place that confirms User ID uniqueness, request state transitions, friendship creation, and expiry.</li>
+          <li>New friendships apply from the next daily draw.</li>
+          <li>A zero-friend day creates no assignment, preserves the Streak, and allows read-only access to prior history.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="components">Components</h2>
+        <ul>
+          <li><strong>Registration:</strong> Verifies Apple or Google OAuth identity, confirms the User ID and display name, accepts optional image and introduction, and blocks app use until the User ID is confirmed.</li>
+          <li><strong>Profile:</strong> Keeps the internal account separate from the searchable User ID. Shows name, User ID, image, and introduction before approval, and adds the current Streak only for the user and established Friends. Never shows per-partner send and reply state to others.</li>
+          <li><strong>Discovery:</strong> Resolves exactly one candidate from an exchanged User ID. Opens an Invitation link or QR to the inviter display plus request button within its 7-day validity. Supports ID search to the same pre-request confirmation.</li>
+          <li><strong>Invitation:</strong> Shares a time-limited link or QR code that opens the inviter display and starts a Friend Request. Expires after 7 days. Keeps the invitation identifier for an unregistered opener and returns automatically after OAuth registration and User ID confirmation.</li>
+          <li><strong>Friend Request:</strong> Sends one request from sender to recipient. Allows sender cancellation at any time. Allows recipient approval or rejection only. Hides rejection facts from the sender and shows only a neutral non-establishment message. Creates no duplicate while one is pending. Treats crossed requests as immediate establishment with notice to both sides. Expires automatically after 7 days.</li>
+          <li><strong>Relationship Guard:</strong> Allows block and delete only for established Friends. Forbids blocking a request-only partner. Rejects new requests while blocked and allows re-request after unblock. Keeps delete and report from affecting re-request eligibility. Preserves existing same-day draw protection and time and order rules.</li>
+          <li><strong>Notification:</strong> Sends request arrival, approval establishment, mutual establishment, expiry guidance, and invitation expiry guidance in Japanese.</li>
+          <li><strong>Visibility:</strong> Shows the current Streak count only to established Friends. Shows per-partner progress only to the user. Shows the no-change explanation on zero-friend days.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="data-flow">Data flow</h2>
+        <ol>
+          <li>Client verifies OAuth identity and confirms the User ID.</li>
+          <li>Server creates the profile after confirming User ID uniqueness.</li>
+          <li>Client resolves a partner by User ID, Invitation, or ID search and shows the pre-request confirmation.</li>
+          <li>Client sends the Friend Request to the server.</li>
+          <li>Server stores the pending request with its expiry.</li>
+          <li>Recipient approves or rejects the request.</li>
+          <li>Server creates the friendship on approval and clears related requests.</li>
+          <li>Established friendships become eligible from the next draw.</li>
+          <li>A zero-friend day creates no assignment and preserves counts.</li>
+        </ol>
+      </section>
+      <section>
+        <h2 id="ordering-guarantees">Ordering guarantees</h2>
+        <ul>
+          <li>Crossed requests establish friendship when both directions are expressed.</li>
+          <li>Related requests are cleared at establishment.</li>
+          <li>No unanswered request remains after friendship establishment.</li>
+          <li>Expiry, cancellation, and rejection never establish friendship.</li>
+          <li>A duplicate request is never created while one is pending.</li>
+          <li>Blocked recipients accept no new request until unblock.</li>
+          <li>Request-only partners cannot be blocked.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="numeric-defaults">Numeric defaults</h2>
+        <table>
+          <caption>First-version numeric defaults</caption>
+          <thead>
+            <tr><th scope="col">Area</th><th scope="col">Default</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Invitation validity</td><td>7 days</td></tr>
+            <tr><td>Friend Request validity</td><td>7 days</td></tr>
+            <tr><td>User ID reservation hold</td><td>None</td></tr>
+            <tr><td>User ID case handling</td><td>Case-insensitive identity with display preserved</td></tr>
+          </tbody>
+        </table>
+      </section>
+      <section>
+        <h2 id="error-handling">Error handling</h2>
+        <ul>
+          <li>Expired Invitations cannot start a request and guide the user to reissue.</li>
+          <li>Expired requests lapse automatically and guide the user to re-request.</li>
+          <li>Rejection reason and timing are never disclosed.</li>
+          <li>Duplicate requests guide the user to the existing pending request.</li>
+          <li>Requests to blocked recipients are rejected.</li>
+          <li>User ID collisions reject confirmation and suggest similar IDs.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="negative-requirements">Negative requirements</h2>
+        <ul>
+          <li>Do not offer email or SMS authentication, passwords, recovery codes, or operator recovery.</li>
+          <li>Do not merge two separately created accounts.</li>
+          <li>Do not auto-link OAuth logins with different emails.</li>
+          <li>Do not use Apple private relay addresses for contact purposes.</li>
+          <li>Do not allow app use before User ID confirmation.</li>
+          <li>Do not allow User ID changes after confirmation.</li>
+          <li>Do not create a separate add code apart from the User ID.</li>
+          <li>Do not disclose rejection facts, reasons, or timing.</li>
+          <li>Do not allow blocking of request-only partners.</li>
+          <li>Do not apply rate limits to requests or searches in the first version.</li>
+          <li>Do not use friend or display-name information for operator identity verification.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="testing">Testing</h2>
+        <ul>
+          <li>OAuth registration completes User ID confirmation and profile creation.</li>
+          <li>All three entry points reach pre-request confirmation.</li>
+          <li>An unregistered Invitation returns after registration and User ID confirmation.</li>
+          <li>Recipient approval establishes friendship, while crossed requests establish immediately with notice to both.</li>
+          <li>Cancellation, rejection, and expiry never establish friendship.</li>
+          <li>Rejection display contains no reason or timing.</li>
+          <li>No duplicate request is created while one is pending.</li>
+          <li>Blocked recipients reject new requests and accept re-request after unblock.</li>
+          <li>Request-only partners cannot be blocked.</li>
+          <li>Zero-friend days stay out of the draw and preserve the Streak.</li>
+          <li>Same verified-email auto-linking is accepted.</li>
+          <li>Different-email auto-linking never happens.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="consuming-paths">Consuming paths</h2>
+        <ul>
+          <li><code>CONTEXT.md</code></li>
+          <li><code>CONTEXT.html</code></li>
+          <li><code>docs/sdd/assets/sdd.css</code></li>
+          <li><code>docs/sdd/specs/2026-09-11-friend-registration-approval-design.md</code></li>
+          <li><code>docs/sdd/specs/2026-09-11-friend-registration-approval-design.html</code></li>
+        </ul>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
