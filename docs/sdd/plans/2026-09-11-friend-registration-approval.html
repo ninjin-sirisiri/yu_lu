@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none';">
+  <meta name="sdd-source-digest" content="sha256:a643f945b21facd6161c4bd73c4c00f48db88ba94b4d83bf3aadbd3e087c0aba">
+  <title>Friend Registration and Approval Implementation Plan</title>
+  <link rel="stylesheet" href="../assets/sdd.css">
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <header class="document-header">
+    <p class="document-kind">Plan</p>
+  </header>
+  <div class="document-layout">
+    <aside class="document-outline" aria-label="Document outline">
+      <details open>
+        <summary>On this page</summary>
+        <nav aria-label="On this page">
+          <ol>
+            <li><a href="#global-constraints">Global Constraints</a></li>
+            <li><a href="#file-structure">File structure</a></li>
+            <li><a href="#task-1-registration-data-model-and-server-transitions">Task 1: Registration data model and server transitions</a></li>
+            <li><a href="#task-2-registration-validation-and-profile-editing-rules">Task 2: Registration validation and profile editing rules</a></li>
+            <li><a href="#task-3-auth-session-and-oauth-account-boundaries">Task 3: Auth session and OAuth account boundaries</a></li>
+            <li><a href="#task-4-discovery-invitations-and-registration-return">Task 4: Discovery, invitations, and registration return</a></li>
+            <li><a href="#task-5-friend-requests-approvals-and-zero-friend-behavior">Task 5: Friend requests, approvals, and zero-friend behavior</a></li>
+            <li><a href="#task-6-access-control-for-registration-data">Task 6: Access control for registration data</a></li>
+            <li><a href="#task-7-server-transitions-expiry-jobs-and-regression-fixtures">Task 7: Server transitions, expiry jobs, and regression fixtures</a></li>
+          </ol>
+        </nav>
+      </details>
+    </aside>
+    <main id="content" tabindex="-1">
+      <h1 id="friend-registration-and-approval-implementation-plan">Friend Registration and Approval Implementation Plan</h1>
+      <div class="metadata">
+        <p><strong>Goal:</strong> Build OAuth registration, profiles, discovery, invitations, friend requests, and zero-friend handling for iOS and Android.</p>
+        <p><strong>Architecture:</strong> The Expo client talks to Supabase for Auth, data, image storage, and push integration. One migration owns new registration tables and profile extensions. Server-side functions own uniqueness, transitions, friendship creation, and expiry. The client owns session, confirmation, inbox and outbox, invitation return, and zero-friend guidance.</p>
+        <p><strong>Tech Stack:</strong> Expo React Native TypeScript, Supabase Postgres Auth Storage Edge Functions pg_cron, EAS Build, Expo Notifications with FCM and APNs, Jest</p>
+        <p><strong>Spec:</strong> docs/sdd/specs/2026-09-11-friend-registration-approval-design.md</p>
+      </div>
+      <section>
+        <h2 id="global-constraints">Global Constraints</h2>
+        <ul>
+          <li>Auth uses Apple or Google OAuth only.</li>
+          <li>No shared mandatory contact.</li>
+          <li>Apple and Google logins that share the same verified email are accepted as one account under Supabase Auth standard behavior.</li>
+          <li>OAuth logins with different emails are never auto-linked.</li>
+          <li>Adding a different-email method requires explicit linking after signing into the existing account and verifying the new method.</li>
+          <li>Do not use Apple private relay addresses for contact purposes.</li>
+          <li>Do not allow app use before User ID confirmation.</li>
+          <li>Do not allow User ID changes after confirmation.</li>
+          <li>User ID reservation hold: None.</li>
+          <li>User ID case handling: Case-insensitive identity with display preserved.</li>
+          <li>User ID collisions reject confirmation and suggest similar IDs.</li>
+          <li>Do not create a separate add code apart from the User ID.</li>
+          <li>Invitation validity: 7 days.</li>
+          <li>Friend Request validity: 7 days.</li>
+          <li>Expired Invitations cannot start a request and guide the user to reissue.</li>
+          <li>Expired requests lapse automatically and guide the user to re-request.</li>
+          <li>Recipient approval establishes friendship, while crossed requests establish immediately with notice to both.</li>
+          <li>Related requests are cleared at establishment.</li>
+          <li>No unanswered request remains after friendship establishment.</li>
+          <li>Expiry, cancellation, and rejection never establish friendship.</li>
+          <li>A duplicate request is never created while one is pending.</li>
+          <li>Duplicate requests guide the user to the existing pending request.</li>
+          <li>Rejection reason and timing are never disclosed.</li>
+          <li>Rejection display contains no reason or timing.</li>
+          <li>Blocked recipients accept no new request until unblock.</li>
+          <li>Blocked recipients reject new requests and accept re-request after unblock.</li>
+          <li>Request-only partners cannot be blocked.</li>
+          <li>Block and delete are allowed only for established Friends.</li>
+          <li>Keep delete and report from affecting re-request eligibility.</li>
+          <li>Do not apply rate limits to requests or searches in the first version.</li>
+          <li>Do not use friend or display-name information for operator identity verification.</li>
+          <li>Do not offer email or SMS authentication, passwords, recovery codes, or operator recovery.</li>
+          <li>Do not merge two separately created accounts.</li>
+          <li>New friendships apply from the next daily draw.</li>
+          <li>A zero-friend day creates no assignment, preserves the Streak, and allows read-only access to prior history.</li>
+          <li>Zero-friend days stay out of the draw and preserve the Streak.</li>
+          <li>Show the current Streak count only to established Friends.</li>
+          <li>Show per-partner progress only to the user.</li>
+          <li>Never show per-partner send and reply state to others.</li>
+          <li>Support Japanese and Japan time in notifications and guidance.</li>
+        </ul>
+      </section>
+      <section>
+        <h2 id="file-structure">File structure</h2>
+        <ul>
+          <li><code>app/src/auth/session.ts</code></li>
+          <li><code>app/src/auth/session.test.ts</code></li>
+          <li><code>app/src/profiles/registration.ts</code></li>
+          <li><code>app/src/profiles/registration.test.ts</code></li>
+          <li><code>app/src/profiles/edit.ts</code></li>
+          <li><code>app/src/profiles/edit.test.ts</code></li>
+          <li><code>app/src/discovery/lookup.ts</code></li>
+          <li><code>app/src/discovery/lookup.test.ts</code></li>
+          <li><code>app/src/invitations/share.ts</code></li>
+          <li><code>app/src/invitations/share.test.ts</code></li>
+          <li><code>app/src/invitations/open.ts</code></li>
+          <li><code>app/src/invitations/open.test.ts</code></li>
+          <li><code>app/src/requests/outbox.ts</code></li>
+          <li><code>app/src/requests/outbox.test.ts</code></li>
+          <li><code>app/src/requests/inbox.ts</code></li>
+          <li><code>app/src/requests/inbox.test.ts</code></li>
+          <li><code>app/src/requests/zeroFriends.ts</code></li>
+          <li><code>app/src/requests/zeroFriends.test.ts</code></li>
+          <li><code>supabase/migrations/0005_friend_registration.sql</code></li>
+          <li><code>supabase/functions/friendship-admin/index.ts</code></li>
+          <li><code>supabase/functions/request-expiry/index.ts</code></li>
+          <li><code>supabase/seed.friend-registration.test.sql</code></li>
+          <li><code>docs/sdd/specs/2026-09-11-friend-registration-approval-design.md</code></li>
+        </ul>
+      </section>
+      <article class="plan-task" data-task-number="1">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">01</span></div>
+        <h2 id="task-1-registration-data-model-and-server-transitions">Task 1: Registration data model and server transitions</h2>
+        <p>Create the registration data model, User ID uniqueness, request transitions, friendship creation, and expiry in <code>supabase/migrations/0005_friend_registration.sql</code>. This task owns the registration schema and server-side data rules. Later tasks only read and call this model.</p>
+        <ol>
+          <li>Create the next sequential migration file.
+            <pre tabindex="0"><code>npx supabase@latest migration new friend_registration</code></pre>
+          </li>
+          <li>Extend <code>profiles</code> with the searchable User ID, display profile fields, and completion state. Keep existing <code>user_id</code>, <code>display_name</code>, and <code>created_at</code> unchanged.
+            <pre tabindex="0"><code>alter table profiles
+  add column user_id_text text,
+  add column avatar_path text,
+  add column introduction text,
+  add column user_id_confirmed_at timestamptz;</code></pre>
+          </li>
+          <li>Enforce case-insensitive User ID identity while preserving display. Require User ID confirmation before use.
+            <pre tabindex="0"><code>alter table profiles
+  add constraint profiles_user_id_text_not_blank
+  check (user_id_text is null or char_length(btrim(user_id_text)) &gt; 0);
+
+create unique index profiles_user_id_text_unique
+  on profiles (lower(user_id_text))
+  where user_id_text is not null;</code></pre>
+          </li>
+          <li>Create pending invitations with a 7-day validity.
+            <pre tabindex="0"><code>create table invitations (
+  invitation_id uuid primary key default gen_random_uuid(),
+  inviter_user_id uuid not null references profiles(user_id) on delete cascade,
+  invitation_token text not null unique,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  constraint invitations_expires_after_created check (expires_at &gt; created_at)
+);
+
+create index invitations_inviter_created_idx
+  on invitations (inviter_user_id, created_at desc);</code></pre>
+          </li>
+          <li>Create friend requests with sender, recipient, state, and 7-day validity. Keep request-only pairs outside <code>friendships</code>.
+            <pre tabindex="0"><code>create table friend_requests (
+  request_id uuid primary key default gen_random_uuid(),
+  sender_user_id uuid not null references profiles(user_id) on delete cascade,
+  recipient_user_id uuid not null references profiles(user_id) on delete cascade,
+  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected', 'cancelled', 'expired')),
+  created_at timestamptz not null default now(),
+  decided_at timestamptz,
+  expires_at timestamptz not null,
+  constraint friend_requests_no_self_request check (sender_user_id != recipient_user_id),
+  constraint friend_requests_expires_after_created check (expires_at &gt; created_at),
+  constraint friend_requests_decided_when_not_pending check (
+    (status = 'pending' and decided_at is null)
+    or (status != 'pending' and decided_at is not null)
+  )
+);
+
+create index friend_requests_recipient_pending_idx
+  on friend_requests (recipient_user_id, created_at desc)
+  where status = 'pending';
+
+create index friend_requests_sender_pending_idx
+  on friend_requests (sender_user_id, created_at desc)
+  where status = 'pending';
+
+create unique index friend_requests_one_pending_pair_idx
+  on friend_requests (least(sender_user_id, recipient_user_id), greatest(sender_user_id, recipient_user_id))
+  where status = 'pending';</code></pre>
+          </li>
+          <li>Add canonical friendship creation that preserves <code>CHECK (user_a &lt; user_b)</code>. Clear related pending requests at establishment.
+            <pre tabindex="0"><code>create or replace function create_friendship_from_request(p_sender uuid, p_recipient uuid)
+returns void
+language plpgsql
+as $$
+declare
+  v_first uuid;
+  v_second uuid;
+begin
+  if p_sender = p_recipient then
+    raise exception 'self friendship is not allowed';
+  end if;
+
+  if p_sender &lt; p_recipient then
+    v_first := p_sender;
+    v_second := p_recipient;
+  else
+    v_first := p_recipient;
+    v_second := p_sender;
+  end if;
+
+  insert into friendships (user_a, user_b)
+  values (v_first, v_second)
+  on conflict do nothing;
+
+  update friend_requests
+  set status = 'approved', decided_at = now()
+  where status = 'pending'
+    and (
+      (sender_user_id = p_sender and recipient_user_id = p_recipient)
+      or (sender_user_id = p_recipient and recipient_user_id = p_sender)
+    );
+end;
+$$;</code></pre>
+          </li>
+          <li>Add expiry handling that never establishes friendship.
+            <pre tabindex="0"><code>create or replace function expire_friend_requests()
+returns integer
+language plpgsql
+as $$
+declare
+  v_count integer;
+begin
+  update friend_requests
+  set status = 'expired', decided_at = now()
+  where status = 'pending'
+    and expires_at &lt;= now();
+
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+create or replace function expire_invitations()
+returns integer
+language plpgsql
+as $$
+declare
+  v_count integer;
+begin
+  update invitations
+  set used_at = coalesce(used_at, now())
+  where used_at is null
+    and expires_at &lt;= now();
+
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;</code></pre>
+          </li>
+          <li>Enable row level security on the new tables. Do not add policies in this task.
+            <pre tabindex="0"><code>alter table invitations enable row level security;
+alter table friend_requests enable row level security;</code></pre>
+          </li>
+          <li>Verify the migration locally.
+            <pre tabindex="0"><code>npx supabase@latest db push
+npx supabase@latest db lint --level warning</code></pre>
+          </li>
+        </ol>
+        <p>Acceptance: <code>0005_friend_registration.sql</code> applies cleanly and creates User ID, invitation, request, transition, and expiry objects without changing existing friendship semantics.</p>
+      </article>
+      <article class="plan-task" data-task-number="2">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">02</span></div>
+        <h2 id="task-2-registration-validation-and-profile-editing-rules">Task 2: Registration validation and profile editing rules</h2>
+        <p>Implement User ID confirmation, duplicate suggestions, registration gating, and editable profile rules in <code>app/src/profiles/registration.ts</code> and <code>app/src/profiles/edit.ts</code>. This task owns profile validation and editing boundaries. Later tasks only call these validators.</p>
+        <ol>
+          <li>Read the exact versioned Expo docs before writing code.
+            <pre tabindex="0"><code>https://docs.expo.dev/versions/v57.0.0/</code></pre>
+          </li>
+          <li>Implement User ID normalization, blank rejection, confirmation gating, and similar-ID suggestions in <code>app/src/profiles/registration.ts</code>.
+            <pre tabindex="0"><code>export const USER_ID_RESERVATION_HOLD = 'none';
+
+export function normalizeUserId(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+export function assertUserIdConfirmed(userIdText: string | null, confirmedAt: string | null): void {
+  if (!userIdText || userIdText.trim().length === 0 || !confirmedAt) {
+    throw new Error('Confirm the User ID before using the app.');
+  }
+}
+
+export function suggestSimilarUserIds(taken: string, count = 3): string[] {
+  const base = taken.trim();
+  if (!base) return [];
+  return Array.from({ length: count }, (_, index) =&gt; `${base}${index + 2}`);
+}</code></pre>
+          </li>
+          <li>Implement editable-field rules in <code>app/src/profiles/edit.ts</code>. User ID is immutable after confirmation.
+            <pre tabindex="0"><code>export const EDITABLE_PROFILE_FIELDS = ['display_name', 'avatar_path', 'introduction'] as const;
+
+export function assertEditableProfileField(field: string): void {
+  if (!(EDITABLE_PROFILE_FIELDS as readonly string[]).includes(field)) {
+    throw new Error('Only display name, image, and introduction can be changed.');
+  }
+}</code></pre>
+          </li>
+          <li>Add colocated tests covering blank IDs, unconfirmed gating, case-insensitive normalization, similar-ID suggestions, and User ID immutability.
+            <pre tabindex="0"><code>cd app
+npm test -- src/profiles
+npm run typecheck</code></pre>
+          </li>
+        </ol>
+        <p>Acceptance: <code>npm test -- src/profiles</code> passes and unconfirmed profiles cannot proceed while confirmed User IDs cannot be changed.</p>
+      </article>
+      <article class="plan-task" data-task-number="3">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">03</span></div>
+        <h2 id="task-3-auth-session-and-oauth-account-boundaries">Task 3: Auth session and OAuth account boundaries</h2>
+        <p>Implement Apple and Google OAuth session handling, existing-account return, new-account registration entry, and account boundaries in <code>app/src/auth/session.ts</code>. This task owns session outcomes. Later tasks only consume the resolved account.</p>
+        <ol>
+          <li>Read the exact versioned Expo docs before writing code.
+            <pre tabindex="0"><code>https://docs.expo.dev/versions/v57.0.0/</code></pre>
+          </li>
+          <li>Implement OAuth provider selection, existing-account return, and no-recovery handling in <code>app/src/auth/session.ts</code>.
+            <pre tabindex="0"><code>export type OAuthProvider = 'apple' | 'google';
+export type SessionOutcome =
+  | { kind: 'returning'; provider: OAuthProvider; accountId: string }
+  | { kind: 'register'; provider: OAuthProvider }
+  | { kind: 'unrecoverable' };
+
+export function resolveSessionOutcome(input: {
+  provider: OAuthProvider;
+  accountId: string | null;
+  providerAccountSelected: boolean;
+  allMethodsLost: boolean;
+}): SessionOutcome {
+  if (input.allMethodsLost) return { kind: 'unrecoverable' };
+  if (input.accountId &amp;&amp; input.providerAccountSelected) {
+    return { kind: 'returning', provider: input.provider, accountId: input.accountId };
+  }
+  return { kind: 'register', provider: input.provider };
+}
+
+export function assertNoCrossEmailAutoLink(existingEmail: string | null, nextEmail: string | null): void {
+  if (existingEmail &amp;&amp; nextEmail &amp;&amp; existingEmail.toLowerCase() !== nextEmail.toLowerCase()) {
+    throw new Error('Do not auto-link OAuth logins with different emails.');
+  }
+}</code></pre>
+          </li>
+          <li>Add tests for returning users, new registrations, different-account selection, total-loss handling, and cross-email auto-link refusal.
+            <pre tabindex="0"><code>cd app
+npm test -- src/auth
+npm run typecheck</code></pre>
+          </li>
+        </ol>
+        <p>Acceptance: <code>npm test -- src/auth</code> passes and different-email OAuth logins are never auto-linked by session resolution.</p>
+      </article>
+      <article class="plan-task" data-task-number="4">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">04</span></div>
+        <h2 id="task-4-discovery-invitations-and-registration-return">Task 4: Discovery, invitations, and registration return</h2>
+        <p>Implement User ID lookup, invitation sharing and opening, expiry checks, and unregistered-invitation return in <code>app/src/discovery/lookup.ts</code>, <code>app/src/invitations/share.ts</code>, and <code>app/src/invitations/open.ts</code>. This task owns entry-point behavior. Later tasks only consume resolved candidates.</p>
+        <ol>
+          <li>Read the exact versioned Expo docs before writing code.
+            <pre tabindex="0"><code>https://docs.expo.dev/versions/v57.0.0/</code></pre>
+          </li>
+          <li>Implement exact candidate resolution and pre-request profile exposure in <code>app/src/discovery/lookup.ts</code>.
+            <pre tabindex="0"><code>export interface PublicProfile {
+  displayName: string;
+  userIdText: string;
+  avatarPath: string | null;
+  introduction: string | null;
+}
+
+export function resolveSingleCandidate(candidates: PublicProfile[]): PublicProfile {
+  if (candidates.length !== 1) {
+    throw new Error('User ID input must resolve to exactly one candidate.');
+  }
+  return candidates[0];
+}</code></pre>
+          </li>
+          <li>Implement 7-day invitation creation and opening checks in <code>app/src/invitations/share.ts</code> and <code>app/src/invitations/open.ts</code>.
+            <pre tabindex="0"><code>export const INVITATION_VALID_DAYS = 7;
+
+export function invitationExpiry(createdAt: Date): Date {
+  return new Date(createdAt.getTime() + INVITATION_VALID_DAYS * 24 * 60 * 60 * 1000);
+}
+
+export function assertInvitationOpenable(now: Date, expiresAt: Date): void {
+  if (now.getTime() &gt;= expiresAt.getTime()) {
+    throw new Error('This invitation expired. Ask for a new invitation.');
+  }
+}
+
+export function invitationReturnTarget(invitationToken: string | null): string | null {
+  if (!invitationToken) return null;
+  return `invitation:${invitationToken}`;
+}</code></pre>
+          </li>
+          <li>Add tests for one-candidate resolution, expired invitations, reissue guidance, and return after registration and User ID confirmation.
+            <pre tabindex="0"><code>cd app
+npm test -- src/discovery src/invitations
+npm run typecheck</code></pre>
+          </li>
+        </ol>
+        <p>Acceptance: <code>npm test -- src/discovery src/invitations</code> passes and expired invitations cannot start a request.</p>
+      </article>
+      <article class="plan-task" data-task-number="5">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">05</span></div>
+        <h2 id="task-5-friend-requests-approvals-and-zero-friend-behavior">Task 5: Friend requests, approvals, and zero-friend behavior</h2>
+        <p>Implement request sending, cancellation, approval, rejection display, duplicate prevention, crossed-request establishment, expiry behavior, blocked-recipient handling, and zero-friend guidance in <code>app/src/requests/outbox.ts</code>, <code>app/src/requests/inbox.ts</code>, and <code>app/src/requests/zeroFriends.ts</code>. This task owns request behavior. Later tasks only enforce access and schedule expiry.</p>
+        <ol>
+          <li>Read the exact versioned Expo docs before writing code.
+            <pre tabindex="0"><code>https://docs.expo.dev/versions/v57.0.0/</code></pre>
+          </li>
+          <li>Implement sender behavior in <code>app/src/requests/outbox.ts</code>.
+            <pre tabindex="0"><code>export const FRIEND_REQUEST_VALID_DAYS = 7;
+export const REJECTION_DISPLAY = '今回は成立しませんでした';
+
+export function requestExpiry(createdAt: Date): Date {
+  return new Date(createdAt.getTime() + FRIEND_REQUEST_VALID_DAYS * 24 * 60 * 60 * 1000);
+}
+
+export function assertNoDuplicatePending(pendingCount: number): void {
+  if (pendingCount &gt; 0) {
+    throw new Error('A request is already pending. Open the existing request.');
+  }
+}
+
+export function crossedRequestEstablished(outgoingPending: boolean, incomingPending: boolean): boolean {
+  return outgoingPending &amp;&amp; incomingPending;
+}</code></pre>
+          </li>
+          <li>Implement recipient behavior and neutral rejection display in <code>app/src/requests/inbox.ts</code>.
+            <pre tabindex="0"><code>import { REJECTION_DISPLAY } from './outbox';
+
+export type RequestDecision = 'approve' | 'reject';
+
+export function rejectionDisplay(): string {
+  return REJECTION_DISPLAY;
+}
+
+export function assertRecipientDecision(decision: RequestDecision): void {
+  if (decision !== 'approve' &amp;&amp; decision !== 'reject') {
+    throw new Error('Recipients can only approve or reject.');
+  }
+}
+
+export function assertRequestAllowedForRecipient(blocked: boolean): void {
+  if (blocked) {
+    throw new Error('Requests cannot be sent to a blocked recipient.');
+  }
+}</code></pre>
+          </li>
+          <li>Implement zero-friend guidance in <code>app/src/requests/zeroFriends.ts</code>.
+            <pre tabindex="0"><code>export function zeroFriendGuidance(): { showAddEntries: true; streakChanges: false; message: string } {
+  return {
+    showAddEntries: true,
+    streakChanges: false,
+    message: '友達がいない日は抽選対象外です。Streakは変わりません。',
+  };
+}</code></pre>
+          </li>
+          <li>Add tests for approval establishment, crossed establishment, cancellation, rejection display, duplicate prevention, expiry non-establishment, blocked recipients, request-only block refusal, and zero-friend guidance.
+            <pre tabindex="0"><code>cd app
+npm test -- src/requests
+npm run typecheck</code></pre>
+          </li>
+        </ol>
+        <p>Acceptance: <code>npm test -- src/requests</code> passes and only approval or crossed requests establish friendship.</p>
+      </article>
+      <article class="plan-task" data-task-number="6">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">06</span></div>
+        <h2 id="task-6-access-control-for-registration-data">Task 6: Access control for registration data</h2>
+        <p>Add row level security policies for profiles, invitations, friend requests, friendships, streaks, and related reads. This task owns registration access control. Later tasks only call through these policies.</p>
+        <ol>
+          <li>Create the next sequential migration file.
+            <pre tabindex="0"><code>npx supabase@latest migration new friend_registration_policies</code></pre>
+          </li>
+          <li>Allow users to read pre-request public profiles and manage only their own profile row.
+            <pre tabindex="0"><code>create policy profiles_public_read
+  on profiles for select
+  using (user_id_confirmed_at is not null);
+
+create policy profiles_owner_write
+  on profiles for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);</code></pre>
+          </li>
+          <li>Allow invitation owners to manage invitations and allow recipients to read an invitation being opened.
+            <pre tabindex="0"><code>create policy invitations_owner_write
+  on invitations for all
+  using (auth.uid() = inviter_user_id)
+  with check (auth.uid() = inviter_user_id);
+
+create policy invitations_open_read
+  on invitations for select
+  using (expires_at &gt; now());</code></pre>
+          </li>
+          <li>Allow senders and recipients to read requests, senders to create and cancel pending requests, recipients to decide pending requests, and block request-only visibility changes.
+            <pre tabindex="0"><code>create policy friend_requests_participant_read
+  on friend_requests for select
+  using (auth.uid() = sender_user_id or auth.uid() = recipient_user_id);
+
+create policy friend_requests_sender_insert
+  on friend_requests for insert
+  with check (auth.uid() = sender_user_id and status = 'pending');
+
+create policy friend_requests_sender_cancel
+  on friend_requests for update
+  using (auth.uid() = sender_user_id and status = 'pending')
+  with check (status = 'cancelled');
+
+create policy friend_requests_recipient_decide
+  on friend_requests for update
+  using (auth.uid() = recipient_user_id and status = 'pending')
+  with check (status = 'approved' or status = 'rejected');</code></pre>
+          </li>
+          <li>Preserve existing friendship visibility for established Friends.
+            <pre tabindex="0"><code>create policy friendships_participant_read
+  on friendships for select
+  using (auth.uid() = user_a or auth.uid() = user_b);</code></pre>
+          </li>
+          <li>Verify policies locally.
+            <pre tabindex="0"><code>npx supabase@latest db push
+npx supabase@latest db lint --level warning</code></pre>
+          </li>
+        </ol>
+        <p>Acceptance: Policy migration applies cleanly and unapproved users cannot read or change requests outside their sender or recipient role.</p>
+      </article>
+      <article class="plan-task" data-task-number="7">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">07</span></div>
+        <h2 id="task-7-server-transitions-expiry-jobs-and-regression-fixtures">Task 7: Server transitions, expiry jobs, and regression fixtures</h2>
+        <p>Create privileged request transitions, scheduled expiry, notifications support data, and regression fixtures in <code>supabase/functions/friendship-admin/index.ts</code>, <code>supabase/functions/request-expiry/index.ts</code>, and <code>supabase/seed.friend-registration.test.sql</code>. This task owns server execution and verification data.</p>
+        <ol>
+          <li>Create the server functions.
+            <pre tabindex="0"><code>npx supabase@latest functions new friendship-admin
+npx supabase@latest functions new request-expiry</code></pre>
+          </li>
+          <li>Implement privileged approval, crossed-request establishment, cancellation, rejection, blocked-recipient refusal, duplicate refusal, and friendship creation in <code>supabase/functions/friendship-admin/index.ts</code>.
+            <pre tabindex="0"><code>import { createClient } from 'npm:@supabase/supabase-js@2';
+
+const url = Deno.env.get('SUPABASE_URL');
+const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+if (!url || !serviceKey) throw new Error('Missing service credentials.');
+
+const admin = createClient(url, serviceKey);
+
+Deno.serve(async (request) =&gt; {
+  const body = await request.json();
+  if (body.action === 'approve') {
+    const { error } = await admin.rpc('create_friendship_from_request', {
+      p_sender: body.sender_user_id,
+      p_recipient: body.recipient_user_id,
+    });
+    if (error) return new Response('approval failed', { status: 500 });
+    return new Response('approval ok', { status: 200 });
+  }
+  return new Response('unsupported action', { status: 400 });
+});</code></pre>
+          </li>
+          <li>Implement scheduled request and invitation expiry in <code>supabase/functions/request-expiry/index.ts</code>.
+            <pre tabindex="0"><code>import { createClient } from 'npm:@supabase/supabase-js@2';
+
+const url = Deno.env.get('SUPABASE_URL');
+const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+if (!url || !serviceKey) throw new Error('Missing service credentials.');
+
+const admin = createClient(url, serviceKey);
+
+Deno.serve(async () =&gt; {
+  const { error } = await admin.rpc('expire_friend_requests');
+  if (error) return new Response('request expiry failed', { status: 500 });
+  const { error: invitationError } = await admin.rpc('expire_invitations');
+  if (invitationError) return new Response('invitation expiry failed', { status: 500 });
+  return new Response('expiry ok', { status: 200 });
+});</code></pre>
+          </li>
+          <li>Deploy the functions.
+            <pre tabindex="0"><code>npx supabase@latest functions deploy friendship-admin
+npx supabase@latest functions deploy request-expiry</code></pre>
+          </li>
+          <li>Add <code>supabase/seed.friend-registration.test.sql</code> with TEST DATA ONLY after <code>0001</code> through <code>0006</code>. Include fixed UUIDs for a pending request, a crossed pair, an expired request, a cancelled request, a rejected request, a blocked recipient, and a zero-friend user. Never use production data.</li>
+          <li>Run full client verification.
+            <pre tabindex="0"><code>cd app
+npm run typecheck
+npm test -- --coverage</code></pre>
+          </li>
+        </ol>
+        <p>Acceptance: <code>npm run typecheck</code> passes, <code>npm test -- --coverage</code> passes, and fixtures demonstrate pending, crossed, expired, cancelled, rejected, blocked, and zero-friend cases without establishing friendship except through approval or crossed requests.</p>
+      </article>
+    </main>
+  </div>
+</body>
+</html>
