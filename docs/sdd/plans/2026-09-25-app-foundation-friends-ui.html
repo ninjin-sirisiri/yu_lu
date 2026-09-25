@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none';">
+  <meta name="sdd-source-digest" content="sha256:141186fe4147f17dc1af914b8af11238ea809c0bb7484217a40b54e00f0afdd2">
+  <title>App Foundation and Friends UI Implementation Plan</title>
+  <link rel="stylesheet" href="../assets/sdd.css">
+</head>
+<body>
+  <a class="skip-link" href="#content">本文へ</a>
+  <header class="document-header"><p class="document-kind">Plan</p></header>
+  <div class="document-layout">
+    <aside class="document-outline" aria-label="計画の目次">
+      <details open><summary>目次</summary><nav aria-label="目次"><ol>
+        <li><a href="#global-constraints">Global Constraints</a></li>
+        <li><a href="#file-structure">File structure</a></li>
+        <li><a href="#execution-and-verification-contract">Execution and verification contract</a></li>
+        <li><a href="#task-1-routerの入口と画面テスト基盤">Task 1: Routerの入口と画面テスト基盤</a></li>
+        <li><a href="#task-2-認証済み操作境界と実dbテスト">Task 2: 認証済み操作境界と実DBテスト</a></li>
+        <li><a href="#task-3-登録確定と共有入力ルール">Task 3: 登録確定と共有入力ルール</a></li>
+        <li><a href="#task-4-申請の原子的遷移と期限切れ">Task 4: 申請の原子的遷移と期限切れ</a></li>
+        <li><a href="#task-5-検索プロフィール一覧の参照api">Task 5: 検索・プロフィール・一覧の参照API</a></li>
+        <li><a href="#task-6-招待発行再発行解決api">Task 6: 招待発行・再発行・解決API</a></li>
+        <li><a href="#task-7-プロフィール公開の版管理と画像所有権">Task 7: プロフィール公開の版管理と画像所有権</a></li>
+        <li><a href="#task-8-アカウント別sqliteと永続下書き">Task 8: アカウント別SQLiteと永続下書き</a></li>
+        <li><a href="#task-9-送信キューの状態機械とワーカー">Task 9: 送信キューの状態機械とワーカー</a></li>
+        <li><a href="#task-10-oauth登録画面と起動分岐">Task 10: OAuth・登録画面と起動分岐</a></li>
+        <li><a href="#task-11-モノトーンuiテーマ可変レイアウト">Task 11: モノトーンUI・テーマ・可変レイアウト</a></li>
+        <li><a href="#task-12-友達一覧部分一致検索プロフィール閲覧">Task 12: 友達一覧・部分一致検索・プロフィール閲覧</a></li>
+        <li><a href="#task-13-受信送信申請と共通送信状況の画面">Task 13: 受信・送信申請と共通送信状況の画面</a></li>
+        <li><a href="#task-14-招待保存qrios貼り付けandroid取得">Task 14: 招待保存・QR・iOS貼り付け・Android取得</a></li>
+        <li><a href="#task-15-招待web入口とドメイン関連付け">Task 15: 招待Web入口とドメイン関連付け</a></li>
+        <li><a href="#task-16-プロフィール画像処理と永続化">Task 16: プロフィール画像処理と永続化</a></li>
+        <li><a href="#task-17-プロフィール編集競合解決画面">Task 17: プロフィール編集・競合解決画面</a></li>
+        <li><a href="#task-18-通知イベント端末登録配信ワーカー">Task 18: 通知イベント・端末登録・配信ワーカー</a></li>
+        <li><a href="#task-19-通知受信画面更新外部入口の統合">Task 19: 通知受信・画面更新・外部入口の統合</a></li>
+        <li><a href="#task-20-バックグラウンド再送とログアウト境界">Task 20: バックグラウンド再送とログアウト境界</a></li>
+        <li><a href="#task-21-実データ通し操作とネイティブ配布設定">Task 21: 実データ通し操作とネイティブ配布設定</a></li>
+        <li><a href="#task-22-ストア引き継ぎ通知全体回帰の完了確認">Task 22: ストア引き継ぎ・通知・全体回帰の完了確認</a></li>
+        <li><a href="#documentation-sources">Documentation sources</a></li>
+      </ol></nav></details>
+    </aside>
+    <main id="content" tabindex="-1">
+      <h1 id="app-foundation-and-friends-ui-implementation-plan">App Foundation and Friends UI Implementation Plan</h1>
+      <p><strong>Goal:</strong> 承認済み仕様に従い、登録から友達成立、プロフィール編集、オフライン再送と通知までをiOS・Androidの実データで完結させる。</p>
+      <p><strong>Architecture:</strong> Expo Routerの画面を、アカウント別SQLiteキャッシュ・下書き・送信キューとSupabaseの認証済みサーバー処理へ接続する。操作ID、DBトランザクション、プロフィールの版番号で重複と競合を扱い、画像はアップロード完了後にプロフィールへ反映する。招待のWeb入口とOS連携、通知配信、実機検証までを順に接続する。</p>
+      <p><strong>Tech Stack:</strong> Expo SDK 57、React Native 0.86.3、React 19.2.3、TypeScript、Expo Router、expo-sqlite、Supabase Auth/Postgres/Storage/Edge Functions、Expo Notifications、Jest/jest-expo、React Native Testing Library、pgTAP、Deno tests。</p>
+      <p><strong>Spec:</strong> docs/sdd/specs/2026-09-25-app-foundation-friends-ui-design.md</p>
+      <section aria-labelledby="global-constraints">
+        <h2 id="global-constraints">Global Constraints</h2>
+        <ul>
+          <li>ホームとチャットは画面の枠・準備中表示まで。ホームには友達追加の入口を用意する。</li>
+          <li>毎日の抽選・進捗・会話機能、友達削除・ブロック操作、追加OAuth連携、毎日の通知は後続の実装単位。既存ブロック関係による検索・申請制限は今回扱う。</li>
+          <li>スマートフォンの下部タブはホーム、チャット、友達、マイページの4つ。</li>
+          <li>横幅900以上の論理サイズでは左の縦ナビゲーションと一覧・詳細の2列表示を使う。狭い場合や文字拡大で収まらない場合は下部4タブと1列へ戻す。選択中の相手・入力を保持する。</li>
+          <li>Apple・Googleのみでログインする。同じ検証済みメールによる既存の自動連携方針を維持し、異なるメールのアカウントを自動統合しない。</li>
+          <li>User IDは2〜20文字の半角英数字・アンダースコア。前後の空白を除去し、大文字・小文字を区別せず一意とするが表示の大文字・小文字は保持する。確定後は変更不可。</li>
+          <li>2文字以上で入力停止から300ミリ秒後に検索する。入力変換中は検索せず、古い結果で最新の結果を上書きしない。</li>
+          <li>完全一致、前方一致、その他の部分一致の順とし、同分類ではUser ID順。20件ずつ表示し、もっと見るで追加する。</li>
+          <li>サーバーが受け付けた申請の有効期間は7日間。送信者は取り消し、受信者は承認・拒否できる。受信一覧に承認・拒否を置き、プロフィールも開ける。</li>
+          <li>拒否後は送信側へ今回は成立しませんでしたと即座に表示する。拒否の明示・理由を出さないが、終了タイミングが伝わることを許容する。</li>
+          <li>終了した申請は送信側で終了後7日間表示し、その後一覧から外す。表示期間は再申請の待機期間ではない。</li>
+          <li>招待は7日間有効で複数人に共有可能。有効なリンク・QRを再表示し、期限切れ時に新規発行する。手動再発行は確認して実行し、以前の招待を無効化する。</li>
+          <li>有料の専用リンクサービスは採用しない。AndroidはGoogle Play Install Referrerを利用して招待情報を取得する。</li>
+          <li>iOSの1回の貼り付け操作は、追加操作なしの自動復元方針に対する承認済み例外。自動クリップボード読取りを前提にしない。</li>
+          <li>表示名は1〜15文字。前後空白を除去し、空白だけ・改行は禁止。同名を許可し、登録後に変更できる。</li>
+          <li>自己紹介は任意、200文字まで、改行可能。空に戻して削除できる。文字数は見た目上の文字単位で数え、改行は1文字とする。</li>
+          <li>入力画像は10MBまでのJPEG・PNG・HEIC。最大1024×1024のJPEGへ変換し、透過部分は白背景、表示は円形とする。</li>
+          <li>画像失敗時に文字だけ先に公開しない。本人には変更予定内容と送信状態、他人には以前の公開内容を表示する。</li>
+          <li>接続復帰・アプリ復帰で再試行する。一時失敗は5秒から倍増、最大15分間隔で小さなばらつきを加える。自動再試行では期限を延長しない。</li>
+          <li>送信待ち期限は24時間。超過した未送信操作を自動実行せず、内容と最新状態を確認して新しい操作として再送する。実行不能なら理由を説明する。</li>
+          <li>送信済みで結果不明の操作は、24時間超過だけで未実行と断定しない。結果確認を区別する。</li>
+          <li>申請到着、承認・相互申請による成立、申請の7日間の期限切れをプッシュ通知する。拒否と招待リンク自体の期限切れはプッシュしない。</li>
+          <li>時間帯指定の初期値はライト07:00、ダーク19:00。両方を変更可能で、同じ時刻は保存不可。端末の現地時刻を使い、閉じている間に時刻を過ぎたら復帰時に反映する。</li>
+        </ul>
+      </section>
+      <section aria-labelledby="file-structure">
+        <h2 id="file-structure">File structure</h2>
+        <ul>
+          <li>app/src/app/: Expo Router専用ルート。_layout.tsx、index.tsx、login.tsx、register.tsx、auth/callback.tsx、invitation/[token].tsx、(tabs)/_layout.tsx、(tabs)/home/index.tsx、(tabs)/chat/index.tsx、(tabs)/friends/、(tabs)/mypage/。ルートディレクトリにテストを置かない。</li>
+          <li>app/src/ui/、app/src/navigation/、app/src/theme/: 共通部品、画面分割、起動判定、テーマ。既存の業務モジュールはapp/src/auth/、profiles/、discovery/、invitations/、requests/で拡張する。</li>
+          <li>app/src/storage/、app/src/sync/、app/src/backend/、app/src/notify/: SQLite、送信処理、APIアダプター、通知。画面統合テストはapp/__tests__/に置く。</li>
+          <li>supabase/migrations/0007_command_boundary.sql〜0013_notification_delivery.sql: 新しい権限・操作記録、登録、申請、検索、招待、プロフィール、通知の追加マイグレーション。既存0001〜0006は書き換えない。</li>
+          <li>supabase/functions/_shared/、app-command/、app-query/、notification-dispatch/、device-session/: サーバー共通検証、更新・参照API、通知ワーカー、端末登録。既存friendship-admin/とrequest-expiry/は安全な共通処理に接続する。</li>
+          <li>supabase/tests/database/、supabase/functions/tests/、scripts/test-local-backend.mjs: pgTAP、関数テスト、実際のローカルAuth/Data APIを使う統合テスト。</li>
+          <li>invite-web/index.html、invite-web/app.js、invite-web/styles.css、invite-web/runtime-config.js、scripts/build-invite-web.mjs: フレームワークを追加しない招待Web入口と配信用ビルド。</li>
+          <li>docs/testing/app-foundation-friends-ui.md、docs/operations/app-foundation-friends-ui.md: 実機検証結果とOAuth・通知・リンク・定期処理の設定手順。</li>
+        </ul>
+      </section>
+      <section aria-labelledby="execution-and-verification-contract">
+        <h2 id="execution-and-verification-contract">Execution and verification contract</h2>
+        <ul>
+          <li>タスクは番号順に実行する。各Taskは一つの引き渡し単位。テストを先に失敗させ、実装後に同じコマンドで成功を確認する。タスク内の手順は独立PRに分割しない。</li>
+          <li>app/AGENTS.mdに従い、コードを書く前に https://docs.expo.dev/versions/v57.0.0/ と利用するSDK 57のAPIページを読む。Context7はlibraryで解決後にdocsを取得する。現行版だけの例をSDK 57へ無検証で移植しない。</li>
+          <li>計画作成時の基準は16スイート・90テスト成功、npm run typecheck成功。既存の正常系ヘルパーテストだけを完成証拠にしない。</li>
+          <li>作業ディレクトリ指定がないコマンドはリポジトリルートで実行する。npm --prefix appはapp/のスクリプトを実行する。新規テスト名は各Taskが作成する実ファイル名である。</li>
+          <li>DB検証は専用のローカルSupabaseで実施する。初期化はnpx supabase start、続いてnpx supabase db reset --local --no-seed。resetはローカル検証データを消すため、作業用DBに未保存データがないことを確認する。remote/linkedのresetを使わない。</li>
+          <li>config.tomlは存在しないseed.sqlを参照している。新しいテストは独立fixtureを作り、固定日付の旧seedをそのまま実行しない。ローカルAuthの実ユーザーを生成し、テスト終了時に削除する。</li>
+          <li>各Taskは対象のテストに加えてnpm --prefix app run typecheckを実行する。Edge FunctionsのHTTP統合検証では別プロセスでnpx supabase functions serveを起動する。全体回帰はTask 22で行い、新規失敗があれば関連Taskの完了を見直す。</li>
+          <li>必要な外部入力は実際のiOS bundle ID、Android package、Apple team ID、App Store ID、Android署名SHA-256、HTTPS招待ドメイン、Supabase URL・公開キー、OAuth設定、通知資格情報、検証端末とストア配布権限。値を捏造しない。コードは環境変数で受け取り、不足ならビルド・配信前チェックを失敗させる。</li>
+          <li>外部設定が未提供でも純粋処理・ローカル統合は進められるが、OAuth実通信・ドメイン関連付け・プッシュ・ストア検証を成功扱いにしない。必要な工程で利用可能な設定を確認し、阻害条件と残る検証を報告する。</li>
+        </ul>
+      </section>
+      <article data-task-number="1" aria-labelledby="task-1-routerの入口と画面テスト基盤">
+        <h2 id="task-1-routerの入口と画面テスト基盤">Task 1: Routerの入口と画面テスト基盤</h2>
+        <ol>
+          <li>app/package.json、babel.config.js、index.ts、app.json、app/src/app/_layout.tsxと(tabs)配下を編集し、app/__tests__/navigation-shell.test.tsxを作る。既存App.tsxを唯一の起動点とするscaffoldテストは実際のRouter起動を検証する形へ変更する。</li>
+          <li>app/でnpx expo install expo-router react-native-safe-area-context react-native-screens expo-linking expo-constants expo-system-ui expo-dev-clientを実行する。続いてnpx expo install jest-expo jest @types/jest @testing-library/react-native --devを実行し、lockfileを更新する。Jestはjest-expoプリセットに移し、既存ヘルパーテストも保持する。</li>
+          <li>index.tsは必要な起動処理の後でexpo-router/entryを読み込む。ルートはsrc/appに統一する。4つの日本語ラベル、ホーム・チャットの準備中、友達・マイページの到達先を実装する。未実装の業務操作を成功表示しない。</li>
+          <li>検証: npm --prefix app test -- --runInBand __tests__/navigation-shell.test.tsx __tests__/scaffold.test.ts。4タブ表示と入口が一致すること。app/でnpx expo install --check、npx expo config --type publicも実行し、SDK整合性を確認する。</li>
+        </ol>
+      </article>
+      <article data-task-number="2" aria-labelledby="task-2-認証済み操作境界と実dbテスト">
+        <h2 id="task-2-認証済み操作境界と実dbテスト">Task 2: 認証済み操作境界と実DBテスト</h2>
+        <ol>
+          <li>supabase/migrations/0007_command_boundary.sql、functions/_shared/auth.ts、_shared/commands.ts、app-command/index.ts、functions/deno.json、tests/database/command-boundary.test.sql、functions/tests/command-boundary.test.ts、scripts/test-local-backend.mjsを作る。</li>
+          <li>actorは検証済みJWTから求める。operation_id、kind、payload、payload_hash、actor_id、確定結果を保存し、同一actor・IDの同一内容は同じ結果、異内容は競合にする。操作記録と業務変更は同一DBトランザクション内で確定し、クライアントがactorを偽装できない構成にする。</li>
+          <li>0006の直接書込みによる承認迂回、既存create_friendship_from_requestの無制限実行、未検証friendship-admin経路を閉じる。読み取りは必要な範囲を維持し、更新は専用境界へ寄せる。SECURITY DEFINER関数は固定search_pathと限定EXECUTE権限を持たせる。</li>
+          <li>ローカルテストrunnerはSupabase statusの機械可読出力から接続情報を内部取得し、秘密値をログしない。実Authユーザー2人と第三者を作り、未認証・偽装・直接テーブル/RPC呼出しを拒否する。検証: npx supabase test db、deno test --allow-env --allow-net --config supabase/functions/deno.json supabase/functions/tests/command-boundary.test.ts、node scripts/test-local-backend.mjs --suite command-boundary。</li>
+        </ol>
+      </article>
+      <article data-task-number="3" aria-labelledby="task-3-登録確定と共有入力ルール">
+        <h2 id="task-3-登録確定と共有入力ルール">Task 3: 登録確定と共有入力ルール</h2>
+        <ol>
+          <li>supabase/migrations/0008_registration_profile_version.sql、functions/_shared/profile-validation.ts、app/src/profiles/validation.ts、validation.test.ts、supabase/tests/database/registration.test.sqlを作り、既存registration.tsを接続する。プロフィール版番号と案内済み状態を追加する。</li>
+          <li>registerとmark_onboarding_seenを操作境界に実装する。IDの正規化・変更禁止・原子的一意性、表示名の見た目上15文字、改行・空白、自己紹介200文字の共通fixtureをクライアント・サーバーで検証する。文字列.lengthやPostgres char_lengthを見た目上文字数の代用にしない。</li>
+          <li>不適合な既存データを切り捨てたり自動改名しない。事前検査で報告し、制約追加の移行を止める。新規登録・更新はサーバーでも同じルールを適用する。</li>
+          <li>検証: npm --prefix app test -- --runInBand src/profiles/validation.test.ts src/profiles/registration.test.ts、npx supabase test db、node scripts/test-local-backend.mjs --suite registration。大文字違い同時登録は一方だけ成功、絵文字・結合文字・境界値は両環境一致。</li>
+        </ol>
+      </article>
+      <article data-task-number="4" aria-labelledby="task-4-申請の原子的遷移と期限切れ">
+        <h2 id="task-4-申請の原子的遷移と期限切れ">Task 4: 申請の原子的遷移と期限切れ</h2>
+        <ol>
+          <li>supabase/migrations/0009_request_transitions.sql、functions/_shared/request-commands.ts、tests/database/requests.test.sql、functions/tests/requests.test.tsを作り、friendship-admin/index.tsとrequest-expiry/index.tsを修正する。</li>
+          <li>request、approve、reject、cancelを操作境界へ実装する。新規は相手ID、決定操作はrequest_idを指定し、再申請後の別申請へ古い取消・承認を適用しない。未順序ペア単位のロックで逆方向同時申請、取消対承認、失効対承認を直列化する。</li>
+          <li>サーバー時刻で7日を判定し、定期処理が遅れても期限切れ承認を拒否する。拒否は送信者向け結果で中立化し、申請中と終了履歴を分け、終了後7日だけ表示する。再申請は別IDで即時可能。成立と通知用のドメインイベントを一度だけ記録する。</li>
+          <li>検証: npx supabase test db、deno test --allow-env --allow-net --config supabase/functions/deno.json supabase/functions/tests/requests.test.ts、node scripts/test-local-backend.mjs --suite requests。runnerは並行HTTP要求で競合を再現し、古い申請ID・第三者・重複操作を検証する。</li>
+        </ol>
+      </article>
+      <article data-task-number="5" aria-labelledby="task-5-検索プロフィール一覧の参照api">
+        <h2 id="task-5-検索プロフィール一覧の参照api">Task 5: 検索・プロフィール・一覧の参照API</h2>
+        <ol>
+          <li>supabase/migrations/0010_discovery_queries.sql、functions/app-query/index.ts、functions/_shared/queries.ts、tests/database/discovery.test.sql、app/src/backend/queries.ts、app/src/discovery/lookup.tsとlookup.test.tsを作成・更新する。</li>
+          <li>search_profiles(query,cursor)、get_profile(userId)、list_friends、list_requests(direction,cursor)の契約を実装する。IDのアンダースコアをLIKEワイルドカードにしない。完全一致・前方一致・部分一致と正規化ID・内部IDの安定キーで20件のページ境界を作る。</li>
+          <li>自分・双方向ブロック除外、友達・申請状態の付与、友達以外へのStreak非公開をサーバーで守る。公開DTOに拒否理由や私的進捗を出さず、未登録actorの検索を拒否する。旧resolveSingleCandidateは複数候補検索の入口として使用しない。</li>
+          <li>検証: npx supabase test db、node scripts/test-local-backend.mjs --suite discovery、npm --prefix app test -- --runInBand src/discovery/lookup.test.ts。21件以上、同名、大文字違い、_を含む検索、ページ重複、第三者のStreak参照を確認する。</li>
+        </ol>
+      </article>
+      <article data-task-number="6" aria-labelledby="task-6-招待発行再発行解決api">
+        <h2 id="task-6-招待発行再発行解決api">Task 6: 招待発行・再発行・解決API</h2>
+        <ol>
+          <li>supabase/migrations/0011_invitation_lifecycle.sql、functions/_shared/invitation-commands.ts、tests/database/invitations.test.sqlを作り、app-commandとapp-queryに招待処理を追加する。</li>
+          <li>招待の有効期限、明示的な失効、複数人利用を区別する。旧used_atを一回利用制限と解釈しない。get_or_create_invitationは有効な既存招待を返し、reissue_invitationは旧招待失効と新規発行を同一トランザクションにする。</li>
+          <li>resolve_invitationは推測困難なトークンを検証し、確認用の相手情報だけを返す。申請確定時もトークンの有効性を確認し、画面表示後の再発行・失効をすり抜けさせない。招待の全件列挙を公開しない。</li>
+          <li>検証: npx supabase test db、node scripts/test-local-backend.mjs --suite invitations。複数人が同一招待から申請でき、再発行後の旧リンク・期限境界・同時再発行を確認する。</li>
+        </ol>
+      </article>
+      <article data-task-number="7" aria-labelledby="task-7-プロフィール公開の版管理と画像所有権">
+        <h2 id="task-7-プロフィール公開の版管理と画像所有権">Task 7: プロフィール公開の版管理と画像所有権</h2>
+        <ol>
+          <li>supabase/migrations/0012_profile_publication.sql、functions/_shared/profile-commands.ts、tests/database/profile-publication.test.sql、app/src/backend/profile.tsを作る。</li>
+          <li>プロフィール更新はbase_version、変更項目、アップロード済み画像参照を受け取る。本人所有の画像の実在と形式を確認し、版番号一致時だけプロフィールと版番号を原子的に更新する。画像は専用バケット内のactor・操作ID別パスとし、他人のパスを参照できなくする。</li>
+          <li>競合時は最新公開内容と版を返し、無条件upsertを行わない。アップロード成功だけでは公開せず、他人からは公開プロフィールが指す画像だけ参照可能にする。文字だけ先に更新する分割処理を作らない。</li>
+          <li>検証: npx supabase test db、node scripts/test-local-backend.mjs --suite profile-publication。同版同時更新は一方のみ成立、未アップロード・他人画像で全項目不変、同一操作再送で版が二重増加しないこと。</li>
+        </ol>
+      </article>
+      <article data-task-number="8" aria-labelledby="task-8-アカウント別sqliteと永続下書き">
+        <h2 id="task-8-アカウント別sqliteと永続下書き">Task 8: アカウント別SQLiteと永続下書き</h2>
+        <ol>
+          <li>app/でnpx expo install expo-sqlite expo-secure-store expo-cryptoを実行する。app/src/storage/database.ts、migrations.ts、drafts.ts、cache.ts、files.ts、app/__tests__/storage.integration.test.tsを作る。</li>
+          <li>SQLiteにはaccount_id付きキャッシュ、下書き、outbox、pending_invitation、device_settingsを定義する。キャッシュはfetched_at、outboxはoperation_id・kind・payload・base_version・created_at・expires_at・attempts・next_attempt_at・stateを持つ。書込みトランザクションと版付きスキーマ移行を実装する。</li>
+          <li>画像を永続領域へコピーしてから参照を確定する。途中失敗で壊れた参照を公開しない。SecureStoreは認証情報に使い、サイズ限界を超えるセッションは分割して復元できるアダプターを作る。アカウント破棄はキャッシュ・画像・下書き・キューを対象とし、テーマは残す。</li>
+          <li>検証: npm --prefix app test -- --runInBand __tests__/storage.integration.test.ts。SQL境界のテストに加え、開発ビルドで書込み→プロセス終了→再起動→復元を実行し、docs/testing/app-foundation-friends-ui.mdに実SQLiteの結果を記録する。モックだけを永続性の証拠にしない。</li>
+        </ol>
+      </article>
+      <article data-task-number="9" aria-labelledby="task-9-送信キューの状態機械とワーカー">
+        <h2 id="task-9-送信キューの状態機械とワーカー">Task 9: 送信キューの状態機械とワーカー</h2>
+        <ol>
+          <li>app/src/sync/types.ts、queue.ts、worker.ts、retry.ts、api.ts、queue.test.ts、worker.test.tsを作る。時計・乱数・ネットワーク・永続ストアを注入可能にする。</li>
+          <li>enqueue、claim、cancelUnsent、reconcile、retryAsNewを実装する。claimと取消は同じSQLiteトランザクション条件で競合を解決し、前景・背景の二重claimを防ぐ。送信前に操作IDを永続化し、失われた応答は結果確認へ移す。</li>
+          <li>24時間、5秒倍増・最大15分、期限を延長しない自動再試行を実装する。プロフィール未送信更新だけを最新保存へ統合する。送信済みのIDは異なるpayloadに使い回さず、先行結果不明の同対象後続処理は待たせる。</li>
+          <li>検証: npm --prefix app test -- --runInBand src/sync/queue.test.ts src/sync/worker.test.ts。受付後応答喪失、再起動時のclaim回収、取消競合、結果不明の24時間超過、独立操作の継続、アカウント切替を確認する。</li>
+        </ol>
+      </article>
+      <article data-task-number="10" aria-labelledby="task-10-oauth登録画面と起動分岐">
+        <h2 id="task-10-oauth登録画面と起動分岐">Task 10: OAuth・登録画面と起動分岐</h2>
+        <ol>
+          <li>app/でnpx expo install expo-auth-session expo-web-browserを実行する。src/backend/client.ts、auth/provider.tsx、auth/oauth.ts、navigation/entry.ts、src/app/login.tsx、register.tsx、auth/callback.tsx、__tests__/registration-flow.test.tsxを作り、src/app/_layout.tsxを接続する。</li>
+          <li>Supabase PKCEのOAuthをApple・Googleだけに接続し、callback URLと検証済みセッションを使用する。OAuth URL、トークン、招待を混同しない。ログイン取消・通信失敗では再試行と入力保持を提供する。</li>
+          <li>登録確認、ID衝突候補、未登録ガード、アカウント別下書き、通常cold起動ホーム・warm復帰詳細を実装する。初回案内済みはサーバー保存し、招待先確認到達時も更新する。Supabase設定のメール登録を無効化し、OAuth設定は秘密値を環境で供給する。</li>
+          <li>検証: npm --prefix app test -- --runInBand __tests__/registration-flow.test.tsx src/auth/session.test.ts。実OAuthは開発ビルドのiOS・Androidで成功・取消・callback中断を確認し、未提供の認証設定をモック成功で代替しない。</li>
+        </ol>
+      </article>
+      <article data-task-number="11" aria-labelledby="task-11-モノトーンuiテーマ可変レイアウト">
+        <h2 id="task-11-モノトーンuiテーマ可変レイアウト">Task 11: モノトーンUI・テーマ・可変レイアウト</h2>
+        <ol>
+          <li>app/src/theme/tokens.ts、schedule.ts、provider.tsx、src/ui/Screen.tsx、Button.tsx、Field.tsx、StatusNotice.tsx、src/navigation/AdaptiveLayout.tsx、src/app/(tabs)/mypage/theme.tsx、__tests__/theme-layout.test.tsxを作る。</li>
+          <li>承認済み試作Aの配色・文字・区切りを意味別トークンに整理する。4テーマ、端末設定永続化、現地時刻07:00/19:00、同時刻拒否、復帰時とタイムゾーン変更時の再評価を実装する。</li>
+          <li>900境界と文字サイズで下部タブ/左ナビを切り替え、同じ選択状態・下書きを使う。SDK 57のiOS専用SplitViewをタブ内に置かず、共通の一覧/詳細レイアウトを使う。入力ラベル・読み上げ・フォーカス・押下状態・safe areaを実装する。</li>
+          <li>検証: npm --prefix app test -- --runInBand __tests__/theme-layout.test.tsx。899/900、日跨ぎ、同時刻、端末テーマ変更を確認し、実機の小画面・タブレット・最大文字サイズ・両テーマのスクリーンショットを記録する。</li>
+        </ol>
+      </article>
+      <article data-task-number="12" aria-labelledby="task-12-友達一覧部分一致検索プロフィール閲覧">
+        <h2 id="task-12-友達一覧部分一致検索プロフィール閲覧">Task 12: 友達一覧・部分一致検索・プロフィール閲覧</h2>
+        <ol>
+          <li>app/src/app/(tabs)/friends/_layout.tsx、index.tsx、add.tsx、[userId].tsx、src/discovery/searchController.ts、src/requests/friendsRepository.ts、__tests__/friends-discovery.test.tsxを作る。</li>
+          <li>検索debounce、変換中抑止、世代別結果破棄、ページ追加、関係ラベルを参照APIに接続する。検索条件変更でcursorをリセットする。友達一覧はキャッシュと最終更新表示を持ち、復帰・成立時に更新する。</li>
+          <li>候補選択から確認プロフィールへ進め、未確定の申請を友達として描画しない。空・初回読込・通信失敗・オフライン・ブロックによる消失を区別する。友達0人の案内とあとで操作を接続する。</li>
+          <li>検証: npm --prefix app test -- --runInBand __tests__/friends-discovery.test.tsx。2文字境界、300ミリ秒、遅い旧応答、もっと見る、同名、友達前後のStreak表示、幅変更後の選択保持を確認する。</li>
+        </ol>
+      </article>
+      <article data-task-number="13" aria-labelledby="task-13-受信送信申請と共通送信状況の画面">
+        <h2 id="task-13-受信送信申請と共通送信状況の画面">Task 13: 受信・送信申請と共通送信状況の画面</h2>
+        <ol>
+          <li>app/src/app/(tabs)/friends/requests.tsx、src/app/(tabs)/mypage/sync.tsx、src/requests/RequestList.tsx、src/sync/SyncStatus.tsx、__tests__/request-flow.test.tsx、__tests__/sync-status.test.tsxを作る。</li>
+          <li>受信・送信切替、直接承認、確認付き拒否・取消、中立的終了表示、7日履歴、即時再申請を実APIとキューへ接続する。成立後の次回抽選案内は同じ画面で表示する。</li>
+          <li>未完了件数入口、送信待ち取消、結果確認中、個別失敗、24時間超過後の内容確認・新操作IDでの再送を実装する。旧申請の再送は最新のrequest_idを勝手に置換しない。</li>
+          <li>検証: npm --prefix app test -- --runInBand __tests__/request-flow.test.tsx __tests__/sync-status.test.tsx。承認待ちの一覧残留、相手の取消、期限切れ、ダブルタップ、取消確認の中断、同対象の順序と独立操作を確認する。</li>
+        </ol>
+      </article>
+      <article data-task-number="14" aria-labelledby="task-14-招待保存qrios貼り付けandroid取得">
+        <h2 id="task-14-招待保存qrios貼り付けandroid取得">Task 14: 招待保存・QR・iOS貼り付け・Android取得</h2>
+        <ol>
+          <li>app/でnpx expo install expo-camera expo-clipboard expo-application react-native-svgを実行し、npm install qrcode-generatorを実行する。src/invitations/pending.ts、links.ts、scanner.tsx、InvitePanel.tsx、InstallHandoff.tsx、src/app/invitation/[token].tsx、__tests__/invitation-flow.test.tsxを作る。</li>
+          <li>QRはURLから生成した行列をSVGで表示し、カメラのQR読取りとCamera.scanFromURLAsyncの保存画像読取りを接続する。画面非表示時はカメラを停止する。複数コード・不正URL・権限拒否は申請を起こさず説明する。</li>
+          <li>AndroidはApplication.getInstallReferrerAsyncを使い、完全URLとは限らない値から許可した招待パラメータを解析する。iOSはClipboardPasteButtonの明示的操作を使う。OS標準ラベルは書換えず、近接説明に招待を貼り付ける用途を示す。起動時の自動読取りは行わない。</li>
+          <li>最初の招待の保存・OAuthをまたぐ復元・案内済み記録・失効表示を実装する。有効リンク再利用、再発行確認、オフラインの取得時点表示をAPIに接続する。検証: npm --prefix app test -- --runInBand __tests__/invitation-flow.test.tsx。別招待・再起動・OAuth callback・復元不能・再発行競合を確認する。</li>
+        </ol>
+      </article>
+      <article data-task-number="15" aria-labelledby="task-15-招待web入口とドメイン関連付け">
+        <h2 id="task-15-招待web入口とドメイン関連付け">Task 15: 招待Web入口とドメイン関連付け</h2>
+        <ol>
+          <li>invite-web/index.html、app.js、styles.css、runtime-config.js、scripts/build-invite-web.mjs、scripts/invite-web.test.mjs、app/app.config.tsを作る。app.jsonの既存値を取り込み、秘密値を含まない配布設定を生成する。</li>
+          <li>ビルドはINVITE_ORIGIN、IOS_BUNDLE_ID、APPLE_TEAM_ID、APP_STORE_ID、ANDROID_PACKAGE、ANDROID_CERT_SHA256を検証し、不足なら失敗する。出力にapple-app-site-associationと.well-known/assetlinks.jsonを含める。SDK 57の関連ドメインとAndroid intent filtersを同じ値から設定する。</li>
+          <li>AndroidはURLエンコードした招待トークンをGoogle Playのreferrerに載せる。iOSはHTTPS上の本人の操作内でクリップボード書込みを開始し、成功後にApp Storeへ進む。コピー失敗では成功を装わず再試行・リンク再開方法を表示する。招待文字列をHTMLとして挿入しない。</li>
+          <li>検証: node --test scripts/invite-web.test.mjs、node scripts/build-invite-web.mjs。実値がない場合はテスト用設定で出力検証し、公開済みとは記録しない。docs/operations/app-foundation-friends-ui.mdにHTTPS配信、リダイレクトなしの関連付けファイル、署名一致、実ストアURLの確認手順を記録する。</li>
+        </ol>
+      </article>
+      <article data-task-number="16" aria-labelledby="task-16-プロフィール画像処理と永続化">
+        <h2 id="task-16-プロフィール画像処理と永続化">Task 16: プロフィール画像処理と永続化</h2>
+        <ol>
+          <li>app/でnpx expo install expo-image-manipulatorを実行する。src/media/avatar.ts、AvatarPicker.tsx、avatar.test.ts、src/storage/files.tsを作成・更新する。</li>
+          <li>既存image-pickerで撮影・画像選択・正方形切り抜きを行い、元画像の形式・10MB境界を確認する。向きを補正し、最大1024×1024、白背景のJPEGとして永続領域に確定する。OSのキャンセルをエラーや画像削除にしない。</li>
+          <li>JPEG変換だけで透過が白になると仮定しない。両OSで白背景合成を確認し、必要なら既存描画部品を用いた合成処理を実装する。画像参照と下書き保存を整合させ、ディスク不足・処理失敗では旧下書きを保持する。</li>
+          <li>検証: npm --prefix app test -- --runInBand src/media/avatar.test.ts。JPEG/PNG/HEIC、透過、EXIF回転、サイズ境界、削除・取消を確認し、実機画像の寸法・背景・再起動後読込みを記録する。</li>
+        </ol>
+      </article>
+      <article data-task-number="17" aria-labelledby="task-17-プロフィール編集競合解決画面">
+        <h2 id="task-17-プロフィール編集競合解決画面">Task 17: プロフィール編集・競合解決画面</h2>
+        <ol>
+          <li>app/src/app/(tabs)/mypage/index.tsx、edit.tsx、conflict.tsx、src/profiles/editor.ts、conflict.ts、__tests__/profile-editor.test.tsxを作る。</li>
+          <li>編集不可User ID、表示名・自己紹介・画像編集を実装する。入力中の下書きと保存による送信予約を分け、戻る・タブ・外部リンク移動でも下書きを保持する。保存前の検証エラーを項目の近くに表示する。</li>
+          <li>本人の変更予定と公開内容を区別し、画像アップロード→版検証→全体公開をキューに接続する。競合は項目別比較・選択→最新base_versionで新操作として保存する。競合画面を開いた後の再競合も上書きしない。</li>
+          <li>検証: npm --prefix app test -- --runInBand __tests__/profile-editor.test.tsx。画像失敗時の公開内容不変、複数保存統合、取消後下書き、別端末競合、ログアウトデータ消去、文字数の画面とサーバー一致を確認する。</li>
+        </ol>
+      </article>
+      <article data-task-number="18" aria-labelledby="task-18-通知イベント端末登録配信ワーカー">
+        <h2 id="task-18-通知イベント端末登録配信ワーカー">Task 18: 通知イベント・端末登録・配信ワーカー</h2>
+        <ol>
+          <li>supabase/migrations/0013_notification_delivery.sql、functions/device-session/index.ts、notification-dispatch/index.ts、_shared/notifications.ts、tests/database/notifications.test.sql、functions/tests/notifications.test.tsを作る。</li>
+          <li>端末登録は認証済みactorとセッションに結び付ける。request_created、friendship_established、request_expiredの確定イベントからevent_id・device_id単位の配送を生成する。rejectとinvitation_expiredは配送しない。定期処理の二重起動はDBでclaimする。</li>
+          <li>Expo Notificationsで取得した配信先へ送るアダプターを分離し、送信結果・receipt・無効トークンを扱う。送信者名と出来事を含め、private進捗を含めない。provider受付後の応答喪失を無条件再配信せず結果不明として記録する。OS配信の完全なexactly-onceを主張しない。</li>
+          <li>request-expiryとnotification-dispatchの認証された定期呼出しを設定手順・検証コマンドに含める。検証: npx supabase test db、deno test --allow-env --allow-net --config supabase/functions/deno.json supabase/functions/tests/notifications.test.ts、node scripts/test-local-backend.mjs --suite notifications。複数端末・失効・無権限登録・同じイベントの再処理を確認する。</li>
+        </ol>
+      </article>
+      <article data-task-number="19" aria-labelledby="task-19-通知受信画面更新外部入口の統合">
+        <h2 id="task-19-通知受信画面更新外部入口の統合">Task 19: 通知受信・画面更新・外部入口の統合</h2>
+        <ol>
+          <li>app/src/notify/registration.ts、listener.ts、src/navigation/externalEntry.ts、__tests__/notification-entry.test.tsxを作り、友達タブとルートレイアウトに接続する。</li>
+          <li>友達タブの有効化操作でだけOS許可を要求し、許可済み端末を登録する。前景ではバナー・音を抑止し、アプリ内案内と受信件数を更新する。リアルタイム通知または復帰時の再取得で各一覧を更新し、キャッシュだけで相手の変更を見落とさない。</li>
+          <li>初回通知応答と実行中の応答を共通化し、同じ通知をcold起動のたびに再処理しない。未登録なら入口を保持し、登録後に最新request_idを確認して受信一覧へ進む。終了済みは説明し、編集下書きは失わない。</li>
+          <li>検証: npm --prefix app test -- --runInBand __tests__/notification-entry.test.tsx。権限拒否、2端末、前景・背景・終了状態、古い通知、重複callback、招待/OAuthとの混同を検証する。実プッシュ確認には構成済み開発ビルドを使う。</li>
+        </ol>
+      </article>
+      <article data-task-number="20" aria-labelledby="task-20-バックグラウンド再送とログアウト境界">
+        <h2 id="task-20-バックグラウンド再送とログアウト境界">Task 20: バックグラウンド再送とログアウト境界</h2>
+        <ol>
+          <li>app/でnpx expo install expo-background-task expo-task-manager expo-networkを実行する。src/sync/background.ts、lifecycle.ts、src/auth/logout.ts、__tests__/sync-lifecycle.test.ts、app/index.tsを作成・更新する。</li>
+          <li>TaskManagerのタスク定義をRouter起動前に読み込み、UIなしで同じSQLiteキューとワーカーを使う。アプリ復帰・ネットワーク復帰も同じclaim経路を使う。認証失効では別アカウントの資格情報で再送せず停止する。</li>
+          <li>ログアウトは未送信確認、worker停止、端末配信登録の失効、セッション破棄、アカウント保存領域消去を順序付ける。遅れて戻った応答で消去後のアカウントを復活させない。テーマは保持する。</li>
+          <li>検証: npm --prefix app test -- --runInBand __tests__/sync-lifecycle.test.ts。前景/背景同時送信、タスクキル、期限超過、ログアウト中の応答を確認する。オフラインログアウトはサーバーへ即時通知できず、配信済みOS通知も取り消せないため、その境界を実機で記録し、仕様の通知停止条件と両立しない場合は完了扱いにせず設計へ戻す。</li>
+        </ol>
+      </article>
+      <article data-task-number="21" aria-labelledby="task-21-実データ通し操作とネイティブ配布設定">
+        <h2 id="task-21-実データ通し操作とネイティブ配布設定">Task 21: 実データ通し操作とネイティブ配布設定</h2>
+        <ol>
+          <li>app/__tests__/app-journey.test.tsx、scripts/check-native-config.mjs、app/eas.json、docs/testing/app-foundation-friends-ui.md、docs/operations/app-foundation-friends-ui.mdを作成・更新する。開発・検証用ビルド設定を実際のアプリ識別子に結び付ける。</li>
+          <li>実ローカルバックエンドでA/B両ユーザーの登録、部分一致検索、申請、承認、成立、プロフィール更新、オフライン操作・再起動を通す。OAuth自体の実機検証とは別の証拠として記録する。既存90テストのfixtureが新制約と衝突した場合は業務期待を保持してfixtureを修正する。</li>
+          <li>検証: npm --prefix app test -- --runInBand __tests__/app-journey.test.tsx、node scripts/test-local-backend.mjs --suite all、node scripts/check-native-config.mjs。app/でnpx expo run:ios --device、npx expo run:android --deviceを実行する。資格情報・端末不足はその工程の阻害条件として報告する。</li>
+          <li>iPhone・Android・タブレットで登録、画像、QR、明暗、文字拡大、幅変更、音声読み上げを確認し、端末・OS・ビルド・手順・期待値・実結果を記録する。見た目検証用HTMLをアプリ動作の代わりに使わない。</li>
+        </ol>
+      </article>
+      <article data-task-number="22" aria-labelledby="task-22-ストア引き継ぎ通知全体回帰の完了確認">
+        <h2 id="task-22-ストア引き継ぎ通知全体回帰の完了確認">Task 22: ストア引き継ぎ・通知・全体回帰の完了確認</h2>
+        <ol>
+          <li>docs/testing/app-foundation-friends-ui.mdに仕様の14節とTask 1〜21の対応表を作り、各要件のテスト名・実機証拠を結び付ける。未実施を合格に置き換えない。</li>
+          <li>Google Playの検証配布から実際にインストールし、referrer取得→登録→最初の招待先を確認する。iOSはHTTPS招待ページ→コピー→App Storeからインストール→標準貼り付け→登録→確認を実施する。コピー消失、失効、別招待、復帰、中断も確認する。TestFlightだけでApp Store経由の成立を証明しない。</li>
+          <li>実プッシュは2端末・前景・背景・終了・ログアウトを確認する。バックグラウンドのOS制約と配信済み通知の扱いを記録する。検証不能のストア条件が残る場合は本番完成を宣言しない。</li>
+          <li>最終コマンド: npm --prefix app test -- --runInBand、npm --prefix app run typecheck、npx supabase test db、deno test --allow-env --allow-net --config supabase/functions/deno.json supabase/functions/tests、node scripts/test-local-backend.mjs --suite all、node --test scripts/invite-web.test.mjs、git diff --check。全自動検証と必要な実機証拠が揃った時点で今回範囲を完了とする。</li>
+        </ol>
+      </article>
+      <section aria-labelledby="documentation-sources">
+        <h2 id="documentation-sources">Documentation sources</h2>
+        <ul>
+          <li><a href="https://docs.expo.dev/versions/v57.0.0/">Expo SDK 57</a>: Node・React Native・OSの対応条件。SDK 57はReact Native 0.86、iOS 16.4以上を対象とする。</li>
+          <li><a href="https://docs.expo.dev/router/installation/">Expo Router installation</a>: Router入口と必要依存関係。</li>
+          <li><a href="https://docs.expo.dev/router/reference/testing/">Expo Router testing</a>: jest-expoとルート外テスト配置。</li>
+          <li><a href="https://docs.expo.dev/versions/v57.0.0/sdk/clipboard/">Expo Clipboard SDK 57</a>: ClipboardPasteButtonと変更できないOSラベル。</li>
+          <li><a href="https://docs.expo.dev/versions/v57.0.0/sdk/application/">Expo Application SDK 57</a>: getInstallReferrerAsyncとGoogle Play由来のエラー。</li>
+          <li><a href="https://docs.expo.dev/versions/v57.0.0/sdk/camera/">Expo Camera SDK 57</a>: カメラと保存画像のQR読取り。</li>
+          <li><a href="https://supabase.com/docs/reference/cli/introduction">Supabase CLI</a>: ローカル開始、DB reset、DBテストと関数実行。破壊的検証は専用ローカルDBに限定する。</li>
+        </ul>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
