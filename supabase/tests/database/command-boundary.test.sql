@@ -181,8 +181,8 @@ select is(
     where schemaname = 'public'
       and tablename = 'invitations'
       and cmd = 'SELECT'),
-  2::bigint,
-  'invitations open and owner reads are kept');
+  1::bigint,
+  'the owner read is kept; the open read moved to app_query (Task 6)');
 
 select ok(
   not has_function_privilege('anon',

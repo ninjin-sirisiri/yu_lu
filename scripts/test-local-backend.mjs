@@ -5,6 +5,7 @@
 //        node scripts/test-local-backend.mjs --suite registration
 //        node scripts/test-local-backend.mjs --suite requests
 //        node scripts/test-local-backend.mjs --suite discovery
+//        node scripts/test-local-backend.mjs --suite invitations
 //        node scripts/test-local-backend.mjs --suite all
 //
 // Ownership: real-stack verification of the authenticated command boundary.
@@ -37,7 +38,18 @@
 // underscore-literal matching, duplicate display names, self and block
 // exclusion, streak visibility limited to friends, relationship
 // attachment, friend and request listing pages, and the masked
-// incoming/outgoing request listings (discovery).
+// incoming/outgoing request listings (discovery); invitation issue and
+// idempotent get_or_create, the confirmation-only resolve shape with
+// exact-token 404s, three applicants applying from one invitation (never
+// consumed - legacy used_at stays untouched), request-time token checks
+// (wrong inviter, unknown, malformed, self, duplicate), reissue killing the
+// old link while a fresh apply works through the new one, the server-time
+// expiry boundary (unexpired valid / at-boundary expired / fresh issue
+// replaces), idempotent explicit invalidation, concurrent reissues leaving
+// exactly one valid invitation, per-user row visibility (no enumeration),
+// the closed direct-write path, the missing list-all op, operation-log
+// replay/conflict, third-party isolation, and a block hiding the
+// invitation from resolve (invitations).
 
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -2855,6 +2867,910 @@ function discoverySuite(status, users) {
   ];
 }
 
+// ---------------------------------------------------------------------------
+// Suite: invitations (Task 6 invitation lifecycle)
+// ---------------------------------------------------------------------------
+
+const INVITATION_MESSAGES_HTTP = {
+  notRegistered: 'Confirm the User ID before using the app.',
+  tokenRequired: 'invitation_token is required',
+  tokenType: 'invitation_token must be a string',
+  tokenFormat:
+    'invitation_token must be a 32-character lowercase hexadecimal string',
+  notFound: 'invitation not found',
+  notForTarget: 'This invitation is for a different user.',
+  invalidated: 'This invitation is no longer valid. Ask for a new invitation.',
+  expired: 'This invitation expired. Ask for a new invitation.',
+  duplicate: 'A request is already pending. Open the existing request.',
+  selfRequest: 'self request is not allowed',
+  opConflict:
+    'operation conflict: operation_id already used with different kind or payload',
+  unknownOp: 'unknown query op: list_invitations',
+};
+
+const INVITATION_TOKEN_PATTERN = /^[0-9a-f]{32}$/;
+
+function invitationsSuite(status, users) {
+  const { invI, invA1, invA2, invA3, invA4, invU } = users;
+  const envelope = (kind, payload, id = randomUUID()) => ({
+    operation_id: id,
+    kind,
+    payload,
+  });
+  const cmd = (user, kind, payload, id) =>
+    postFunction(status, 'app-command', {
+      token: user.token,
+      body: envelope(kind, payload, id),
+    });
+  const query = (user, op, payload) =>
+    postFunction(status, 'app-query', {
+      token: user && user.token,
+      body: { op, payload },
+    });
+  const service = (path, opts = {}) =>
+    postRest(status, path, {
+      method: 'GET',
+      apikey: status.SERVICE_ROLE_KEY,
+      token: status.SERVICE_ROLE_KEY,
+      ...opts,
+    });
+  const resolve = async (user, token) =>
+    await expectJson(
+      await query(user, 'resolve_invitation', { invitation_token: token }),
+      200,
+      'resolve',
+    );
+  const inviterRows = async () =>
+    await expectJson(
+      await service(
+        `invitations?inviter_user_id=eq.${invI.id}` +
+          '&select=invitation_id,invitation_token,invalidated_at,expires_at',
+      ),
+      200,
+      'inviter invitation rows',
+    );
+  // Unique-per-run User ID prefix derived from the (random) user uuid, so a
+  // crashed earlier run can never make a registration collide.
+  const uid = (user, prefix) =>
+    `${prefix}${user.id.replaceAll('-', '').slice(0, 6)}`;
+  const invUserId = uid(invI, 'Inv_');
+  const applicantIds = [invA1, invA2, invA3, invA4].map((u, i) =>
+    uid(u, `App${i + 1}_`)
+  );
+
+  return [
+    {
+      name: 'invitation accounts register first',
+      run: async () => {
+        const results = await Promise.all([
+          cmd(invI, 'register', { user_id_text: invUserId, display_name: 'Inviter' }),
+          cmd(invA1, 'register', {
+            user_id_text: applicantIds[0],
+            display_name: 'App One',
+          }),
+          cmd(invA2, 'register', {
+            user_id_text: applicantIds[1],
+            display_name: 'App Two',
+          }),
+          cmd(invA3, 'register', {
+            user_id_text: applicantIds[2],
+            display_name: 'App Three',
+          }),
+          cmd(invA4, 'register', {
+            user_id_text: applicantIds[3],
+            display_name: 'App Four',
+          }),
+        ]);
+        for (const res of results) {
+          const body = await expectJson(res, 200, 'register');
+          expect(body.status === 'executed', `expected executed, got ${body.status}`);
+        }
+      },
+    },
+    {
+      name: 'the invitation boundaries reject unauthenticated calls',
+      run: async () => {
+        const command = await postFunction(status, 'app-command', {
+          body: envelope('get_or_create_invitation', {}),
+        });
+        await expectJson(command, 401, 'unauthenticated issue');
+        const reissue = await postFunction(status, 'app-command', {
+          body: envelope('reissue_invitation', {}),
+        });
+        await expectJson(reissue, 401, 'unauthenticated reissue');
+        const resolution = await postFunction(status, 'app-query', {
+          body: {
+            op: 'resolve_invitation',
+            payload: { invitation_token: 'f'.repeat(32) },
+          },
+        });
+        await expectJson(resolution, 401, 'unauthenticated resolve');
+        const statusCall = await postFunction(status, 'app-query', {
+          body: { op: 'get_invitation_status', payload: {} },
+        });
+        await expectJson(statusCall, 401, 'unauthenticated status');
+      },
+    },
+    {
+      name: 'an unregistered actor may not issue, resolve or read status',
+      run: async () => {
+        const issue = await cmd(invU, 'get_or_create_invitation', {});
+        const issueBody = await expectJson(issue, 403, 'unregistered issue');
+        expect(
+          issueBody.error === INVITATION_MESSAGES_HTTP.notRegistered,
+          `unexpected body ${JSON.stringify(issueBody)}`,
+        );
+        const resolution = await query(invU, 'resolve_invitation', {
+          invitation_token: 'f'.repeat(32),
+        });
+        const resolutionBody = await expectJson(resolution, 403, 'unregistered resolve');
+        expect(
+          resolutionBody.error === INVITATION_MESSAGES_HTTP.notRegistered,
+          `unexpected body ${JSON.stringify(resolutionBody)}`,
+        );
+        const own = await query(invU, 'get_invitation_status', {});
+        const ownBody = await expectJson(own, 403, 'unregistered status');
+        expect(
+          ownBody.error === INVITATION_MESSAGES_HTTP.notRegistered,
+          `unexpected body ${JSON.stringify(ownBody)}`,
+        );
+      },
+    },
+    {
+      name: 'issuing creates a 7-day invitation with a 128-bit token',
+      run: async (ctx) => {
+        ctx.issueEnv = envelope('get_or_create_invitation', {});
+        const res = await postFunction(status, 'app-command', {
+          token: invI.token,
+          body: ctx.issueEnv,
+        });
+        const body = await expectJson(res, 200, 'first issue');
+        expect(body.status === 'executed', `expected executed, got ${body.status}`);
+        expect(
+          body.result.result === 'created',
+          `unexpected result ${JSON.stringify(body.result)}`,
+        );
+        expect(
+          INVITATION_TOKEN_PATTERN.test(body.result.invitation_token),
+          `token must be 32 lowercase hex chars, got ${body.result.invitation_token}`,
+        );
+        ctx.t1 = body.result.invitation_token;
+        ctx.t1Id = body.result.invitation_id;
+        const ttl = Date.parse(body.result.expires_at) - Date.now();
+        expect(
+          ttl > 6 * 86400_000 && ttl < 8 * 86400_000,
+          `expires_at should be about 7 days out, got ${ttl}ms`,
+        );
+      },
+    },
+    {
+      name: 'a repeated issue returns the same still-valid invitation',
+      run: async (ctx) => {
+        const body = await expectJson(
+          await cmd(invI, 'get_or_create_invitation', {}),
+          200,
+          'second issue',
+        );
+        expect(
+          body.result.result === 'existing' &&
+            body.result.invitation_token === ctx.t1,
+          `expected the existing t1 invitation, got ${JSON.stringify(body.result)}`,
+        );
+        const rows = await inviterRows();
+        expect(
+          rows.length === 1,
+          `repeated get_or_create must not duplicate rows, got ${rows.length}`,
+        );
+      },
+    },
+    {
+      name: 'status re-delivers the live token for link/QR re-display',
+      run: async (ctx) => {
+        const body = await expectJson(
+          await query(invI, 'get_invitation_status', {}),
+          200,
+          'status',
+        );
+        expect(
+          body.result.status === 'valid' &&
+            body.result.invitation_token === ctx.t1,
+          `unexpected status ${JSON.stringify(body.result)}`,
+        );
+      },
+    },
+    {
+      name: 'resolve returns only the inviter confirmation fields',
+      run: async (ctx) => {
+        const body = await resolve(invA1, ctx.t1);
+        expect(
+          body.result.status === 'valid',
+          `expected valid, got ${JSON.stringify(body.result)}`,
+        );
+        expect(
+          body.result.inviter.user_id === invI.id &&
+            body.result.inviter.user_id_text === invUserId &&
+            body.result.inviter.display_name === 'Inviter',
+          `unexpected inviter ${JSON.stringify(body.result.inviter)}`,
+        );
+        const keys = Object.keys(body.result).sort().join(',');
+        expect(
+          keys === 'expires_at,inviter,status',
+          `resolve must carry only the confirmation fields, got ${keys}`,
+        );
+        const inviterKeys = Object.keys(body.result.inviter).sort().join(',');
+        expect(
+          inviterKeys === 'avatar_path,display_name,user_id,user_id_text',
+          `unexpected inviter keys ${inviterKeys}`,
+        );
+      },
+    },
+    {
+      name: 'unknown, malformed and missing tokens are refused by resolve',
+      run: async () => {
+        const unknown = await expectJson(
+          await query(invA1, 'resolve_invitation', {
+            invitation_token: 'f'.repeat(32),
+          }),
+          404,
+          'unknown token',
+        );
+        expect(
+          unknown.error === INVITATION_MESSAGES_HTTP.notFound,
+          `unexpected body ${JSON.stringify(unknown)}`,
+        );
+        const malformed = await expectJson(
+          await query(invA1, 'resolve_invitation', {
+            invitation_token: 'not-a-token',
+          }),
+          400,
+          'malformed token',
+        );
+        expect(
+          malformed.error === INVITATION_MESSAGES_HTTP.tokenFormat,
+          `unexpected body ${JSON.stringify(malformed)}`,
+        );
+        const upper = await expectJson(
+          await query(invA1, 'resolve_invitation', {
+            invitation_token: 'AB'.repeat(16),
+          }),
+          400,
+          'uppercase token',
+        );
+        expect(
+          upper.error === INVITATION_MESSAGES_HTTP.tokenFormat,
+          `unexpected body ${JSON.stringify(upper)}`,
+        );
+        const missing = await expectJson(
+          await query(invA1, 'resolve_invitation', {}),
+          400,
+          'missing token',
+        );
+        expect(
+          missing.error === INVITATION_MESSAGES_HTTP.tokenRequired,
+          `unexpected body ${JSON.stringify(missing)}`,
+        );
+      },
+    },
+    {
+      name: 'three people apply from the same invitation',
+      run: async (ctx) => {
+        const results = await Promise.all(
+          [invA1, invA2, invA3].map((user) =>
+            cmd(user, 'request', {
+              target_user_id: invI.id,
+              invitation_token: ctx.t1,
+            }),
+          ),
+        );
+        for (const res of results) {
+          const body = await expectJson(res, 200, 'invitation apply');
+          expect(
+            body.result.result === 'requested',
+            `unexpected result ${JSON.stringify(body.result)}`,
+          );
+        }
+        const statusDto = await expectJson(
+          await query(invI, 'get_invitation_status', {}),
+          200,
+          'status after applies',
+        );
+        expect(
+          statusDto.result.status === 'valid' &&
+            statusDto.result.invitation_token === ctx.t1,
+          `applying must not consume the invitation: ${JSON.stringify(statusDto.result)}`,
+        );
+        const rows = await expectJson(
+          await service(`invitations?invitation_id=eq.${ctx.t1Id}&select=used_at`),
+          200,
+          'used_at read',
+        );
+        expect(
+          rows.length === 1 && rows[0].used_at === null,
+          `legacy used_at must stay untouched: ${JSON.stringify(rows)}`,
+        );
+        const pending = await expectJson(
+          await service(
+            `friend_requests?recipient_user_id=eq.${invI.id}` +
+              '&status=eq.pending&select=request_id',
+          ),
+          200,
+          'pending read',
+        );
+        expect(
+          pending.length === 3,
+          `expected 3 pending applications, got ${pending.length}`,
+        );
+      },
+    },
+    {
+      name: 'a token from a different inviter is refused at request time',
+      run: async (ctx) => {
+        const body = await expectJson(
+          await cmd(invA4, 'request', {
+            target_user_id: invA2.id,
+            invitation_token: ctx.t1,
+          }),
+          409,
+          'mismatched inviter',
+        );
+        expect(
+          body.error === INVITATION_MESSAGES_HTTP.notForTarget,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'an unknown token is refused at request time',
+      run: async (ctx) => {
+        const body = await expectJson(
+          await cmd(invA4, 'request', {
+            target_user_id: invI.id,
+            invitation_token: 'f'.repeat(32),
+          }),
+          404,
+          'unknown token apply',
+        );
+        expect(
+          body.error === INVITATION_MESSAGES_HTTP.notFound,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+        expect(typeof ctx.t1 === 'string', 'the live token is known');
+      },
+    },
+    {
+      name: 'a malformed token is refused by the request payload gate',
+      run: async (ctx) => {
+        const body = await expectJson(
+          await cmd(invA4, 'request', {
+            target_user_id: invI.id,
+            invitation_token: 'nope',
+          }),
+          400,
+          'malformed token apply',
+        );
+        expect(
+          body.error === INVITATION_MESSAGES_HTTP.tokenFormat,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+        expect(typeof ctx.t1 === 'string', 'the live token is known');
+      },
+    },
+    {
+      name: 'a self request is refused before the token is considered',
+      run: async (ctx) => {
+        const body = await expectJson(
+          await cmd(invI, 'request', {
+            target_user_id: invI.id,
+            invitation_token: ctx.t1,
+          }),
+          400,
+          'self request with token',
+        );
+        expect(
+          body.error === INVITATION_MESSAGES_HTTP.selfRequest,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'a valid token still yields the duplicate guidance',
+      run: async (ctx) => {
+        const body = await expectJson(
+          await cmd(invA1, 'request', {
+            target_user_id: invI.id,
+            invitation_token: ctx.t1,
+          }),
+          409,
+          'duplicate apply',
+        );
+        expect(
+          body.error === INVITATION_MESSAGES_HTTP.duplicate,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'reissue invalidates the old link and mints a new one',
+      run: async (ctx) => {
+        const body = await expectJson(
+          await cmd(invI, 'reissue_invitation', {}),
+          200,
+          'reissue',
+        );
+        expect(
+          body.result.result === 'reissued' &&
+            body.result.invalidated_count === 1,
+          `unexpected result ${JSON.stringify(body.result)}`,
+        );
+        ctx.t2 = body.result.invitation_token;
+        ctx.t2Id = body.result.invitation_id;
+        expect(
+          ctx.t2 !== ctx.t1 && INVITATION_TOKEN_PATTERN.test(ctx.t2),
+          `reissue must mint a different token, got ${ctx.t2}`,
+        );
+        const oldResolve = await resolve(invA1, ctx.t1);
+        expect(
+          oldResolve.result.status === 'invalidated',
+          `the old link must resolve as invalidated: ${JSON.stringify(oldResolve.result)}`,
+        );
+        const newResolve = await resolve(invA1, ctx.t2);
+        expect(
+          newResolve.result.status === 'valid',
+          `the new link must resolve as valid: ${JSON.stringify(newResolve.result)}`,
+        );
+      },
+    },
+    {
+      name: 'the old link is dead at request time after the reissue',
+      run: async (ctx) => {
+        const body = await expectJson(
+          await cmd(invA4, 'request', {
+            target_user_id: invI.id,
+            invitation_token: ctx.t1,
+          }),
+          409,
+          'dead old link',
+        );
+        expect(
+          body.error === INVITATION_MESSAGES_HTTP.invalidated,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'a fresh application works through the reissued link',
+      run: async (ctx) => {
+        const body = await expectJson(
+          await cmd(invA4, 'request', {
+            target_user_id: invI.id,
+            invitation_token: ctx.t2,
+          }),
+          200,
+          'apply through the new link',
+        );
+        expect(
+          body.result.result === 'requested',
+          `unexpected result ${JSON.stringify(body.result)}`,
+        );
+        const pending = await expectJson(
+          await service(
+            `friend_requests?recipient_user_id=eq.${invI.id}` +
+              '&status=eq.pending&select=request_id',
+          ),
+          200,
+          'pending read',
+        );
+        expect(
+          pending.length === 4,
+          `expected 4 pending applications, got ${pending.length}`,
+        );
+      },
+    },
+    {
+      name: 'expiry is judged on server time at the exact boundary',
+      run: async (ctx) => {
+        // One hour in the future: still valid.
+        await expectJson(
+          await service(`invitations?invitation_id=eq.${ctx.t2Id}`, {
+            method: 'PATCH',
+            body: { expires_at: new Date(Date.now() + 3_600_000).toISOString() },
+          }),
+          204,
+          'extend the invitation',
+        );
+        const future = await resolve(invA1, ctx.t2);
+        expect(
+          future.result.status === 'valid',
+          `an unexpired invitation must be valid: ${JSON.stringify(future.result)}`,
+        );
+        // Exactly the boundary (server now): already expired.
+        await expectJson(
+          await service(`invitations?invitation_id=eq.${ctx.t2Id}`, {
+            method: 'PATCH',
+            body: { expires_at: new Date().toISOString() },
+          }),
+          204,
+          'age the invitation to the boundary',
+        );
+        const past = await resolve(invA1, ctx.t2);
+        expect(
+          past.result.status === 'expired',
+          `expires_at = now() must already be expired: ${JSON.stringify(past.result)}`,
+        );
+        const refused = await expectJson(
+          await cmd(invA1, 'request', {
+            target_user_id: invI.id,
+            invitation_token: ctx.t2,
+          }),
+          409,
+          'expired apply',
+        );
+        expect(
+          refused.error === INVITATION_MESSAGES_HTTP.expired,
+          `unexpected body ${JSON.stringify(refused)}`,
+        );
+        // The expired invitation never blocks a fresh issue.
+        const fresh = await expectJson(
+          await cmd(invI, 'get_or_create_invitation', {}),
+          200,
+          'issue after expiry',
+        );
+        expect(
+          fresh.result.result === 'created' &&
+            fresh.result.invitation_token !== ctx.t2,
+          `unexpected result ${JSON.stringify(fresh.result)}`,
+        );
+        ctx.t3 = fresh.result.invitation_token;
+        ctx.t3Id = fresh.result.invitation_id;
+        const again = await expectJson(
+          await cmd(invI, 'get_or_create_invitation', {}),
+          200,
+          'issue again',
+        );
+        expect(
+          again.result.result === 'existing' &&
+            again.result.invitation_token === ctx.t3,
+          `the fresh issue is the only live invitation: ${JSON.stringify(again.result)}`,
+        );
+      },
+    },
+    {
+      name: 'the legacy used_at marker does not gate validity',
+      run: async (ctx) => {
+        await expectJson(
+          await service(`invitations?invitation_id=eq.${ctx.t1Id}`, {
+            method: 'PATCH',
+            body: { used_at: new Date().toISOString() },
+          }),
+          204,
+          'set the legacy marker',
+        );
+        const body = await expectJson(
+          await cmd(invI, 'get_or_create_invitation', {}),
+          200,
+          'issue with used_at set',
+        );
+        expect(
+          body.result.result === 'existing' &&
+            body.result.invitation_token === ctx.t3,
+          `used_at must not consume the invitation: ${JSON.stringify(body.result)}`,
+        );
+      },
+    },
+    {
+      name: 'explicit invalidation is explicit and idempotent',
+      run: async (ctx) => {
+        const first = await expectJson(
+          await cmd(invI, 'invalidate_invitation', {}),
+          200,
+          'invalidate',
+        );
+        expect(
+          first.result.result === 'invalidated' &&
+            first.result.invalidated_count === 1,
+          `unexpected result ${JSON.stringify(first.result)}`,
+        );
+        const second = await expectJson(
+          await cmd(invI, 'invalidate_invitation', {}),
+          200,
+          'invalidate again',
+        );
+        expect(
+          second.result.invalidated_count === 0,
+          `a second invalidation must report 0: ${JSON.stringify(second.result)}`,
+        );
+        const statusDto = await expectJson(
+          await query(invI, 'get_invitation_status', {}),
+          200,
+          'status after invalidation',
+        );
+        expect(
+          statusDto.result.status === 'invalidated',
+          `unexpected status ${JSON.stringify(statusDto.result)}`,
+        );
+        expect(
+          !('invitation_token' in statusDto.result),
+          'a dead link is never re-delivered by the status op',
+        );
+        const dead = await expectJson(
+          await cmd(invA1, 'request', {
+            target_user_id: invI.id,
+            invitation_token: ctx.t3,
+          }),
+          409,
+          'invalidated apply',
+        );
+        expect(
+          dead.error === INVITATION_MESSAGES_HTTP.invalidated,
+          `unexpected body ${JSON.stringify(dead)}`,
+        );
+      },
+    },
+    {
+      name: 'get_or_create issues fresh after explicit invalidation',
+      run: async (ctx) => {
+        ctx.issueEnv = envelope('get_or_create_invitation', {});
+        const body = await expectJson(
+          await postFunction(status, 'app-command', {
+            token: invI.token,
+            body: ctx.issueEnv,
+          }),
+          200,
+          'issue after invalidation',
+        );
+        expect(
+          body.result.result === 'created' &&
+            INVITATION_TOKEN_PATTERN.test(body.result.invitation_token),
+          `unexpected result ${JSON.stringify(body.result)}`,
+        );
+        ctx.t4 = body.result.invitation_token;
+        const statusDto = await expectJson(
+          await query(invI, 'get_invitation_status', {}),
+          200,
+          'status after fresh issue',
+        );
+        expect(
+          statusDto.result.status === 'valid' &&
+            statusDto.result.invitation_token === ctx.t4,
+          `unexpected status ${JSON.stringify(statusDto.result)}`,
+        );
+      },
+    },
+    {
+      name: 'concurrent reissues serialize to exactly one valid invitation',
+      run: async (ctx) => {
+        const [first, second] = await Promise.all([
+          postFunction(status, 'app-command', {
+            token: invI.token,
+            body: envelope('reissue_invitation', {}),
+          }),
+          postFunction(status, 'app-command', {
+            token: invI.token,
+            body: envelope('reissue_invitation', {}),
+          }),
+        ]);
+        const firstBody = await expectJson(first, 200, 'first concurrent reissue');
+        const secondBody = await expectJson(second, 200, 'second concurrent reissue');
+        expect(
+          firstBody.result.result === 'reissued' &&
+            secondBody.result.result === 'reissued',
+          `both reissues run under the per-inviter lock: ${JSON.stringify([
+            firstBody.result,
+            secondBody.result,
+          ])}`,
+        );
+        const tokens = [
+          firstBody.result.invitation_token,
+          secondBody.result.invitation_token,
+        ];
+        expect(
+          tokens[0] !== tokens[1],
+          `each reissue mints a different token, got ${tokens.join(' / ')}`,
+        );
+        const firstState = await resolve(invA1, tokens[0]);
+        const secondState = await resolve(invA1, tokens[1]);
+        const states = [firstState.result.status, secondState.result.status].sort();
+        expect(
+          JSON.stringify(states) === JSON.stringify(['invalidated', 'valid']),
+          `exactly one reissue result must be live, got ${JSON.stringify(states)}`,
+        );
+        ctx.live =
+          firstState.result.status === 'valid' ? tokens[0] : tokens[1];
+        // Every row of the inviter, resolved server-side: exactly one live.
+        const rows = await inviterRows();
+        const live = [];
+        for (const row of rows) {
+          const state = await resolve(invA1, row.invitation_token);
+          if (state.result.status === 'valid') live.push(row.invitation_token);
+        }
+        expect(
+          live.length === 1,
+          `expected exactly one valid invitation, got ${live.length}: ${live.join(', ')}`,
+        );
+        expect(
+          live[0] === ctx.live,
+          'the survivor is one of the two reissue results',
+        );
+        const statusDto = await expectJson(
+          await query(invI, 'get_invitation_status', {}),
+          200,
+          'status after the race',
+        );
+        expect(
+          statusDto.result.status === 'valid' &&
+            statusDto.result.invitation_token === ctx.live,
+          `status must agree with the survivor: ${JSON.stringify(statusDto.result)}`,
+        );
+      },
+    },
+    {
+      name: "a third party cannot touch someone else's invitation",
+      run: async (ctx) => {
+        const body = await expectJson(
+          await cmd(invA1, 'invalidate_invitation', {}),
+          200,
+          'third-party invalidate',
+        );
+        expect(
+          body.result.result === 'invalidated' &&
+            body.result.invalidated_count === 0,
+          `a stranger invalidates nothing: ${JSON.stringify(body.result)}`,
+        );
+        const state = await resolve(invA2, ctx.live);
+        expect(
+          state.result.status === 'valid',
+          `the inviter's link is untouched: ${JSON.stringify(state.result)}`,
+        );
+      },
+    },
+    {
+      name: 'clients read only their own invitation rows',
+      run: async (ctx) => {
+        const own = await expectJson(
+          await cmd(invA1, 'get_or_create_invitation', {}),
+          200,
+          'a1 issues their own invitation',
+        );
+        expect(
+          own.result.result === 'created',
+          `unexpected result ${JSON.stringify(own.result)}`,
+        );
+        ctx.a1Token = own.result.invitation_token;
+
+        const a1Rows = await expectJson(
+          await postRest(status, 'invitations?select=*', {
+            token: invA1.token,
+            method: 'GET',
+          }),
+          200,
+          'direct invitation read as a1',
+        );
+        expect(
+          a1Rows.length >= 1 &&
+            a1Rows.every((r) => r.inviter_user_id === invA1.id) &&
+            !a1Rows.some((r) => r.invitation_token === ctx.live),
+          `a1 must see only their own rows: ${a1Rows.length} rows`,
+        );
+
+        const invRows = await expectJson(
+          await postRest(status, 'invitations?select=*', {
+            token: invI.token,
+            method: 'GET',
+          }),
+          200,
+          'direct invitation read as inviter',
+        );
+        expect(
+          invRows.every((r) => r.inviter_user_id === invI.id) &&
+            !invRows.some((r) => r.invitation_token === ctx.a1Token),
+          `the inviter must see only their own rows: ${invRows.length} rows`,
+        );
+        const allRows = await expectJson(
+          await service('invitations?select=invitation_id'),
+          200,
+          'total invitation rows',
+        );
+        expect(
+          a1Rows.length + invRows.length === allRows.length,
+          `the open read path is closed: ${a1Rows.length}+${invRows.length} vs ${allRows.length}`,
+        );
+      },
+    },
+    {
+      name: 'direct invitation writes are denied by RLS',
+      run: async () => {
+        const body = await expectJson(
+          await postRest(status, 'invitations', {
+            token: invA1.token,
+            body: {
+              inviter_user_id: invA1.id,
+              invitation_token: 'ab'.repeat(16),
+              expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+            },
+          }),
+          403,
+          'direct invitation insert',
+        );
+        expect(body.code === '42501', `expected RLS denial, got ${JSON.stringify(body)}`);
+      },
+    },
+    {
+      name: 'there is no list-all invitation query op',
+      run: async () => {
+        const body = await expectJson(
+          await query(invI, 'list_invitations', {}),
+          400,
+          'list-all op',
+        );
+        expect(
+          body.error === INVITATION_MESSAGES_HTTP.unknownOp,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'invitation commands ride the operation log',
+      run: async (ctx) => {
+        const replay = await postFunction(status, 'app-command', {
+          token: invI.token,
+          body: ctx.issueEnv,
+        });
+        const replayBody = await expectJson(replay, 200, 'replay');
+        expect(
+          replayBody.status === 'replayed',
+          `expected replayed, got ${replayBody.status}`,
+        );
+        const conflict = await postFunction(status, 'app-command', {
+          token: invI.token,
+          body: { ...ctx.issueEnv, kind: 'reissue_invitation' },
+        });
+        const conflictBody = await expectJson(conflict, 409, 'kind conflict');
+        expect(
+          conflictBody.error === INVITATION_MESSAGES_HTTP.opConflict,
+          `unexpected body ${JSON.stringify(conflictBody)}`,
+        );
+      },
+    },
+    {
+      name: 'a block hides the invitation from resolve',
+      run: async (ctx) => {
+        await expectJson(
+          await service('blocks', {
+            method: 'POST',
+            body: { user_id: invI.id, blocked_user_id: invA4.id },
+          }),
+          201,
+          'block fixture insert',
+        );
+        try {
+          const res = await query(invA4, 'resolve_invitation', {
+            invitation_token: ctx.live,
+          });
+          const body = await expectJson(res, 404, 'blocked resolve');
+          expect(
+            body.error === INVITATION_MESSAGES_HTTP.notFound,
+            `unexpected body ${JSON.stringify(body)}`,
+          );
+        } finally {
+          await expectJson(
+            await service(
+              `blocks?user_id=eq.${invI.id}&blocked_user_id=eq.${invA4.id}`,
+              { method: 'DELETE' },
+            ),
+            204,
+            'block fixture cleanup',
+          );
+        }
+        const state = await resolve(invA1, ctx.live);
+        expect(
+          state.result.status === 'valid',
+          'the invitation survives the block probe',
+        );
+      },
+    },
+  ];
+}
+
 const SUITES = {
   'command-boundary': {
     definitions: (runId) => [
@@ -2899,6 +3815,17 @@ const SUITES = {
       { key: 'qUnreg', email: `disc-${runId}-u@discovery.test` },
     ],
     build: discoverySuite,
+  },
+  invitations: {
+    definitions: (runId) => [
+      { key: 'invI', email: `inv-${runId}-i@invitations.test` },
+      { key: 'invA1', email: `inv-${runId}-a1@invitations.test` },
+      { key: 'invA2', email: `inv-${runId}-a2@invitations.test` },
+      { key: 'invA3', email: `inv-${runId}-a3@invitations.test` },
+      { key: 'invA4', email: `inv-${runId}-a4@invitations.test` },
+      { key: 'invU', email: `inv-${runId}-u@invitations.test` },
+    ],
+    build: invitationsSuite,
   },
 };
 

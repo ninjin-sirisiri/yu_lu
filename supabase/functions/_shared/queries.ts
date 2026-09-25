@@ -5,7 +5,8 @@
 // error contract for the read boundary. `parseQueryBody` rejects malformed
 // envelopes before any database work; `validateQueryPayload` applies the
 // per-op field rules with messages byte-identical to the SQL handlers in
-// supabase/migrations/0010_discovery_queries.sql - the database remains
+// supabase/migrations/0010_discovery_queries.sql and 0011_invitation_lifecycle.sql
+// - the database remains
 // the authority (a bypassed gate still gets the same 400 from the RPC).
 // `mapRpcError` (Task 2) maps SQLSTATEs to statuses, so 42501 becomes 403
 // (unregistered actor), P0002 becomes 404 (hidden profile), 22023 becomes
@@ -24,12 +25,18 @@ import {
   UUID_RE,
   type RpcOutcome,
 } from './commands.ts';
+import {
+  INVITATION_MESSAGES,
+  INVITATION_TOKEN_RE,
+} from './invitation-commands.ts';
 
 export const QUERY_OPS = [
   'search_profiles',
   'get_profile',
   'list_friends',
   'list_requests',
+  'resolve_invitation',
+  'get_invitation_status',
 ] as const;
 
 export type QueryOp = (typeof QUERY_OPS)[number];
@@ -127,10 +134,11 @@ function readOptionalStringField(
 
 /**
  * Op -> payload validation. Field order matches the SQL handlers exactly,
- * so both layers reject the same input with the same message. Unknown ops
- * return null - the closed op list in public.app_query is the source of
- * truth for what exists (Task 4's registry pattern, minus the registry
- * table because the op set is static).
+ * so both layers reject the same input with the same message. Task 6 adds
+ * resolve_invitation (exact-token field) and get_invitation_status (no
+ * fields). Unknown ops return null - the closed op list in public.app_query
+ * is the source of truth for what exists (Task 4's registry pattern, minus
+ * the registry table because the op set is static).
  */
 export function validateQueryPayload(
   op: string,
@@ -187,6 +195,24 @@ export function validateQueryPayload(
         QUERY_MESSAGES.cursorType,
       );
     }
+    case 'resolve_invitation': {
+      // Task 6: exact-token field, byte-identical messages to
+      // command_boundary.payload_token_required in 0011. The token's
+      // existence and state are judged by the database.
+      if (!('invitation_token' in payload)) {
+        return INVITATION_MESSAGES.tokenRequired;
+      }
+      const value = payload['invitation_token'];
+      if (typeof value !== 'string') return INVITATION_MESSAGES.tokenType;
+      if (!INVITATION_TOKEN_RE.test(value)) {
+        return INVITATION_MESSAGES.tokenFormat;
+      }
+      return null;
+    }
+    case 'get_invitation_status':
+      // Task 6: the actor's own row only - no fields, no cursor, no way to
+      // ask for anyone else's invitation.
+      return null;
     default:
       return null;
   }

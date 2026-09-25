@@ -12,8 +12,14 @@
 // - decision kinds carry `request_id`; identity (existence + participant
 //   role) is validated by the SQL handler against the row itself, so a
 //   stale id from before a re-request never applies to the newer row.
+// - Task 6: `request` also accepts an OPTIONAL `invitation_token` (apply
+//   through an invitation). This gate only shape-checks it; whether the
+//   token exists, belongs to the target, is valid and unexpired is judged
+//   by the SQL handler against server state at request time, so a reissue
+//   after the confirm screen cannot be bypassed.
 
 import { UUID_RE } from './commands.ts';
+import { readInvitationTokenField } from './invitation-commands.ts';
 
 export const REQUEST_MESSAGES = {
   targetRequired: 'target_user_id is required',
@@ -69,14 +75,17 @@ export function validateRequestCommandPayload(
   payload: Record<string, unknown>,
 ): string | null {
   switch (kind) {
-    case 'request':
-      return readUuidField(
+    case 'request': {
+      const targetError = readUuidField(
         payload,
         'target_user_id',
         REQUEST_MESSAGES.targetRequired,
         REQUEST_MESSAGES.targetType,
         REQUEST_MESSAGES.targetUuid,
       );
+      if (targetError !== null) return targetError;
+      return readInvitationTokenField(payload, { required: false });
+    }
     case 'approve':
     case 'reject':
     case 'cancel':

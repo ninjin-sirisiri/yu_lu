@@ -39,10 +39,17 @@ const OTHER_UUID = '22222222-2222-4222-8222-222222222222';
 
 // --- envelope shapes -------------------------------------------------------
 
-Deno.test('the four query ops are the registered set', () => {
+Deno.test('the query ops are the registered set', () => {
   assertEquals(
     [...QUERY_OPS],
-    ['search_profiles', 'get_profile', 'list_friends', 'list_requests'],
+    [
+      'search_profiles',
+      'get_profile',
+      'list_friends',
+      'list_requests',
+      'resolve_invitation',
+      'get_invitation_status',
+    ],
     'op list',
   );
 });

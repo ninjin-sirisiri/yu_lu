@@ -15,6 +15,7 @@
 
 import { jsonError } from './auth.ts';
 import { validateCommandPayload } from './profile-validation.ts';
+import { validateInvitationCommandPayload } from './invitation-commands.ts';
 import { validateRequestCommandPayload } from './request-commands.ts';
 
 export interface CommandRequest {
@@ -179,6 +180,9 @@ export async function executeCommand(
     parsed.value.kind,
     parsed.value.payload,
   ) ?? validateRequestCommandPayload(
+    parsed.value.kind,
+    parsed.value.payload,
+  ) ?? validateInvitationCommandPayload(
     parsed.value.kind,
     parsed.value.payload,
   );
