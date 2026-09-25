@@ -7,10 +7,17 @@
 // Task 6 report probe: a sender applying pending -> approved on their own row
 // succeeds at RLS level). Clients call this function for establishment.
 //
+// Task 2 hardening: the unverified path is closed. Every call now goes
+// through `_shared/auth.ts` — a JWT verified by Supabase Auth is required,
+// and the verified actor must match the role the action needs (senders
+// create/cancel, recipients approve/reject), so nobody can act for another
+// user by naming them in the body. Task 4 finishes the migration by moving
+// these transitions onto the app-command operation boundary.
+//
 // Import convention: '@supabase/supabase-js' (repo convention, matching
-// supabase/functions/daily-settlement/index.ts), not the brief's
-// 'npm:@supabase/supabase-js@2'. No deno.json: the existing functions ship a
-// single index.ts with no deno.json, and this file matches that layout.
+// supabase/functions/daily-settlement/index.ts), resolved through
+// supabase/functions/deno.json, which this repo's shared Deno config now
+// provides.
 //
 // Actions (JSON body: { action, sender_user_id, recipient_user_id }):
 // - request: create a pending request (7-day validity). Refuses with 409 when
@@ -35,6 +42,7 @@
 // rejection never call the friendship RPC, so they never establish friendship.
 
 import { createClient } from '@supabase/supabase-js';
+import { requireActor } from '../_shared/auth.ts';
 
 const url = Deno.env.get('SUPABASE_URL') as string;
 const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') as string;
@@ -88,6 +96,11 @@ async function blockedEitherDirection(a: string, b: string): Promise<boolean> {
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
+  // A verified session is required before anything else runs; the actor
+  // comes from the JWT, never from the body.
+  const actor = await requireActor(req);
+  if (actor instanceof Response) return actor;
+
   let body: Record<string, unknown>;
   try {
     body = (await req.json()) as Record<string, unknown>;
@@ -108,6 +121,18 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
   if (sender === recipient) {
     return json({ error: 'self request is not allowed' }, 400);
+  }
+
+  // Bind the verified actor to the role the action requires: senders create
+  // and cancel, recipients approve and reject. Anyone else gets 403.
+  if (action === 'request' || action === 'cancel') {
+    if (sender !== actor.actorId) {
+      return json({ error: 'the authenticated actor must be the sender' }, 403);
+    }
+  } else if (action === 'approve' || action === 'reject') {
+    if (recipient !== actor.actorId) {
+      return json({ error: 'the authenticated actor must be the recipient' }, 403);
+    }
   }
 
   if (action === 'request') {
