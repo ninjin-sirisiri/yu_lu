@@ -1,0 +1,146 @@
+import React, { useContext } from 'react';
+import {
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
+import { SafeAreaInsetsContext, type EdgeInsets } from 'react-native-safe-area-context';
+
+import { useTheme } from '../theme/provider';
+import { spacing, typography } from '../theme/tokens';
+
+/**
+ * Shared screen frame: themed background, safe-area padding, optional
+ * header/footer and a scroll or fixed content area.
+ *
+ * Insets come from the app-level `<SafeAreaProvider>` (src/app/_layout.tsx).
+ * Reading the context directly (instead of `useSafeAreaInsets`) keeps the
+ * component renderable without a provider — unit tests and embedded previews
+ * get zero insets instead of a thrown error, while the real app still gets
+ * notch/home-indicator insets.
+ */
+
+const ZERO_INSETS: EdgeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+
+export function useScreenInsets(): EdgeInsets {
+  return useContext(SafeAreaInsetsContext) ?? ZERO_INSETS;
+}
+
+export interface ScreenProps {
+  children: React.ReactNode;
+  /** Visible screen title; announced with `accessibilityRole="header"`. */
+  title?: string;
+  subtitle?: string;
+  /** Scrolls the content area; otherwise content fills the remaining space. */
+  scroll?: boolean;
+  /** Pinned below the content (still inside the safe area). */
+  footer?: React.ReactNode;
+  /** Rendered at the top right of the header row (back/menu actions…). */
+  headerAccessory?: React.ReactNode;
+  contentStyle?: StyleProp<ViewStyle>;
+  testID?: string;
+}
+
+export function Screen({
+  children,
+  title,
+  subtitle,
+  scroll = false,
+  footer,
+  headerAccessory,
+  contentStyle,
+  testID,
+}: ScreenProps) {
+  const { tokens } = useTheme();
+  const insets = useScreenInsets();
+  const hasHeader = title !== undefined || subtitle !== undefined || headerAccessory !== undefined;
+
+  const content = scroll ? (
+    <ScrollView
+      style={styles.flex}
+      contentContainerStyle={[styles.scrollContent, contentStyle]}
+      keyboardShouldPersistTaps="handled"
+    >
+      {children}
+    </ScrollView>
+  ) : (
+    <View style={[styles.flex, styles.fixedContent, contentStyle]}>{children}</View>
+  );
+
+  return (
+    <View
+      style={[
+        styles.root,
+        { backgroundColor: tokens.surface, paddingTop: insets.top, paddingBottom: insets.bottom },
+      ]}
+      testID={testID}
+    >
+      {hasHeader && (
+        <View style={styles.header}>
+          <View style={styles.flex}>
+            {title !== undefined && (
+              <Text
+                style={[styles.title, { color: tokens.text }]}
+                accessibilityRole="header"
+                allowFontScaling
+              >
+                {title}
+              </Text>
+            )}
+            {subtitle !== undefined && (
+              <Text style={[styles.subtitle, { color: tokens.muted }]} allowFontScaling>
+                {subtitle}
+              </Text>
+            )}
+          </View>
+          {headerAccessory}
+        </View>
+      )}
+      {content}
+      {footer !== undefined && <View style={styles.footer}>{footer}</View>}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
+  flex: {
+    flex: 1,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.s3,
+    paddingHorizontal: spacing.s5,
+    paddingTop: spacing.s5,
+    paddingBottom: spacing.s4,
+  },
+  title: {
+    fontSize: typography.sizes.title,
+    fontWeight: typography.weights.semibold,
+    lineHeight: typography.sizes.title * typography.lineHeightRatio,
+  },
+  subtitle: {
+    fontSize: typography.sizes.small,
+    lineHeight: typography.sizes.small * typography.lineHeightRatio,
+    marginTop: spacing.s1,
+  },
+  fixedContent: {
+    paddingHorizontal: spacing.s5,
+  },
+  scrollContent: {
+    paddingHorizontal: spacing.s5,
+    paddingBottom: spacing.s6,
+  },
+  footer: {
+    paddingHorizontal: spacing.s5,
+    paddingTop: spacing.s3,
+    paddingBottom: spacing.s4,
+    gap: spacing.s2,
+  },
+});

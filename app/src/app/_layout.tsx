@@ -1,9 +1,13 @@
 import { Stack, usePathname } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { Dimensions, View } from 'react-native';
+import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
 
 import { AuthProvider } from '../auth/provider';
 import { rememberDestination } from '../navigation/entry';
 import { runPersistenceProbeIfEnabled } from '../storage/persistenceProbe';
+import { ThemeProvider, useTheme } from '../theme/provider';
 
 // Task 10: root layout.
 //
@@ -11,6 +15,14 @@ import { runPersistenceProbeIfEnabled } from '../storage/persistenceProbe';
 // records the current destination on every navigation so a warm resume can
 // reopen it (navigation/entry.ts). Login / register / callback paths are
 // filtered by rememberDestination itself.
+//
+// Task 11: adds the two app-level foundations —
+// - SafeAreaProvider: real insets on device; the explicit zero fallback keeps
+//   the provider rendering its children where no native metrics exist (jest),
+//   instead of dropping the whole tree (its `initialMetrics` would be null);
+// - ThemeProvider: the 4-mode theme resolves ABOVE the router so a theme
+//   change never unmounts the current screen or its input, and the themed
+//   root background + status bar follow the resolved scheme.
 
 function DestinationRecorder() {
   const pathname = usePathname();
@@ -18,6 +30,33 @@ function DestinationRecorder() {
     if (pathname) rememberDestination(pathname);
   }, [pathname]);
   return null;
+}
+
+const ZERO_METRICS = {
+  frame: {
+    x: 0,
+    y: 0,
+    width: Dimensions.get('window').width,
+    height: Dimensions.get('window').height,
+  },
+  insets: { top: 0, right: 0, bottom: 0, left: 0 },
+};
+
+function ThemedRoot() {
+  const { scheme, tokens } = useTheme();
+  return (
+    <View style={{ flex: 1, backgroundColor: tokens.surface }}>
+      <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
+      <DestinationRecorder />
+      <Stack>
+        <Stack.Screen name="index" options={{ headerShown: false }} />
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="login" options={{ headerShown: false }} />
+        <Stack.Screen name="register" options={{ headerShown: false }} />
+        <Stack.Screen name="auth/callback" options={{ headerShown: false }} />
+      </Stack>
+    </View>
+  );
 }
 
 export default function RootLayout() {
@@ -28,15 +67,12 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <AuthProvider>
-      <DestinationRecorder />
-      <Stack>
-        <Stack.Screen name="index" options={{ headerShown: false }} />
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="login" options={{ headerShown: false }} />
-        <Stack.Screen name="register" options={{ headerShown: false }} />
-        <Stack.Screen name="auth/callback" options={{ headerShown: false }} />
-      </Stack>
-    </AuthProvider>
+    <SafeAreaProvider initialMetrics={initialWindowMetrics ?? ZERO_METRICS}>
+      <AuthProvider>
+        <ThemeProvider>
+          <ThemedRoot />
+        </ThemeProvider>
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }

@@ -1,35 +1,49 @@
 import { Link } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 
+import { useTheme } from '../../../theme/provider';
+import { spacing, typography } from '../../../theme/tokens';
+import { Screen } from '../../../ui/Screen';
+
 export default function HomeScreen() {
+  const { tokens } = useTheme();
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>ホーム</Text>
-      <Text style={styles.placeholder}>準備中</Text>
-      <Link href="/friends/add" style={styles.entry}>
-        友達を追加
-      </Link>
-    </View>
+    <Screen>
+      <View style={styles.center}>
+        <Text style={[styles.title, { color: tokens.text }]}>ホーム</Text>
+        <Text style={[styles.placeholder, { color: tokens.muted }]}>準備中</Text>
+        <Link
+          href="/friends/add"
+          style={[styles.entry, { color: tokens.accent }]}
+          accessibilityRole="link"
+          accessibilityLabel="友達を追加"
+        >
+          友達を追加
+        </Link>
+      </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  center: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 12,
-    padding: 16,
+    gap: spacing.s3,
+    padding: spacing.s4,
   },
   title: {
-    fontSize: 20,
-    fontWeight: '600',
+    fontSize: typography.sizes.title,
+    fontWeight: typography.weights.semibold,
   },
   placeholder: {
-    fontSize: 16,
+    fontSize: typography.sizes.bodyLarge,
   },
   entry: {
-    fontSize: 16,
-    marginTop: 8,
+    fontSize: typography.sizes.bodyLarge,
+    fontWeight: typography.weights.semibold,
+    textDecorationLine: 'underline',
+    marginTop: spacing.s2,
   },
 });

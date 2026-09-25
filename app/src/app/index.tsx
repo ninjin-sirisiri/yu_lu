@@ -3,6 +3,8 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { peekDestination, resolveEntry } from '../navigation/entry';
 import { useAuth } from '../auth/provider';
+import { useTheme } from '../theme/provider';
+import type { ThemeTokens } from '../theme/tokens';
 
 // Task 10: the root route decides where the app opens.
 //
@@ -12,6 +14,9 @@ import { useAuth } from '../auth/provider';
 
 export default function Index() {
   const auth = useAuth();
+  // Task 11: themed shell (readable in both schemes).
+  const { tokens } = useTheme();
+  const styles = makeStyles(tokens);
 
   if (auth.status === 'loading') {
     return (
@@ -51,21 +56,25 @@ export default function Index() {
   return <Redirect href={decision.path} />;
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-    padding: 16,
-  },
-  message: {
-    fontSize: 16,
-    textAlign: 'center',
-  },
-  retry: {
-    fontSize: 16,
-    fontWeight: '600',
-    textDecorationLine: 'underline',
-  },
-});
+const makeStyles = (tokens: ThemeTokens) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 12,
+      padding: 16,
+      backgroundColor: tokens.surface,
+    },
+    message: {
+      fontSize: 16,
+      textAlign: 'center',
+      color: tokens.text,
+    },
+    retry: {
+      fontSize: 16,
+      fontWeight: '600',
+      textDecorationLine: 'underline',
+      color: tokens.text,
+    },
+  });

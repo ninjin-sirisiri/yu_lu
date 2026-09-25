@@ -5,6 +5,8 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { exchangeCallbackUrl, parseAuthCallback } from '../../auth/oauth';
 import { useAuth } from '../../auth/provider';
 import { getAppClient } from '../../backend/client';
+import { useTheme } from '../../theme/provider';
+import type { ThemeTokens } from '../../theme/tokens';
 
 // Task 10: OAuth callback route.
 //
@@ -29,6 +31,9 @@ export default function AuthCallbackScreen() {
     error_description?: string;
   }>();
   const auth = useAuth();
+  // Task 11: themed (readable in both schemes).
+  const { tokens } = useTheme();
+  const styles = makeStyles(tokens);
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>('exchanging');
   const [failure, setFailure] = useState<string | null>(null);
@@ -101,27 +106,31 @@ export default function AuthCallbackScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-    padding: 16,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  message: {
-    fontSize: 14,
-    color: '#555',
-    textAlign: 'center',
-    maxWidth: 320,
-  },
-  link: {
-    fontSize: 16,
-    fontWeight: '600',
-    textDecorationLine: 'underline',
-  },
-});
+const makeStyles = (tokens: ThemeTokens) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 12,
+      padding: 16,
+      backgroundColor: tokens.surface,
+    },
+    title: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: tokens.text,
+    },
+    message: {
+      fontSize: 14,
+      color: tokens.muted,
+      textAlign: 'center',
+      maxWidth: 320,
+    },
+    link: {
+      fontSize: 16,
+      fontWeight: '600',
+      textDecorationLine: 'underline',
+      color: tokens.text,
+    },
+  });

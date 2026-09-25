@@ -1,27 +1,34 @@
 import { StyleSheet, Text, View } from 'react-native';
 
+import { useTheme } from '../../../theme/provider';
+import { spacing, typography } from '../../../theme/tokens';
+import { Screen } from '../../../ui/Screen';
+
 export default function ChatScreen() {
+  const { tokens } = useTheme();
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>チャット</Text>
-      <Text style={styles.placeholder}>準備中</Text>
-    </View>
+    <Screen>
+      <View style={styles.center}>
+        <Text style={[styles.title, { color: tokens.text }]}>チャット</Text>
+        <Text style={[styles.placeholder, { color: tokens.muted }]}>準備中</Text>
+      </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  center: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 12,
-    padding: 16,
+    gap: spacing.s3,
+    padding: spacing.s4,
   },
   title: {
-    fontSize: 20,
-    fontWeight: '600',
+    fontSize: typography.sizes.title,
+    fontWeight: typography.weights.semibold,
   },
   placeholder: {
-    fontSize: 16,
+    fontSize: typography.sizes.bodyLarge,
   },
 });

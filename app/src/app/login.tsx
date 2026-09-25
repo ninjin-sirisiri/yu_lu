@@ -5,6 +5,8 @@ import { useState } from 'react';
 
 import { useAuth } from '../auth/provider';
 import type { OAuthProvider } from '../auth/session';
+import { useTheme } from '../theme/provider';
+import type { ThemeTokens } from '../theme/tokens';
 
 // Task 10: login screen.
 //
@@ -22,6 +24,10 @@ type Notice =
 
 export default function LoginScreen() {
   const auth = useAuth();
+  // Task 11: themed — colours come from the resolved scheme, so the screen
+  // stays readable in both light and dark.
+  const { tokens } = useTheme();
+  const styles = makeStyles(tokens);
   const [pending, setPending] = useState<OAuthProvider | null>(null);
   // Kept after an attempt finishes so cancel/failure can offer 再試行 for
   // the SAME provider without asking the user to choose again.
@@ -113,48 +119,54 @@ export default function LoginScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-    padding: 16,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: '600',
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#555',
-    marginBottom: 8,
-  },
-  button: {
-    width: '100%',
-    maxWidth: 320,
-    borderWidth: 1,
-    borderColor: '#333',
-    borderRadius: 8,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  buttonLabel: {
-    fontSize: 16,
-  },
-  noticeBox: {
-    gap: 8,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  notice: {
-    fontSize: 14,
-    color: '#555',
-    textAlign: 'center',
-  },
-  retry: {
-    fontSize: 16,
-    fontWeight: '600',
-    textDecorationLine: 'underline',
-  },
-});
+const makeStyles = (tokens: ThemeTokens) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 12,
+      padding: 16,
+      backgroundColor: tokens.surface,
+    },
+    title: {
+      fontSize: 20,
+      fontWeight: '600',
+      color: tokens.text,
+    },
+    subtitle: {
+      fontSize: 14,
+      color: tokens.muted,
+      marginBottom: 8,
+    },
+    button: {
+      width: '100%',
+      maxWidth: 320,
+      borderWidth: 1,
+      borderColor: tokens.line,
+      borderRadius: 8,
+      paddingVertical: 12,
+      alignItems: 'center',
+      backgroundColor: tokens.surface,
+    },
+    buttonLabel: {
+      fontSize: 16,
+      color: tokens.text,
+    },
+    noticeBox: {
+      gap: 8,
+      alignItems: 'center',
+      marginTop: 8,
+    },
+    notice: {
+      fontSize: 14,
+      color: tokens.muted,
+      textAlign: 'center',
+    },
+    retry: {
+      fontSize: 16,
+      fontWeight: '600',
+      textDecorationLine: 'underline',
+      color: tokens.text,
+    },
+  });

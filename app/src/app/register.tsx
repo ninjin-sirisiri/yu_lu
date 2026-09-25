@@ -4,6 +4,8 @@ import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-nativ
 
 import type { RegistrationResult } from '../auth/provider';
 import { useAuth } from '../auth/provider';
+import { useTheme } from '../theme/provider';
+import type { ThemeTokens } from '../theme/tokens';
 import { deleteDraft, readDraft, saveDraft } from '../storage/drafts';
 
 // Task 10: registration screen (opened only inside the 未登録ガード).
@@ -25,6 +27,9 @@ type Step = 'input' | 'confirm';
 export default function RegisterScreen() {
   const auth = useAuth();
   const router = useRouter();
+  // Task 11: themed — the form stays readable in light and dark.
+  const { tokens } = useTheme();
+  const styles = makeStyles(tokens);
   const [step, setStep] = useState<Step>('input');
   const [userIdText, setUserIdText] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -241,74 +246,85 @@ export default function RegisterScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    padding: 16,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: '600',
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    alignSelf: 'flex-start',
-    maxWidth: 320,
-  },
-  input: {
-    width: '100%',
-    maxWidth: 320,
-    borderWidth: 1,
-    borderColor: '#333',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 16,
-  },
-  hint: {
-    fontSize: 12,
-    color: '#666',
-    maxWidth: 320,
-  },
-  error: {
-    fontSize: 14,
-    color: '#b00020',
-    maxWidth: 320,
-    textAlign: 'center',
-  },
-  candidates: {
-    gap: 6,
-    alignItems: 'center',
-  },
-  candidate: {
-    fontSize: 16,
-    fontWeight: '600',
-    textDecorationLine: 'underline',
-  },
-  review: {
-    fontSize: 16,
-    maxWidth: 320,
-  },
-  button: {
-    width: '100%',
-    maxWidth: 320,
-    borderWidth: 1,
-    borderColor: '#333',
-    borderRadius: 8,
-    paddingVertical: 12,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  buttonLabel: {
-    fontSize: 16,
-  },
-  retry: {
-    fontSize: 16,
-    fontWeight: '600',
-    textDecorationLine: 'underline',
-  },
-});
+const makeStyles = (tokens: ThemeTokens) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      padding: 16,
+      backgroundColor: tokens.surface,
+    },
+    title: {
+      fontSize: 20,
+      fontWeight: '600',
+      color: tokens.text,
+    },
+    label: {
+      fontSize: 14,
+      fontWeight: '600',
+      alignSelf: 'flex-start',
+      maxWidth: 320,
+      color: tokens.text,
+    },
+    input: {
+      width: '100%',
+      maxWidth: 320,
+      borderWidth: 1,
+      borderColor: tokens.line,
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      fontSize: 16,
+      color: tokens.text,
+      backgroundColor: tokens.surface,
+    },
+    hint: {
+      fontSize: 12,
+      color: tokens.muted,
+      maxWidth: 320,
+    },
+    error: {
+      fontSize: 14,
+      color: tokens.danger,
+      maxWidth: 320,
+      textAlign: 'center',
+    },
+    candidates: {
+      gap: 6,
+      alignItems: 'center',
+    },
+    candidate: {
+      fontSize: 16,
+      fontWeight: '600',
+      textDecorationLine: 'underline',
+      color: tokens.text,
+    },
+    review: {
+      fontSize: 16,
+      maxWidth: 320,
+      color: tokens.text,
+    },
+    button: {
+      width: '100%',
+      maxWidth: 320,
+      borderWidth: 1,
+      borderColor: tokens.line,
+      borderRadius: 8,
+      paddingVertical: 12,
+      alignItems: 'center',
+      marginTop: 8,
+      backgroundColor: tokens.surface,
+    },
+    buttonLabel: {
+      fontSize: 16,
+      color: tokens.text,
+    },
+    retry: {
+      fontSize: 16,
+      fontWeight: '600',
+      textDecorationLine: 'underline',
+      color: tokens.text,
+    },
+  });
