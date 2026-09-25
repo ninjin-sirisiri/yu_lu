@@ -4,6 +4,7 @@
 // Usage: node scripts/test-local-backend.mjs --suite command-boundary
 //        node scripts/test-local-backend.mjs --suite registration
 //        node scripts/test-local-backend.mjs --suite requests
+//        node scripts/test-local-backend.mjs --suite discovery
 //        node scripts/test-local-backend.mjs --suite all
 //
 // Ownership: real-stack verification of the authenticated command boundary.
@@ -30,7 +31,13 @@
 // and role refusals, duplicate operation ids, sender-neutral listings
 // (rejection masked as ended, 7-day window, server-time derived expiry),
 // the expiry sweep recording its domain event once, and the legacy
-// friendship-admin proxy (requests).
+// friendship-admin proxy (requests); app-query authentication and payload
+// gating, 21+ match pagination with the opaque keyset cursor (no page
+// overlaps), exact/prefix/substring ordering, case-insensitive and
+// underscore-literal matching, duplicate display names, self and block
+// exclusion, streak visibility limited to friends, relationship
+// attachment, friend and request listing pages, and the masked
+// incoming/outgoing request listings (discovery).
 
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -1753,6 +1760,1101 @@ function requestsSuite(status, users) {
   ];
 }
 
+// ---------------------------------------------------------------------------
+// Suite: discovery (Task 5 read boundary)
+// ---------------------------------------------------------------------------
+
+function discoverySuite(status, users) {
+  const actor = users.qActor;
+  const unreg = users.qUnreg;
+  const fillers = Array.from({ length: 22 }, (_, i) => users[`qF${i + 1}`]);
+  const pat1 = users.qPat1;
+  const pat2 = users.qPat2;
+  const orderGroup = Array.from({ length: 5 }, (_, i) => users[`qO${i + 1}`]);
+
+  // Unique-per-run User ID prefix: derived from the (random) actor uuid, so
+  // a crashed earlier run can never make a registration collide, and every
+  // assertion stays data-independent.
+  const prefix = 'd' + actor.id.replaceAll('-', '').slice(0, 5);
+  const fillerIds = fillers.map(
+    (_, i) => `${prefix}f${String(i + 1).padStart(2, '0')}`,
+  );
+  const actorId = `${prefix}a`;
+  const orderIds = {
+    exact: `${prefix}x`,
+    prefixed: `${prefix}x_1`,
+    upper: `${prefix}Xzz`,
+    substring1: `k${prefix}x`,
+    substring2: `z${prefix}x`,
+  };
+  const ternId = `${prefix}T_Tern`;
+  const xternId = `${prefix}txtern`;
+
+  const envelope = (kind, payload, id = randomUUID()) => ({
+    operation_id: id,
+    kind,
+    payload,
+  });
+  const cmd = (user, kind, payload) =>
+    postFunction(status, 'app-command', {
+      token: user.token,
+      body: envelope(kind, payload),
+    });
+  const query = (user, op, payload) =>
+    postFunction(status, 'app-query', {
+      token: user && user.token,
+      body: { op, payload },
+    });
+  const service = (path, opts = {}) =>
+    postRest(status, path, {
+      method: 'GET',
+      apikey: status.SERVICE_ROLE_KEY,
+      token: status.SERVICE_ROLE_KEY,
+      ...opts,
+    });
+  const textIds = (body) => body.result.items.map((i) => i.user_id_text);
+  const requestLines = (body) =>
+    body.result.items.map((i) => `${i.status}|${i.counterpart.user_id_text}`);
+  const friendLines = (body) =>
+    body.result.items.map((i) => `${i.relationship}|${i.user_id_text}`);
+
+  const registrations = [
+    [actor, actorId, 'Actor'],
+    ...fillers.map((user, i) => [
+      user,
+      fillerIds[i],
+      i === 2 || i === 3
+        ? 'Same Name'
+        : `F${String(i + 1).padStart(2, '0')}`,
+    ]),
+    [pat1, ternId, 'Pat One'],
+    [pat2, xternId, 'Pat Two'],
+    [orderGroup[0], orderIds.exact, 'O One'],
+    [orderGroup[1], orderIds.prefixed, 'O Two'],
+    [orderGroup[2], orderIds.upper, 'O Three'],
+    [orderGroup[3], orderIds.substring1, 'O Four'],
+    [orderGroup[4], orderIds.substring2, 'O Five'],
+  ];
+
+  return [
+    {
+      name: 'app-query rejects requests without a token',
+      run: async () => {
+        const res = await query(null, 'search_profiles', { query: 'abc' });
+        await expectJson(res, 401, 'unauthenticated query');
+      },
+    },
+    {
+      name: 'app-query rejects malformed bearer tokens',
+      run: async () => {
+        const res = await postFunction(status, 'app-query', {
+          token: 'not-a-jwt',
+          body: { op: 'search_profiles', payload: { query: 'abc' } },
+        });
+        await expectJson(res, 401, 'garbage bearer');
+      },
+    },
+    {
+      name: 'app-query refuses the anon key as a session',
+      run: async () => {
+        const res = await postFunction(status, 'app-query', {
+          token: status.ANON_KEY,
+          body: { op: 'search_profiles', payload: { query: 'abc' } },
+        });
+        const body = await expectJson(res, 401, 'anon key as bearer');
+        expect(
+          body.error === 'invalid or expired session',
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'app-query refuses non-POST requests',
+      run: async () => {
+        const res = await postFunction(status, 'app-query', {
+          token: actor.token,
+          method: 'GET',
+        });
+        await expectJson(res, 405, 'GET request');
+      },
+    },
+    {
+      name: 'the query envelope rejects a missing op',
+      run: async () => {
+        const body = await expectJson(
+          await postFunction(status, 'app-query', {
+            token: actor.token,
+            body: { payload: {} },
+          }),
+          400,
+          'missing op',
+        );
+        expect(
+          body.error === 'op is required',
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'the query envelope rejects a malformed op',
+      run: async () => {
+        const body = await expectJson(
+          await postFunction(status, 'app-query', {
+            token: actor.token,
+            body: { op: 'Not An Op', payload: {} },
+          }),
+          400,
+          'bad op format',
+        );
+        expect(
+          body.error === 'op must match ^[a-z][a-z0-9_]{0,62}$',
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'an unknown op is refused by the database dispatch',
+      run: async () => {
+        const body = await expectJson(
+          await query(actor, 'nope', {}),
+          400,
+          'unknown op',
+        );
+        expect(
+          body.error === 'unknown query op: nope',
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'the query envelope rejects a non-object payload',
+      run: async () => {
+        const body = await expectJson(
+          await postFunction(status, 'app-query', {
+            token: actor.token,
+            body: { op: 'list_friends', payload: 'nope' },
+          }),
+          400,
+          'non-object payload',
+        );
+        expect(
+          body.error === 'payload must be a JSON object',
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'an unregistered actor cannot search or list anything',
+      run: async () => {
+        const search = await expectJson(
+          await query(unreg, 'search_profiles', { query: `${prefix}f` }),
+          403,
+          'unregistered search',
+        );
+        expect(
+          search.error === 'Confirm the User ID before using the app.',
+          `unexpected body ${JSON.stringify(search)}`,
+        );
+        const friends = await expectJson(
+          await query(unreg, 'list_friends', {}),
+          403,
+          'unregistered friend list',
+        );
+        expect(
+          friends.error === 'Confirm the User ID before using the app.',
+          `unexpected body ${JSON.stringify(friends)}`,
+        );
+      },
+    },
+    {
+      name: 'every discovery account registers its User ID',
+      run: async () => {
+        const results = await Promise.all(
+          registrations.map(([user, idText, displayName]) =>
+            cmd(user, 'register', {
+              user_id_text: idText,
+              display_name: displayName,
+            })),
+        );
+        for (const res of results) {
+          const body = await expectJson(res, 200, 'register');
+          expect(
+            body.status === 'executed',
+            `expected executed, got ${body.status}`,
+          );
+        }
+        expect(
+          registrations.length === 30,
+          `expected 30 registrations, got ${registrations.length}`,
+        );
+      },
+    },
+    {
+      name: 'the search gate rejects a missing query',
+      run: async () => {
+        const body = await expectJson(
+          await query(actor, 'search_profiles', {}),
+          400,
+          'missing query',
+        );
+        expect(body.error === 'query is required', `unexpected body ${JSON.stringify(body)}`);
+      },
+    },
+    {
+      name: 'the search gate rejects a blank query',
+      run: async () => {
+        const body = await expectJson(
+          await query(actor, 'search_profiles', { query: '   ' }),
+          400,
+          'blank query',
+        );
+        expect(
+          body.error === 'query must not be empty',
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'the search gate rejects a non-string cursor',
+      run: async () => {
+        const body = await expectJson(
+          await query(actor, 'search_profiles', { query: 'a', cursor: 7 }),
+          400,
+          'non-string cursor',
+        );
+        expect(
+          body.error === 'cursor must be a string or null',
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'the profile gate rejects missing and malformed user ids',
+      run: async () => {
+        const missing = await expectJson(
+          await query(actor, 'get_profile', {}),
+          400,
+          'missing user_id',
+        );
+        expect(
+          missing.error === 'user_id is required',
+          `unexpected body ${JSON.stringify(missing)}`,
+        );
+        const malformed = await expectJson(
+          await query(actor, 'get_profile', { user_id: 'nope' }),
+          400,
+          'malformed user_id',
+        );
+        expect(
+          malformed.error === 'user_id must be a UUID',
+          `unexpected body ${JSON.stringify(malformed)}`,
+        );
+      },
+    },
+    {
+      name: 'the request gate rejects an unknown direction',
+      run: async () => {
+        const body = await expectJson(
+          await query(actor, 'list_requests', { direction: 'sideways' }),
+          400,
+          'bad direction',
+        );
+        expect(
+          body.error === "direction must be 'incoming' or 'outgoing'",
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'search pages 22 matches into 20 + 2 in keyset order',
+      run: async (ctx) => {
+        const body = await expectJson(
+          await query(actor, 'search_profiles', { query: `${prefix}f` }),
+          200,
+          'first search page',
+        );
+        expect(body.op === 'search_profiles', `unexpected op ${body.op}`);
+        expect(
+          body.result.items.length === 20,
+          `expected 20 items, got ${body.result.items.length}`,
+        );
+        expect(
+          textIds(body).join(',') === fillerIds.slice(0, 20).join(','),
+          `page 1 order: ${JSON.stringify(textIds(body))}`,
+        );
+        expect(
+          !textIds(body).includes(actorId),
+          'self never appears in the results',
+        );
+        expect(
+          typeof body.result.next_cursor === 'string',
+          'a next cursor exists',
+        );
+        ctx.searchCursor = body.result.next_cursor;
+        ctx.page1Ids = textIds(body);
+      },
+    },
+    {
+      name: 'the second search page continues without overlap',
+      run: async (ctx) => {
+        const body = await expectJson(
+          await query(actor, 'search_profiles', {
+            query: `${prefix}f`,
+            cursor: ctx.searchCursor,
+          }),
+          200,
+          'second search page',
+        );
+        const ids = textIds(body);
+        expect(
+          ids.join(',') === fillerIds.slice(20).join(','),
+          `page 2 order: ${JSON.stringify(ids)}`,
+        );
+        expect(
+          body.result.next_cursor === null,
+          'the last page carries no cursor',
+        );
+        expect(
+          ids.every((id) => !ctx.page1Ids.includes(id)),
+          'no row repeats across pages',
+        );
+        expect(
+          ctx.page1Ids.length + ids.length === 22,
+          'all 22 matches arrive across both pages',
+        );
+      },
+    },
+    {
+      name: 'an uppercase query matches the stored lowercase ids',
+      run: async () => {
+        const body = await expectJson(
+          await query(actor, 'search_profiles', {
+            query: `${prefix.toUpperCase()}F03`,
+          }),
+          200,
+          'uppercase query',
+        );
+        expect(
+          textIds(body).join(',') === fillerIds[2],
+          `unexpected matches ${JSON.stringify(textIds(body))}`,
+        );
+      },
+    },
+    {
+      name: 'duplicate display names never collapse results',
+      run: async () => {
+        const body = await expectJson(
+          await query(actor, 'search_profiles', { query: `${prefix}f0` }),
+          200,
+          'same-name search',
+        );
+        expect(
+          textIds(body).join(',') === fillerIds.slice(0, 9).join(','),
+          `unexpected matches ${JSON.stringify(textIds(body))}`,
+        );
+        expect(
+          body.result.items.filter((i) => i.display_name === 'Same Name')
+            .length === 2,
+          'both same-name users appear',
+        );
+      },
+    },
+    {
+      name: 'search orders exact, prefix, then substring matches',
+      run: async () => {
+        const body = await expectJson(
+          await query(actor, 'search_profiles', { query: `${prefix}x` }),
+          200,
+          'ordering search',
+        );
+        expect(
+          textIds(body).join(',') ===
+            [
+              orderIds.exact,
+              orderIds.prefixed,
+              orderIds.upper,
+              orderIds.substring1,
+              orderIds.substring2,
+            ].join(','),
+          `unexpected order ${JSON.stringify(textIds(body))}`,
+        );
+      },
+    },
+    {
+      name: 'underscore queries match literally, never as wildcards',
+      run: async () => {
+        const bare = await expectJson(
+          await query(actor, 'search_profiles', { query: '_t' }),
+          200,
+          'bare underscore query',
+        );
+        expect(
+          textIds(bare).join(',') === ternId,
+          `a bare underscore must not widen: ${JSON.stringify(textIds(bare))}`,
+        );
+        const exact = await expectJson(
+          await query(actor, 'search_profiles', {
+            query: `${prefix.toUpperCase()}T_TERN`,
+          }),
+          200,
+          'uppercase underscore query',
+        );
+        expect(
+          textIds(exact).join(',') === ternId,
+          `LIKE would also return ${xternId}: ${JSON.stringify(textIds(exact))}`,
+        );
+      },
+    },
+    {
+      name: 'self never appears in search results',
+      run: async () => {
+        const body = await expectJson(
+          await query(actor, 'search_profiles', { query: actorId }),
+          200,
+          'self search',
+        );
+        expect(
+          body.result.items.length === 0,
+          `unexpected matches ${JSON.stringify(textIds(body))}`,
+        );
+      },
+    },
+    {
+      name: 'an invalid cursor is refused',
+      run: async () => {
+        const body = await expectJson(
+          await query(actor, 'search_profiles', {
+            query: `${prefix}f`,
+            cursor: 'zzz',
+          }),
+          400,
+          'invalid cursor',
+        );
+        expect(body.error === 'invalid cursor', `unexpected body ${JSON.stringify(body)}`);
+      },
+    },
+    {
+      name: 'a cursor cannot be replayed against a different query',
+      run: async (ctx) => {
+        const body = await expectJson(
+          await query(actor, 'search_profiles', {
+            query: `${prefix}f0`,
+            cursor: ctx.searchCursor,
+          }),
+          400,
+          'cursor/query mismatch',
+        );
+        expect(
+          body.error === 'cursor does not match this query',
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'a search cursor never opens a friend list',
+      run: async (ctx) => {
+        const body = await expectJson(
+          await query(actor, 'list_friends', { cursor: ctx.searchCursor }),
+          400,
+          'cross-op cursor',
+        );
+        expect(body.error === 'invalid cursor', `unexpected body ${JSON.stringify(body)}`);
+      },
+    },
+    {
+      name: 'blocks in either direction hide the pair from search and profile',
+      run: async () => {
+        await expectJson(
+          await service('blocks', {
+            method: 'POST',
+            body: { user_id: actor.id, blocked_user_id: fillers[4].id },
+          }),
+          201,
+          'block by the actor',
+        );
+        let body = await expectJson(
+          await query(actor, 'search_profiles', { query: fillerIds[4] }),
+          200,
+          'search under own block',
+        );
+        expect(
+          body.result.items.length === 0,
+          'the blocked pair is hidden from search',
+        );
+        await expectJson(
+          await query(actor, 'get_profile', { user_id: fillers[4].id }),
+          404,
+          'profile read under own block',
+        );
+        await expectJson(
+          await service('blocks', {
+            method: 'POST',
+            body: { user_id: fillers[5].id, blocked_user_id: actor.id },
+          }),
+          201,
+          'block against the actor',
+        );
+        body = await expectJson(
+          await query(actor, 'search_profiles', { query: fillerIds[5] }),
+          200,
+          'search under reverse block',
+        );
+        expect(
+          body.result.items.length === 0,
+          'a reverse block hides the pair too',
+        );
+        await expectJson(
+          await service(
+            `blocks?user_id=eq.${actor.id}&blocked_user_id=eq.${fillers[4].id}`,
+            { method: 'DELETE' },
+          ),
+          204,
+          'unblock one',
+        );
+        await expectJson(
+          await service(
+            `blocks?user_id=eq.${fillers[5].id}&blocked_user_id=eq.${actor.id}`,
+            { method: 'DELETE' },
+          ),
+          204,
+          'unblock two',
+        );
+      },
+    },
+    {
+      name: 'get_profile answers an unknown user with 404',
+      run: async () => {
+        const body = await expectJson(
+          await query(actor, 'get_profile', {
+            user_id: '70000000-0000-4000-8000-00000000000f',
+          }),
+          404,
+          'unknown profile',
+        );
+        expect(
+          body.error === 'Target user not found.',
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'a third party profile carries no streak',
+      run: async () => {
+        await expectJson(
+          await service('streaks', {
+            method: 'POST',
+            body: [
+              { user_id: actor.id, current_count: 3 },
+              { user_id: fillers[0].id, current_count: 42 },
+              { user_id: fillers[1].id, current_count: 7 },
+              { user_id: fillers[21].id, current_count: 9 },
+            ],
+          }),
+          201,
+          'streak fixture',
+        );
+        const body = await expectJson(
+          await query(actor, 'get_profile', { user_id: fillers[21].id }),
+          200,
+          'third-party profile',
+        );
+        expect(
+          body.result.relationship === 'none',
+          `unexpected relationship ${body.result.relationship}`,
+        );
+        expect(
+          !('streak' in body.result),
+          `non-friend DTO leaked keys: ${JSON.stringify(body.result)}`,
+        );
+      },
+    },
+    {
+      name: 'a pending request attaches the outgoing relationship',
+      run: async (ctx) => {
+        const created = await expectJson(
+          await cmd(actor, 'request', { target_user_id: fillers[0].id }),
+          200,
+          'request to the first filler',
+        );
+        expect(
+          created.result.result === 'requested',
+          `unexpected result ${JSON.stringify(created.result)}`,
+        );
+        ctx.reqFirst = created.result.request_id;
+        const body = await expectJson(
+          await query(actor, 'get_profile', { user_id: fillers[0].id }),
+          200,
+          'profile during pending',
+        );
+        expect(
+          body.result.relationship === 'request_outgoing',
+          `unexpected relationship ${body.result.relationship}`,
+        );
+        expect(
+          !('streak' in body.result),
+          'the pending target still carries no streak',
+        );
+      },
+    },
+    {
+      name: 'an approved request makes the friend streak visible',
+      run: async (ctx) => {
+        const approved = await expectJson(
+          await cmd(fillers[0], 'approve', { request_id: ctx.reqFirst }),
+          200,
+          'approval',
+        );
+        expect(
+          approved.result.result === 'approved',
+          `unexpected result ${JSON.stringify(approved.result)}`,
+        );
+        const body = await expectJson(
+          await query(actor, 'get_profile', { user_id: fillers[0].id }),
+          200,
+          'friend profile',
+        );
+        expect(
+          body.result.relationship === 'friend',
+          `unexpected relationship ${body.result.relationship}`,
+        );
+        expect(
+          body.result.streak === 42,
+          `expected the friend streak, got ${body.result.streak}`,
+        );
+      },
+    },
+    {
+      name: 'the actor recognises their own profile',
+      run: async () => {
+        const body = await expectJson(
+          await query(actor, 'get_profile', { user_id: actor.id }),
+          200,
+          'own profile',
+        );
+        expect(
+          body.result.relationship === 'self',
+          `unexpected relationship ${body.result.relationship}`,
+        );
+        expect(
+          body.result.streak === 3,
+          `expected the own streak, got ${body.result.streak}`,
+        );
+      },
+    },
+    {
+      name: 'an incoming request attaches the incoming relationship',
+      run: async (ctx) => {
+        const created = await expectJson(
+          await cmd(fillers[21], 'request', { target_user_id: actor.id }),
+          200,
+          'incoming request',
+        );
+        ctx.reqIncoming1 = created.result.request_id;
+        const body = await expectJson(
+          await query(actor, 'list_requests', { direction: 'incoming' }),
+          200,
+          'incoming list',
+        );
+        expect(
+          requestLines(body).join(',') === `pending|${fillerIds[21]}`,
+          `unexpected incoming ${JSON.stringify(requestLines(body))}`,
+        );
+        expect(
+          body.result.next_cursor === null,
+          'the incoming list fits one page',
+        );
+        const profile = await expectJson(
+          await query(actor, 'get_profile', { user_id: fillers[21].id }),
+          200,
+          'incoming profile',
+        );
+        expect(
+          profile.result.relationship === 'request_incoming',
+          `unexpected relationship ${profile.result.relationship}`,
+        );
+      },
+    },
+    {
+      name: 'the recipient sees the raw rejected status',
+      run: async (ctx) => {
+        await expectJson(
+          await cmd(actor, 'reject', { request_id: ctx.reqIncoming1 }),
+          200,
+          'rejection',
+        );
+        const body = await expectJson(
+          await query(actor, 'list_requests', { direction: 'incoming' }),
+          200,
+          'incoming after rejection',
+        );
+        expect(
+          requestLines(body).join(',') === `rejected|${fillerIds[21]}`,
+          `unexpected incoming ${JSON.stringify(requestLines(body))}`,
+        );
+      },
+    },
+    {
+      name: 'the sender sees ended, never the rejection',
+      run: async (ctx) => {
+        const created = await expectJson(
+          await cmd(fillers[21], 'request', { target_user_id: actor.id }),
+          200,
+          'second incoming request',
+        );
+        ctx.reqIncoming2 = created.result.request_id;
+        await expectJson(
+          await cmd(fillers[21], 'cancel', { request_id: ctx.reqIncoming2 }),
+          200,
+          'cancellation',
+        );
+        const incoming = await expectJson(
+          await query(actor, 'list_requests', { direction: 'incoming' }),
+          200,
+          'incoming after cancel',
+        );
+        expect(
+          requestLines(incoming).join(',') ===
+            `cancelled|${fillerIds[21]},rejected|${fillerIds[21]}`,
+          `unexpected incoming ${JSON.stringify(requestLines(incoming))}`,
+        );
+        const outgoing = await expectJson(
+          await query(fillers[21], 'list_requests', { direction: 'outgoing' }),
+          200,
+          'sender listing',
+        );
+        expect(
+          requestLines(outgoing).join(',') ===
+            `cancelled|${actorId},ended|${actorId}`,
+          `unexpected outgoing ${JSON.stringify(requestLines(outgoing))}`,
+        );
+        expect(
+          !JSON.stringify(outgoing).includes('rejected'),
+          `the sender body must never mention rejected: ${JSON.stringify(outgoing)}`,
+        );
+      },
+    },
+    {
+      name: 'a pending row past its server-side expiry derives as expired',
+      run: async (ctx) => {
+        const created = await expectJson(
+          await cmd(fillers[21], 'request', { target_user_id: actor.id }),
+          200,
+          'third incoming request',
+        );
+        ctx.reqIncoming3 = created.result.request_id;
+        await expectJson(
+          await service(`friend_requests?request_id=eq.${ctx.reqIncoming3}`, {
+            method: 'PATCH',
+            body: {
+              created_at: new Date(Date.now() - 9 * 86400_000).toISOString(),
+              expires_at: new Date(Date.now() - 86400_000).toISOString(),
+            },
+          }),
+          204,
+          'age the pending row past expiry',
+        );
+        const body = await expectJson(
+          await query(actor, 'list_requests', { direction: 'incoming' }),
+          200,
+          'incoming with derived expiry',
+        );
+        expect(
+          requestLines(body).join(',') ===
+            `cancelled|${fillerIds[21]},rejected|${fillerIds[21]},expired|${fillerIds[21]}`,
+          `unexpected incoming ${JSON.stringify(requestLines(body))}`,
+        );
+        expect(
+          body.result.next_cursor === null,
+          'the incoming list still fits one page',
+        );
+      },
+    },
+    {
+      name: 'rows ended more than 7 days ago leave both listings',
+      run: async (ctx) => {
+        const created = await expectJson(
+          await cmd(fillers[20], 'request', { target_user_id: actor.id }),
+          200,
+          'row to be aged',
+        );
+        ctx.reqOld = created.result.request_id;
+        await expectJson(
+          await cmd(actor, 'reject', { request_id: ctx.reqOld }),
+          200,
+          'reject the row to be aged',
+        );
+        const before = await expectJson(
+          await query(actor, 'list_requests', { direction: 'incoming' }),
+          200,
+          'incoming before aging',
+        );
+        expect(
+          before.result.items.length === 4,
+          `expected 4 incoming rows, got ${before.result.items.length}`,
+        );
+        const senderSide = await expectJson(
+          await query(fillers[20], 'list_requests', { direction: 'outgoing' }),
+          200,
+          'sender listing before aging',
+        );
+        expect(
+          requestLines(senderSide).join(',') === `ended|${actorId}`,
+          `unexpected sender listing ${JSON.stringify(requestLines(senderSide))}`,
+        );
+        await expectJson(
+          await service(`friend_requests?request_id=eq.${ctx.reqOld}`, {
+            method: 'PATCH',
+            body: {
+              decided_at: new Date(Date.now() - 8 * 86400_000).toISOString(),
+            },
+          }),
+          204,
+          'age the decided row past the window',
+        );
+        const after = await expectJson(
+          await query(actor, 'list_requests', { direction: 'incoming' }),
+          200,
+          'incoming after aging',
+        );
+        expect(
+          requestLines(after).join(',') ===
+            `cancelled|${fillerIds[21]},rejected|${fillerIds[21]},expired|${fillerIds[21]}`,
+          `unexpected incoming ${JSON.stringify(requestLines(after))}`,
+        );
+        const agedOut = await expectJson(
+          await query(fillers[20], 'list_requests', { direction: 'outgoing' }),
+          200,
+          'sender listing after aging',
+        );
+        expect(
+          agedOut.result.items.length === 0,
+          'an item ended 8 days ago is gone from the sender listing',
+        );
+      },
+    },
+    {
+      name: 'the actor befriends the search cohort',
+      run: async (ctx) => {
+        const created = await Promise.all(
+          fillers.slice(1, 21).map((user) =>
+            cmd(actor, 'request', { target_user_id: user.id })),
+        );
+        const requestIds = [];
+        for (const res of created) {
+          const body = await expectJson(res, 200, 'batch request');
+          expect(
+            body.result.result === 'requested',
+            `unexpected result ${JSON.stringify(body.result)}`,
+          );
+          requestIds.push(body.result.request_id);
+        }
+        const approved = await Promise.all(
+          fillers.slice(1, 21).map((user, i) =>
+            cmd(user, 'approve', { request_id: requestIds[i] })),
+        );
+        for (const res of approved) {
+          const body = await expectJson(res, 200, 'batch approval');
+          expect(
+            body.result.result === 'approved',
+            `unexpected result ${JSON.stringify(body.result)}`,
+          );
+        }
+        expect(requestIds.length === 20, 'twenty new pending requests');
+        ctx.friendPage1 = null;
+      },
+    },
+    {
+      name: 'list_friends pages 21 friends into 20 + 1',
+      run: async (ctx) => {
+        const page1 = await expectJson(
+          await query(actor, 'list_friends', {}),
+          200,
+          'friend page 1',
+        );
+        expect(
+          textIds(page1).join(',') === fillerIds.slice(0, 20).join(','),
+          `friend page 1 order: ${JSON.stringify(textIds(page1))}`,
+        );
+        expect(
+          typeof page1.result.next_cursor === 'string',
+          'a second friend page exists',
+        );
+        ctx.friendPage1 = page1;
+        const page2 = await expectJson(
+          await query(actor, 'list_friends', {
+            cursor: page1.result.next_cursor,
+          }),
+          200,
+          'friend page 2',
+        );
+        expect(
+          textIds(page2).join(',') === fillerIds[20],
+          `friend page 2 order: ${JSON.stringify(textIds(page2))}`,
+        );
+        expect(
+          page2.result.next_cursor === null,
+          'the last friend page carries no cursor',
+        );
+      },
+    },
+    {
+      name: 'every friend row carries relationship and streak',
+      run: async (ctx) => {
+        const page1 = ctx.friendPage1;
+        expect(
+          page1.result.items.every((i) => i.relationship === 'friend'),
+          'every friend row is marked as a friend',
+        );
+        expect(
+          page1.result.items.every((i) => typeof i.streak === 'number'),
+          'every friend row carries the streak count',
+        );
+        expect(
+          page1.result.items[0].streak === 42,
+          `expected the first friend streak 42, got ${page1.result.items[0].streak}`,
+        );
+        expect(
+          friendLines(page1)[0] === `friend|${fillerIds[0]}`,
+          `unexpected first friend row ${friendLines(page1)[0]}`,
+        );
+      },
+    },
+    {
+      name: 'a blocked pair leaves the friend list and returns after unblock',
+      run: async (ctx) => {
+        await expectJson(
+          await service('blocks', {
+            method: 'POST',
+            body: { user_id: actor.id, blocked_user_id: fillers[0].id },
+          }),
+          201,
+          'block a friend',
+        );
+        const blocked = await expectJson(
+          await query(actor, 'list_friends', {}),
+          200,
+          'friend list while blocked',
+        );
+        expect(
+          textIds(blocked).join(',') === fillerIds.slice(1, 21).join(','),
+          `blocked friend list: ${JSON.stringify(textIds(blocked))}`,
+        );
+        expect(
+          blocked.result.next_cursor === null,
+          'the blocked friend list fits one page',
+        );
+        await expectJson(
+          await service(
+            `blocks?user_id=eq.${actor.id}&blocked_user_id=eq.${fillers[0].id}`,
+            { method: 'DELETE' },
+          ),
+          204,
+          'unblock the friend',
+        );
+        const restored = await expectJson(
+          await query(actor, 'list_friends', {}),
+          200,
+          'friend list after unblock',
+        );
+        expect(
+          textIds(restored)[0] === fillerIds[0],
+          `expected the friend back, got ${JSON.stringify(textIds(restored).slice(0, 3))}`,
+        );
+        ctx.friendPage1 = restored;
+      },
+    },
+    {
+      name: 'a user with no friends gets an empty page',
+      run: async () => {
+        const body = await expectJson(
+          await query(fillers[21], 'list_friends', {}),
+          200,
+          'empty friend list',
+        );
+        expect(
+          body.result.items.length === 0,
+          `unexpected friends ${JSON.stringify(textIds(body))}`,
+        );
+        expect(
+          body.result.next_cursor === null,
+          'an empty list carries no cursor',
+        );
+      },
+    },
+    {
+      name: 'list_requests outgoing pages the approved history 20 + 1',
+      run: async (ctx) => {
+        const page1 = await expectJson(
+          await query(actor, 'list_requests', { direction: 'outgoing' }),
+          200,
+          'outgoing page 1',
+        );
+        expect(
+          page1.result.items.length === 20,
+          `expected 20 rows, got ${page1.result.items.length}`,
+        );
+        expect(
+          page1.result.items.every((i) => i.status === 'approved'),
+          'the outgoing history is the approved batch',
+        );
+        expect(
+          typeof page1.result.next_cursor === 'string',
+          'a second outgoing page exists',
+        );
+        const page2 = await expectJson(
+          await query(actor, 'list_requests', {
+            direction: 'outgoing',
+            cursor: page1.result.next_cursor,
+          }),
+          200,
+          'outgoing page 2',
+        );
+        expect(
+          page2.result.items.length === 1 &&
+            page2.result.items[0].status === 'approved',
+          `unexpected page 2 ${JSON.stringify(page2.result.items)}`,
+        );
+        expect(
+          page2.result.next_cursor === null,
+          'the last outgoing page carries no cursor',
+        );
+        const counterpartIds = [...page1.result.items, ...page2.result.items]
+          .map((i) => i.counterpart.user_id_text)
+          .sort();
+        const expected = fillerIds.slice(0, 21).slice().sort();
+        expect(
+          counterpartIds.join(',') === expected.join(',') &&
+            new Set(counterpartIds).size === 21,
+          `unexpected counterparts ${JSON.stringify(counterpartIds)}`,
+        );
+        expect(
+          !JSON.stringify(page1).includes('rejected'),
+          'the outgoing listing never mentions rejected',
+        );
+        ctx.outgoingTotal =
+          page1.result.items.length + page2.result.items.length;
+      },
+    },
+    {
+      name: 'the outgoing pages match the masked outbox view',
+      run: async (ctx) => {
+        const rows = await expectJson(
+          await postRest(status, 'friend_request_outbox?select=request_id', {
+            token: actor.token,
+            method: 'GET',
+          }),
+          200,
+          'masked outbox read',
+        );
+        expect(
+          rows.length === 21 && rows.length === ctx.outgoingTotal,
+          `handler rows ${ctx.outgoingTotal} vs view rows ${rows.length}`,
+        );
+      },
+    },
+  ];
+}
+
 const SUITES = {
   'command-boundary': {
     definitions: (runId) => [
@@ -1780,6 +2882,23 @@ const SUITES = {
       { key: 'reqE', email: `req-${runId}-e@requests.test` },
     ],
     build: requestsSuite,
+  },
+  discovery: {
+    definitions: (runId) => [
+      { key: 'qActor', email: `disc-${runId}-actor@discovery.test` },
+      ...Array.from({ length: 22 }, (_, i) => ({
+        key: `qF${i + 1}`,
+        email: `disc-${runId}-f${i + 1}@discovery.test`,
+      })),
+      { key: 'qPat1', email: `disc-${runId}-pat1@discovery.test` },
+      { key: 'qPat2', email: `disc-${runId}-pat2@discovery.test` },
+      ...Array.from({ length: 5 }, (_, i) => ({
+        key: `qO${i + 1}`,
+        email: `disc-${runId}-o${i + 1}@discovery.test`,
+      })),
+      { key: 'qUnreg', email: `disc-${runId}-u@discovery.test` },
+    ],
+    build: discoverySuite,
   },
 };
 
