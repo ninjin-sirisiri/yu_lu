@@ -6,6 +6,66 @@
 
 ---
 
+## Task 11: モノトーンUI・テーマ・可変レイアウト (2026-09-26 JST)
+
+### 環境
+
+| 項目 | 値 |
+| --- | --- |
+| iOS dev build | `npx expo run:ios --no-bundler` (Xcode 27.0), bundle `com.anonymous.app` |
+| シミュレータ | iPhone 18 Pro / iOS 27.0 (UDID 7072095A-…) — **ヘッドレス** (Simulator.app なし = タスク8/10と同じ制約) |
+| Metro | `npx expo start --port 8081` + `app/.env` (EXPO_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321, EXPO_PUBLIC_SUPABASE_ANON_KEY=<ローカルanon key>)。ローカルSupabaseは起動済み |
+| app.json | `userInterfaceStyle` を `light` → `automatic` に変更 (端末設定に追従するため)。`ios.enableSceneSupport: true` は維持。生成済み `ios/app/Info.plist` の `UIUserInterfaceStyle` もローカル成果物として `Automatic` に修正して再ビルド |
+| ヘッドレス時の工夫 | openurl による起動確認ダイアログはタップ不可 → `launchctl kickstart -k user/501/com.apple.SpringBoard` で解除。dev-menu 初回案内はローカル成果物の Info.plist `EXDevMenuIsOnboardingFinished=YES` (タスク8と同じ扱い)。外観・文字サイズの変更は SpringBoard 再起動後にアプリへ反映 |
+
+### JS層 (モック層 — 実機のログイン操作を含まない)
+
+```
+$ npm --prefix app test -- --runInBand __tests__/theme-layout.test.tsx
+Test Suites: 1 passed, 1 total
+Tests:       32 passed, 32 total
+
+$ npm --prefix app run typecheck   → OK (0 errors)
+$ npm --prefix app test            → 25 suites / 403 tests 全通過 (タスク11で +32)
+```
+
+`__tests__/theme-layout.test.tsx` の主な内容:
+- 承認済み試作Aのトークン (ライト/ダークの電話画面パレット・ボード・余白スケール・フォーカスリング) が試作HTMLと同一値であること、`.blue` 派生値を含まないこと
+- 900境界: 幅899→1列+下部タブ / 幅900→左ナビ+2列。文字拡大 fontScale 1.353 (>1.3) では幅が広くても1列へフォールバック
+- 2列⇄1列の切り替えで選択中の相手 (aoi_07) と下書き入力が保持される ( lifted state )
+- 時間帯: 初期値 07:00/19:00、境界 (06:59/07:00/18:59/19:00)、日跨ぎ (19:00の暗転が翌07:00まで継続)、夜跨ぎのカスタム時間帯、現地時刻ロジック (getHours基準・UTC非依存)
+- 同じ時刻は保存不可 (state・ストレージ共に何もしない)、不正形式は項目エラー
+- 端末テーマ変更 (system モード時の light→dark 追従)、明示モードでは追従しない
+- 復帰 (AppState active) 時に境界を跨いだ再評価 (18:00→翌06:30 で暗転、07:30 で復帰)
+- device_settings (アカウント削除deleteAccountData後も残る) での永続化を実SQLiteで検証
+- UI部品: 入力ラベル (accessibilityLabel)、ボタン role/状態/押下 (opacity 0.75)、エラーは色だけでなくテキスト (`エラー: …`) + alert、画面タイトルは header role、safe area insets
+- ルート実測 (実SQLite): /mypage → テーマ入口 → 既定「端末に合わせる」→ モード永続化 → 時間帯編集 (同時刻拒否→07:00/21:00保存→不正形式拒否)
+
+### 実機スクリーンショット (docs/testing/screenshots/task-11/)
+
+| ファイル | 内容 | 確認できたこと |
+| --- | --- | --- |
+| 01-login-light-default-text.png | ログイン画面・ライト・標準文字 | 承認済みモノトーンのトークン (surface #ffffff / text #272a2e / line #e5e6e8) が実機で適用 |
+| 02-login-dark-live-system-appearance.png | ログイン画面・ダーク | 端末の外観切り替えを**そのまま追従** (端末に合わせる)。surface #202225 で再描画、ダーク状態で読み取り可能 |
+| 03-login-light-max-text-size.png | ライト + 最大文字サイズ (extra-extra-extra-large) | fontScale=1.353 をアプリが受領 (Metro経由の [fontprobe] 1.353 で数値確認)、文字拡大後もレイアウト破綻なし |
+| 04-login-dark-max-text-size.png | ダーク + 最大文字サイズ | 暗転 × 文字拡大の複合でも読み取り可能 |
+
+- 検証用手順: `xcrun simctl ui <udid> appearance dark` → SpringBoard 再起動 → アプリ再起動 → `xcrun simctl io <udid> screenshot`。リセットは `appearance light` / `content_size large`。
+
+### 未取得として記録する項目 (ブロック条件)
+
+| 検証項目 | 状態 | 理由 |
+| --- | --- | --- |
+| テーマ設定画面 (マイページ→テーマ) の実機表示 | **BLOCKED** | 4タブ領域はログイン後のみ到達。Apple/Google のOAuth設定が未提供 (ローカルGoTrueは `apple:false, google:false` = タスク10と同じ外部入力) でサインイン不能 |
+| 幅900以上の左ナビ + 一覧/詳細2列の実機表示 | **BLOCKED** | 同上 (タブシェル自体がログイン後)。ロジックはjestで 899/900・fontScale境界・選択/下書き保持を実測済み |
+| タブレット (iPad Pro 13-inch) のスクリーンショット | **BLOCKED** | インストール自体は成功したが、ヘッドレスでdev-clientのURL投入が効かず「Searching for development servers…」から先へ進めない (タップ操作なし)。2回試行して打ち切り |
+| 最大文字サイズ時のタブ/左ナビ切替の実機表示 | **BLOCKED** | 上記ログイン不能に同じ。jestで fontScale 1.353 > 1.3 のフォールバックを検証済み |
+
+- HTMLモックでの代替は行っていない (スクリーンショットはすべて実アプリ・実iOSのもの)。
+- iOSモック層で確認した以外の実OAuth操作はタスク10のブロック条件を継続。
+
+---
+
 ## Task 10: OAuth・登録画面と起動分岐 (2026-09-26 JST)
 
 ### 環境

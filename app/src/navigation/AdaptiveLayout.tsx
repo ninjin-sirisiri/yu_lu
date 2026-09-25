@@ -4,7 +4,7 @@ import { Link, usePathname } from 'expo-router';
 
 import { useTheme } from '../theme/provider';
 import { useScreenInsets } from '../ui/Screen';
-import { focusRing, radius, spacing, typography } from '../theme/tokens';
+import { radius, spacing, typography } from '../theme/tokens';
 
 /**
  * Adaptive layout (Global Constraints).
@@ -260,7 +260,7 @@ export function LeftNav({ metrics, testID = 'left-nav' }: LeftNavProps) {
               styles.navItem,
               {
                 backgroundColor: active ? tokens.accentSoft : 'transparent',
-                borderColor: active ? focusRing.color : 'transparent',
+                borderColor: active ? tokens.accent : 'transparent',
               },
             ]}
           >
