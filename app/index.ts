@@ -1,8 +1,5 @@
-import { registerRootComponent } from 'expo';
-
-import App from './App';
-
-// registerRootComponent calls AppRegistry.registerComponent('main', () => App);
-// It also ensures that whether you load the app in Expo Go or in a native build,
-// the environment is set up appropriately
-registerRootComponent(App);
+// Startup side effects (service initialization, polyfills, LogBox config, ...)
+// must run before the router boots. Keep them above the expo-router entry
+// import and always import 'expo-router/entry' last so the root layout
+// (src/app/_layout.tsx) is registered only after startup is complete.
+import 'expo-router/entry';
