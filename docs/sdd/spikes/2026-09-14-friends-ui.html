@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="ja" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Daily Chat — 友達一覧のデザイン比較</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --board: #efefec;
+      --board-text: #25272b;
+      --board-muted: #5d6168;
+      --board-line: #c6c8ca;
+      --board-control: #fff;
+      --s1: 4px;
+      --s2: 8px;
+      --s3: 12px;
+      --s4: 16px;
+      --s5: 24px;
+      --s6: 32px;
+      --s7: 48px;
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+      font-synthesis: none;
+      line-height: 1.5;
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --board: #15171a;
+      --board-text: #f0f1f3;
+      --board-muted: #b1b5be;
+      --board-line: #515660;
+      --board-control: #272b31;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--board); color: var(--board-text); }
+    button { font: inherit; cursor: pointer; }
+    button:focus-visible { outline: 3px solid #5b88c3; outline-offset: 4px; }
+    button:active { opacity: .75; }
+    .board-header, main, .board-footer { max-inline-size: 1000px; margin-inline: auto; padding-inline: var(--s6); }
+    .board-header { padding-block: var(--s6) var(--s5); display: flex; align-items: center; flex-wrap: wrap; gap: var(--s5); }
+    .intro { flex: 1 1 420px; }
+    .eyebrow { margin: 0 0 var(--s2); font-size: 12px; font-weight: 700; letter-spacing: .12em; color: var(--board-muted); }
+    h1 { margin: 0; font-size: 30px; font-weight: 650; letter-spacing: -.03em; line-height: 1.35; text-wrap: balance; }
+    .description { margin: var(--s2) 0 0; font-size: 14px; color: var(--board-muted); }
+    .theme-picker { display: flex; flex-wrap: wrap; gap: var(--s1); padding: var(--s1); border: 1px solid var(--board-line); border-radius: 12px; }
+    .theme-picker button { min-block-size: 44px; padding: var(--s2) var(--s4); border: 0; border-radius: 8px; color: var(--board-muted); background: transparent; font-size: 14px; }
+    .theme-picker button[aria-pressed="true"] { background: var(--board-control); color: var(--board-text); font-weight: 650; box-shadow: 0 1px 3px #00000012; }
+    .comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s7); }
+    .variant { min-inline-size: 0; }
+    .variant-heading { display: flex; align-items: baseline; gap: var(--s3); margin-block: 0 var(--s4); }
+    h2 { font-size: 26px; line-height: 1.35; margin: 0; letter-spacing: -.03em; font-weight: 650; }
+    .variant-heading > span { font-size: 13px; color: var(--board-muted); }
+    .phone {
+      --surface: #ffffff;
+      --text: #272a2e;
+      --muted: #62666d;
+      --line: #e5e6e8;
+      --soft: #f3f4f5;
+      --accent: #30343a;
+      --on-accent: #ffffff;
+      --accent-soft: #e9ebee;
+      --avatar: #e8e9e7;
+      --avatar-ink: #5c6260;
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid #cacdd0;
+      border-radius: 36px;
+      box-shadow: 0 12px 32px #202a3410, 0 2px 5px #202a3408;
+      max-inline-size: 390px;
+      min-block-size: 820px;
+      margin-inline: auto;
+      display: flex;
+      flex-direction: column;
+      isolation: isolate;
+    }
+    .blue .phone {
+      --surface: #fcfdff;
+      --text: #243448;
+      --muted: #5e6d80;
+      --line: #e0e7ef;
+      --soft: #f0f4f9;
+      --accent: #345f91;
+      --accent-soft: #e5eef8;
+      --avatar: #e5eaf1;
+      --avatar-ink: #4d627d;
+    }
+    [data-theme="dark"] .phone {
+      --surface: #202225;
+      --text: #f0f1f3;
+      --muted: #b3b7c0;
+      --line: #3c4047;
+      --soft: #2b2e33;
+      --accent: #e1e4e9;
+      --on-accent: #262a30;
+      --accent-soft: #383c43;
+      --avatar: #383e3c;
+      --avatar-ink: #c5cfca;
+      border-color: #535861;
+      box-shadow: none;
+    }
+    [data-theme="dark"] .blue .phone {
+      --surface: #1b2430;
+      --text: #edf2f8;
+      --muted: #afbed1;
+      --line: #364557;
+      --soft: #253345;
+      --accent: #a6c9f5;
+      --on-accent: #182c46;
+      --accent-soft: #2e425e;
+      --avatar: #32445b;
+      --avatar-ink: #c4d5ec;
+    }
+    .statusbar { display: flex; align-items: center; justify-content: space-between; padding: 19px 26px 0; font-size: 14px; font-weight: 650; min-block-size: 43px; }
+    .status-icons { display: flex; align-items: center; gap: 6px; }
+    .status-icons svg { inline-size: 17px; block-size: 17px; }
+    .status-icons .battery { inline-size: 24px; }
+    .screen-header { padding: var(--s5) var(--s5) var(--s4); }
+    h3 { font-size: 24px; line-height: 1.35; letter-spacing: -.025em; font-weight: 650; margin: 0; }
+    .screen-header p { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
+    .actions { padding-inline: var(--s5); }
+    .mock-action { display: flex; align-items: center; justify-content: center; gap: var(--s2); min-block-size: 48px; border-radius: 10px; font-size: 15px; font-weight: 600; }
+    .add-friend { background: var(--accent); color: var(--on-accent); }
+    .icon { inline-size: 22px; block-size: 22px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .requests { display: flex; align-items: center; gap: var(--s3); min-block-size: 56px; margin-block-start: var(--s3); padding: var(--s3); background: var(--soft); border-radius: 10px; }
+    .request-label { flex: 1; font-size: 15px; }
+    .request-count { display: inline-flex; align-items: center; justify-content: center; min-inline-size: 26px; min-block-size: 26px; padding-inline: 7px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); font-size: 13px; font-weight: 650; }
+    .chevron { inline-size: 16px; block-size: 16px; color: var(--muted); }
+    .friend-section { padding: var(--s5) var(--s5) var(--s4); flex: 1; }
+    .list-heading { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s2); margin-block-end: var(--s2); }
+    h4 { margin: 0; font-size: 14px; font-weight: 600; }
+    .list-heading p { margin: 0; font-size: 12px; color: var(--muted); }
+    .friend-list { list-style: none; padding: 0; margin: 0; }
+    .friend-row { display: flex; align-items: center; gap: var(--s3); min-block-size: 72px; padding-block: var(--s3); }
+    .friend-row + .friend-row { border-block-start: 1px solid var(--line); }
+    .avatar { display: grid; place-items: center; inline-size: 44px; block-size: 44px; border-radius: 50%; background: var(--avatar); color: var(--avatar-ink); flex: 0 0 auto; }
+    .avatar .icon { inline-size: 23px; block-size: 23px; stroke-width: 1.4; }
+    .friend-name { min-inline-size: 0; flex: 1; }
+    .friend-name strong { display: block; font-size: 16px; line-height: 1.5; font-weight: 600; overflow-wrap: anywhere; }
+    .friend-name small { display: block; color: var(--muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+    .streak { text-align: end; font-size: 13px; color: var(--muted); white-space: nowrap; }
+    .streak strong { font-size: 15px; font-weight: 500; color: var(--text); font-variant-numeric: tabular-nums; }
+    .tabbar { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-block-start: 1px solid var(--line); padding: var(--s3) var(--s3) var(--s2); }
+    .tab { display: flex; flex-direction: column; align-items: center; gap: 5px; color: var(--muted); min-block-size: 48px; font-size: 10px; font-weight: 500; text-align: center; }
+    .tab-icon { display: grid; place-items: center; min-inline-size: 46px; block-size: 28px; border-radius: 8px; }
+    .tab.active { color: var(--accent); font-weight: 650; }
+    .tab.active .tab-icon { background: var(--accent-soft); }
+    .tab.active .icon { stroke-width: 2; }
+    .home-indicator { background: var(--text); inline-size: 108px; block-size: 4px; border-radius: 4px; margin: 10px auto 9px; }
+    .blue .screen-header { padding-block-end: var(--s5); }
+    .blue .mock-action, .blue .requests { border-radius: 14px; }
+    .blue .friend-row { min-block-size: 76px; }
+    .blue .friend-row + .friend-row { border-block-start-color: transparent; }
+    .blue .friend-name strong { font-weight: 500; }
+    .blue .avatar { inline-size: 48px; block-size: 48px; }
+    .blue .friend-section { padding-block-start: var(--s5); }
+    .caption { max-inline-size: 390px; margin: var(--s4) auto 0; color: var(--board-muted); font-size: 13px; line-height: 1.7; }
+    .board-footer { margin-block: var(--s6); padding-block-start: var(--s4); border-block-start: 1px solid var(--board-line); font-size: 12px; color: var(--board-muted); }
+    .board-footer p { margin: 0; }
+    @media (max-width: 760px) {
+      .comparison { grid-template-columns: minmax(0, 1fr); gap: var(--s6); }
+      .board-header, main, .board-footer { padding-inline: var(--s4); }
+      .board-header { padding-block-start: var(--s5); }
+      h1 { font-size: 26px; }
+      h2 { font-size: 24px; }
+      h3 { font-size: 22px; }
+      .variant-heading { max-inline-size: 390px; margin-inline: auto; }
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .theme-picker button { transition: background-color 120ms ease, color 120ms ease; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Throwaway visual spike. All people and counts are fictional. No application behavior or backend connection. -->
+  <header class="board-header">
+    <div class="intro">
+      <p class="eyebrow">DAILY CHAT / VISUAL STUDY 01</p>
+      <h1>友達一覧のデザイン比較</h1>
+      <p class="description">同じ情報で、配色・余白・文字の印象を比較します。</p>
+    </div>
+    <div class="theme-picker" role="group" aria-label="見本のテーマ">
+      <button type="button" data-mode="light" aria-pressed="true">ライト</button>
+      <button type="button" data-mode="dark" aria-pressed="false">ダーク</button>
+    </div>
+  </header>
+  <main>
+    <div class="comparison" id="comparison"></div>
+    <noscript>この見本の表示にはJavaScriptを有効にしてください。</noscript>
+  </main>
+  <footer class="board-footer">
+    <p>使い捨ての見た目検証用試作（spike）。人物・数値はサンプルです。操作できるのはテーマ切り替えのみです。</p>
+  </footer>
+  <script>
+    const paths = {
+      person: '<circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/>',
+      add: '<path d="M15 21v-2a6 6 0 0 0-12 0v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6m-3-3h6"/>',
+      request: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m3 7 9 6 9-6"/>',
+      home: '<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z"/>',
+      chat: '<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H9l-6 2 2-6v-4.5a8 8 0 0 1 16 0Z"/><path d="M8 10h8m-8 4h5"/>',
+      friends: '<circle cx="9" cy="7" r="3.5"/><path d="M2 21v-2a7 7 0 0 1 14 0v2M16 4a3.5 3.5 0 0 1 0 7m3 10v-2a7 7 0 0 0-2-5"/>',
+      chevron: '<path d="m9 5 7 7-7 7"/>',
+      wifi: '<path d="M3 8a15 15 0 0 1 18 0M6 12a10 10 0 0 1 12 0m-9 4a5 5 0 0 1 6 0"/><circle cx="12" cy="20" r=".5" fill="currentColor"/>',
+      signal: '<path d="M4 20v-4m5 4v-8m5 8V8m5 12V4"/>',
+      battery: '<rect x="2" y="5" width="18" height="14" rx="3"/><path d="M23 10v4"/><rect x="5" y="8" width="12" height="8" rx="1" fill="currentColor" stroke="none"/>',
+    };
+    const icon = (name, extra = '') => `<svg class="icon ${extra}" viewBox="0 0 24 24" aria-hidden="true">${paths[name]}</svg>`;
+    const friends = [
+      { name: 'あおい', id: 'aoi_07', streak: 12 },
+      { name: 'さくら', id: 'sakura_24', streak: 8 },
+      { name: 'なつき', id: 'natsuki_8', streak: 3 },
+      { name: 'はる', id: 'haru_12', streak: 21 },
+      { name: 'ゆい', id: 'yui_03', streak: 5 },
+    ];
+    const tabs = [['home', 'ホーム'], ['chat', 'チャット'], ['friends', '友達'], ['person', 'マイページ']];
+    const variants = [
+      { id: 'mono', title: 'A. モノトーン', label: '静かで、端正', caption: '白とグレーを基調に、細い区切り線で整える案。文字を少し強めにし、コンパクトに一覧を見渡せます。' },
+      { id: 'blue', title: 'B. 控えめな青', label: '穏やかで、軽やか', caption: '主要な操作と選択中のタブに青を使う案。行間を広めに取り、区切り線を減らして余白で整理します。' },
+    ];
+    document.querySelector('#comparison').innerHTML = variants.map(variant => `
+      <article class="variant ${variant.id}" aria-labelledby="${variant.id}-title">
+        <header class="variant-heading"><h2 id="${variant.id}-title">${variant.title}</h2><span>${variant.label}</span></header>
+        <div class="phone" role="group" aria-label="${variant.title}のスマートフォン画面見本">
+          <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons">${icon('signal')}${icon('wifi')}${icon('battery', 'battery')}</span></div>
+          <header class="screen-header"><h3>友達</h3><p>つながっている友達を確認できます</p></header>
+          <div class="actions">
+            <div class="mock-action add-friend">${icon('add')}<span>友達を追加</span></div>
+            <div class="requests">${icon('request')}<span class="request-label">申請</span><span class="request-count" aria-label="受信した申請2件">2</span>${icon('chevron', 'chevron')}</div>
+          </div>
+          <section class="friend-section" aria-labelledby="${variant.id}-list">
+            <header class="list-heading"><h4 id="${variant.id}-list">友達 <span>5人</span></h4><p>名前順 · 継続日数</p></header>
+            <ul class="friend-list">${friends.map(friend => `
+              <li class="friend-row">
+                <span class="avatar">${icon('person')}</span>
+                <span class="friend-name"><strong>${friend.name}</strong><small>${friend.id}</small></span>
+                <span class="streak" aria-label="${friend.streak}日継続"><strong>${friend.streak}</strong> 日</span>
+                ${icon('chevron', 'chevron')}
+              </li>`).join('')}
+            </ul>
+          </section>
+          <nav class="tabbar" aria-label="${variant.title}の下部ナビゲーション見本">
+            ${tabs.map(([name, label]) => `<span class="tab ${name === 'friends' ? 'active' : ''}" ${name === 'friends' ? 'aria-current="page"' : ''}><span class="tab-icon">${icon(name)}</span><span>${label}</span></span>`).join('')}
+          </nav>
+          <div class="home-indicator" aria-hidden="true"></div>
+        </div>
+        <p class="caption">${variant.caption}</p>
+      </article>`).join('');
+    document.querySelectorAll('[data-mode]').forEach(button => {
+      button.addEventListener('click', () => {
+        document.documentElement.dataset.theme = button.dataset.mode;
+        document.querySelectorAll('[data-mode]').forEach(other => {
+          other.setAttribute('aria-pressed', String(other === button));
+        });
+      });
+    });
+  </script>
+</body>
+</html>
