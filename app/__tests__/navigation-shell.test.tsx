@@ -5,6 +5,33 @@ import {
   waitFor,
 } from 'expo-router/testing-library';
 
+// Task 10 put the tab shell behind the auth+registration guard, so this
+// navigation-focused test injects a signed-in, registered auth context and
+// keeps asserting the shell itself. Auth branching is covered by
+// __tests__/registration-flow.test.tsx.
+jest.mock('../src/auth/provider', () => {
+  const React = require('react');
+  const value = {
+    status: 'ready',
+    error: null,
+    accountId: 'account-shell',
+    registration: 'registered',
+    onboardingSeen: false,
+    storage: null,
+    refresh: async () => {},
+    signIn: async () => ({ status: 'cancelled' }),
+    submitRegistration: async () => ({ status: 'registered' }),
+    markOnboardingSeen: async () => true,
+    markOnboardingSeenIfInvited: async () => false,
+  };
+  return {
+    AuthProvider: ({ children }: { children: React.ReactNode }) =>
+      React.createElement(React.Fragment, null, children),
+    useAuth: () => value,
+    classifyCompletedLogin: () => ({ kind: 'returning', accountId: 'account-shell' }),
+  };
+});
+
 // Renders the real route tree under app/src/app so the tab shell, the home
 // entry point and every tab destination are verified through actual router
 // startup instead of hand-built fixtures. Jest runs with cwd = app/

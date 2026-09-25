@@ -63,7 +63,7 @@
 // and the direct profile write path stays closed (profile-publication).
 
 import { spawn, spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -114,7 +114,7 @@ function readSupabaseStatus() {
   } catch {
     fail('supabase status returned unparseable JSON');
   }
-  for (const key of ['API_URL', 'ANON_KEY', 'SERVICE_ROLE_KEY']) {
+  for (const key of ['API_URL', 'ANON_KEY', 'SERVICE_ROLE_KEY', 'JWT_SECRET']) {
     if (typeof status[key] !== 'string' || status[key].length === 0) {
       fail(`supabase status is missing ${key} (keys seen: ${Object.keys(status).join(', ')})`);
     }
@@ -124,6 +124,16 @@ function readSupabaseStatus() {
 
 // ---------------------------------------------------------------------------
 // Real local Auth users: create (admin API), sign in, delete at the end.
+//
+// "Sign in" mints a locally signed user JWT instead of using the password
+// grant, because the product config disables the email provider entirely
+// (supabase/config.toml: [auth.email] enable_signup = false → GoTrue refuses
+// email logins with `email_provider_disabled`) — the exact behavior shipped
+// for an Apple/Google-only app. The minted token has the same claims GoTrue
+// issues and is verified against the real `GET /auth/v1/user` before use, so
+// a wrong claim shape fails loudly here instead of surfacing as misleading
+// downstream 401s. The users themselves are still real admin-created Auth
+// users, and every command still runs through the real Edge Functions.
 // ---------------------------------------------------------------------------
 
 async function adminCreateUser(status, email, password) {
@@ -168,21 +178,49 @@ async function adminDeleteUser(status, userId) {
   throw new Error(`could not delete auth user ${userId}`);
 }
 
-async function passwordGrant(status, email, password) {
-  const res = await fetch(
-    `${status.API_URL}/auth/v1/token?grant_type=password`,
-    {
-      method: 'POST',
-      headers: { apikey: status.ANON_KEY, 'content-type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    },
+async function mintUserToken(status, userId) {
+  const secret = status.JWT_SECRET;
+  if (typeof secret !== 'string' || secret.length < 32) {
+    throw new Error('supabase status is missing JWT_SECRET (needed to mint a local user token)');
+  }
+  const api = String(status.API_URL).replace(/\/+$/, '');
+  const now = Math.floor(Date.now() / 1000);
+  const b64 = (value) => Buffer.from(value).toString('base64url');
+  const header = b64(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  // Same claims shape GoTrue issues for a local access token (iss/aud/role/sub/
+  // exp), deliberately WITHOUT a session_id claim: a fabricated session id has
+  // no sessions row and real Auth rejects it (`session_not_found`), while the
+  // claim-less token is accepted exactly like a live session.
+  const payload = b64(
+    JSON.stringify({
+      iss: `${api}/auth/v1`,
+      sub: userId,
+      aud: 'authenticated',
+      exp: now + 3600,
+      iat: now,
+      role: 'authenticated',
+    }),
   );
+  const signature = createHmac('sha256', secret)
+    .update(`${header}.${payload}`)
+    .digest('base64url');
+  const token = `${header}.${payload}.${signature}`;
+
+  // Verify against the real local Auth server before handing the token to any
+  // suite: a wrong claim shape must fail HERE, not as a misleading 401 later.
+  const res = await fetch(`${api}/auth/v1/user`, {
+    headers: { apikey: status.ANON_KEY, Authorization: `Bearer ${token}` },
+  });
   if (!res.ok) {
-    throw new Error(`password grant failed: HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    throw new Error(
+      `minted user token rejected by local Auth: HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`,
+    );
   }
   const body = await res.json();
-  if (typeof body.access_token !== 'string') throw new Error('password grant returned no access token');
-  return body.access_token;
+  if (body?.id !== userId) {
+    throw new Error(`minted user token resolved to ${body?.id} instead of ${userId}`);
+  }
+  return token;
 }
 
 // ---------------------------------------------------------------------------
@@ -4449,7 +4487,7 @@ async function main() {
       const password = `${randomUUID()}aA1!`;
       const id = await adminCreateUser(status, def.email, password);
       createdIds.push(id);
-      const token = await passwordGrant(status, def.email, password);
+      const token = await mintUserToken(status, id);
       users[def.key] = { id, token };
     }
     log(`  created ${createdIds.length} users`);

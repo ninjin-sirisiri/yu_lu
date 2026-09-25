@@ -6,6 +6,101 @@
 
 ---
 
+## Task 10: OAuth・登録画面と起動分岐 (2026-09-26 JST)
+
+### 環境
+
+| 項目 | 値 |
+| --- | --- |
+| iOS dev build | `npx expo run:ios --no-bundler` (expo-auth-session 57.0.13 / expo-web-browser 57.0.3 追加のため再ビルド), bundle `com.anonymous.app` |
+| シミュレータ | iPhone 18 Pro / iOS 27.0 (UDID 7072095A-…) — **ヘッドレス** (Simulator.app が存在せず、GUIウィンドウなし。osascript・タップ操作は不可 = タスク8と同じ制約) |
+| Metro | `EXPO_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321`, `EXPO_PUBLIC_SUPABASE_ANON_KEY=<ローカルanon key>` |
+| ローカルSupabase | `npx supabase start` — config.toml 変更後に再起動して反映 |
+
+### JS層 (モック層 — 実OAuthラウンドトリップは含まない)
+
+```
+$ npm --prefix app test -- --runInBand __tests__/registration-flow.test.tsx src/auth/session.test.ts
+Test Suites: 2 passed, 2 total
+Tests:       48 passed, 48 total
+
+$ npm --prefix app run typecheck   → OK (0 errors)
+$ npm --prefix app test            → 24 suites / 371 tests 全通過 (タスク10で +40)
+```
+
+- `__tests__/registration-flow.test.tsx` (**MOCKED-LAYER**: Supabase client・システムブラウザ・redirect URI・端末DBドライバをモック。実OAuth成功を主張しない) 40件:
+  - PKCEコールバックURL・`code`/`error`の解析・招待リンクをOAuth応答と混同しないこと
+  - Apple/Google の2プロバイダのみ (それ以外は例外)
+  - ログイン取消 → 再試行 (同じプロバイダを保持) / 通信失敗 → 再試行 → 成功
+  - 未登録ガード (/friends → /register、未ログイン → /login)、登録確認画面、ID衝突時の類似候補 (入力保持・候補は編集可能な提案)、再試行で operation id を再利用
+  - アカウント別下書き (別アカウントの下書きは復元しない / 自分の下書きは再起動相当で復元 / 登録成功で削除)
+  - 招待保有アカウントの確認到達で `mark_onboarding_seen` が実行される (招待なしでは実行しない)
+  - cold起動 → ホーム、warm復帰 → 前回の詳細 destination、設定欠落時は明確なエラー (偽ホームなし)
+
+### ローカルAuth実サーバーでの実測 (curl / 実supabase-js)
+
+1. **メール登録が無効** (config.toml `[auth.email] enable_signup = false` を再起動で反映):
+
+   ```
+   $ POST /auth/v1/signup {"email":"probe2@example.com",...}
+   {"code":400,"error_code":"email_provider_disabled","msg":"Email signups are disabled"} [HTTP 400]
+   $ GET /auth/v1/settings → "external": {"email": false}, "disable_signup": false
+   ```
+   - 期待: メール登録は拒否、OAuth (グローバル) signup は維持。→ 実測どおり。
+
+2. **コールバックURLが実サーバーのallow-listに入った**:
+
+   ```
+   GOTRUE_URI_ALLOW_LIST=https://127.0.0.1:3000,app://auth/callback,exp://*/--/auth/callback
+   ```
+   (config.toml `additional_redirect_urls` が実Authプロセスのenvに反映されていることを docker inspect で確認)
+
+3. **アプリと同じ supabase-js 呼び出し (PKCE + skipBrowserRedirect) が実Authで受理される**:
+   実 `@supabase/supabase-js` で `signInWithOAuth({provider, options:{redirectTo:'app://auth/callback', skipBrowserRedirect:true}})` を実行し、生成された authorize URL へ実HTTPアクセス →
+
+   ```
+   authorize URL: 127.0.0.1:54321/auth/v1/authorize?provider=github&redirect_to=app://auth/callback&code_challenge=<s256>&code_challenge_method=s256
+   → 実Auth: HTTP 302 Location: https://github.com/login/oauth/authorize?...&redirect_to=app%3A%2F%2Fauth%2Fcallback&redirect_uri=http://127.0.0.1:54321/auth/v1/callback...
+   ```
+   - 手順: プロバイダ検証のため `[auth.external.github]` をダミーclient_idで一時有効化 → 上記を実測 → **設定は元に戻し再起動してベースラインを再確認** (`providers.email:false` / allow-list維持)。
+   - 期待: PKCE code_challenge 付きで実Authがプロバイダへ302し、`redirect_to=app://auth/callback` が運ばれる。→ 実測どおり。
+   - **未検証として記録**: allow-listの**執行** (redirect_to検証) はGoTrueがコールバック償却時に行うため、authorize段では許可/拒否が観測できず (evil redirectも同様に302になった)、実プロバイダのログインを経ないと到達しない。
+
+4. **偽codeの実交換は拒否される** (callback失敗経路が実Authで機能、偽成功を作らない):
+
+   ```
+   $ POST /auth/v1/token?grant_type=pkce {"auth_code":"this-is-not-a-real-code",...}
+   {"code":404,"error_code":"flow_state_not_found","msg":"invalid flow state..."} [HTTP 404]
+   ```
+
+### iOS dev build 実機 (シミュレータ)
+
+- ログイン画面が cold start で表示される: `simctl launch … --initialUrl "exp+app://expo-development-client/?url=…"` → バンドル `iOS Bundled 1026ms index.ts (1402 modules)` → スクリーンショットで **「ログイン」+「Appleでログイン」+「Googleでログイン」のみ** を確認 (メール/パスワード入力なし)。
+- dev-menu の初回オンボーディング枠はローカルビルド成果物の Info.plist `EXDevMenuIsOnboardingFinished=YES` で除外 (ソース管理外のビルド产物)。
+- `simctl openurl "app://auth/callback?code=…"` → iOS側の「"app" で開きますか?」ダイアログ表示 (タスク8同様、GUI不可のため操作不能)。
+
+### 実OAuthの成功・取消・callback中断 — ブロック条件 (モック成功での代替はしない)
+
+| 検証項目 | 状態 | 理由 |
+| --- | --- | --- |
+| Apple/Google 実ログイン成功 | **BLOCKED** | Apple team ID / Google OAuth client / SupabaseプロジェクトのOAuth設定が未提供の外部入力。実Authも `Unsupported provider: provider is not enabled` (apple: enabled=false) |
+| ブラウザ取消 → 再試行の実機操作 | **BLOCKED** | ヘッドレスシミュレータ (Simulator.appなし)・osascript GUI操作不可 → タップ入力経路がない |
+| callback中断 (実プロバイダcode) | **BLOCKED** | 上記に同じ。偽codeでの「成功」は作らない (実Authは404 flow_state_not_foundを実測) |
+| jest層の取消・中断・失敗経路 | MOCKED-LAYERとして検証済み (上記40件) | 実成功の証拠として提示しない |
+
+### サーバーレグレッション (メール登録無効化の後)
+
+emailプロバイダ無効は `password grant` (メール+パスワード) を拒否するため、ローカルハーネスのトークン取得を変更:
+`scripts/test-local-backend.mjs` — 実Auth管理者APIで作ったユーザーに対し、GoTrueが発行するものと同じ claim 形状 (iss/aud/role/sub/exp, session_id なし) のJWTをローカル署名し、**実 `GET /auth/v1/user` で検証してから**各スイートへ渡す (検証失敗は即エラー)。
+
+```
+$ node scripts/test-local-backend.mjs --suite all        → all: 161 passed, 0 failed
+$ npx supabase test db                                   → Files=6, Tests=542, PASS
+$ npx deno test --allow-env --allow-net --config supabase/functions/deno.json supabase/functions/tests/ → 100 passed, 0 failed
+```
+
+---
+
 ## Task 8: アカウント別SQLiteと永続下書き (2026-09-26 JST)
 
 ### 環境

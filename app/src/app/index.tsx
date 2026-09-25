@@ -1,7 +1,71 @@
 import { Redirect } from 'expo-router';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-// Cold start lands on "/". Until the auth/registration branching exists
-// (Task 10), forward straight into the tab shell.
+import { peekDestination, resolveEntry } from '../navigation/entry';
+import { useAuth } from '../auth/provider';
+
+// Task 10: the root route decides where the app opens.
+//
+// Cold start (no remembered destination) and warm resume (process alive,
+// destination remembered by navigation/entry.ts) both run through the pure
+// resolveEntry — the Router only performs the redirect it returns.
+
 export default function Index() {
-  return <Redirect href="/home" />;
+  const auth = useAuth();
+
+  if (auth.status === 'loading') {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.message}>読み込み中…</Text>
+      </View>
+    );
+  }
+
+  if (auth.status === 'error') {
+    return (
+      <View style={styles.container} testID="entry-error">
+        <Text style={styles.message}>{auth.error ?? '起動状態を取得できません。'}</Text>
+        <TouchableOpacity testID="entry-retry" onPress={() => void auth.refresh()}>
+          <Text style={styles.retry}>再試行</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const destination = peekDestination();
+  const decision = resolveEntry({
+    phase: destination === null ? 'cold' : 'warm',
+    auth: auth.accountId === null ? 'signedOut' : 'signedIn',
+    registration: auth.registration === 'loading' ? 'loading' : auth.registration,
+    destination,
+  });
+
+  if (decision.kind === 'wait') {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.message}>読み込み中…</Text>
+      </View>
+    );
+  }
+
+  return <Redirect href={decision.path} />;
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    padding: 16,
+  },
+  message: {
+    fontSize: 16,
+    textAlign: 'center',
+  },
+  retry: {
+    fontSize: 16,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+  },
+});

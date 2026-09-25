@@ -34,7 +34,8 @@
             "enableSceneSupport": true
           }
         }
-      ]
+      ],
+      "expo-web-browser"
     ]
   }
 }
