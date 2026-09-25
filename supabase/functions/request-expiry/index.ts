@@ -1,4 +1,4 @@
-// Task 7: scheduled request and invitation expiry (service-role only).
+// Task 7/4: scheduled request and invitation expiry (service-role only).
 //
 // Ownership: this function owns the scheduled expiry job. It lapses past-due
 // friend requests and invitations via the Task 1 RPCs and never establishes
@@ -12,6 +12,17 @@
 // so only the service key satisfies both) and fails closed when the
 // credential is not configured. End-user JWTs and anonymous calls get 401.
 // Scheduled callers must send `Authorization: Bearer <service key>`.
+//
+// Task 4: expire_friend_requests() (migration 0009) now takes the same
+// unordered-pair lock as the request commands, so this sweep serializes
+// against a concurrent approve/cancel instead of racing it, judges expiry
+// with server time (`expires_at <= now()`), and records the
+// `request_expired` domain event exactly once per row it lapses - the
+// record Task 18's push dispatch consumes. The sweep is operational
+// hygiene only: approvals already refuse expired requests and the listing
+// views already derive server-time expiry, so a late run changes nothing a
+// user can observe, only when the expiry event becomes available for
+// pushing. Responses and the service gate are unchanged.
 //
 // Import convention: '@supabase/supabase-js' (repo convention, matching
 // supabase/functions/daily-settlement/index.ts), resolved through the

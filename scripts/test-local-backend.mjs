@@ -3,6 +3,7 @@
 //
 // Usage: node scripts/test-local-backend.mjs --suite command-boundary
 //        node scripts/test-local-backend.mjs --suite registration
+//        node scripts/test-local-backend.mjs --suite requests
 //        node scripts/test-local-backend.mjs --suite all
 //
 // Ownership: real-stack verification of the authenticated command boundary.
@@ -22,7 +23,14 @@
 // (command-boundary); registration normalization, immutability, atomic
 // case-insensitive uniqueness under simultaneous registration, shared
 // visual-count rules at the boundaries, onboarding-seen persistence and the
-// closed direct-update path (registration).
+// closed direct-update path (registration); request command execution with
+// 7-day validity, concurrent HTTP conflicts (opposite simultaneous requests
+// serializing into one friendship, cancel-vs-approve racing to exactly one
+// winner), stale request ids never applying to a re-request, third-party
+// and role refusals, duplicate operation ids, sender-neutral listings
+// (rejection masked as ended, 7-day window, server-time derived expiry),
+// the expiry sweep recording its domain event once, and the legacy
+// friendship-admin proxy (requests).
 
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -241,9 +249,9 @@ async function postFunction(status, name, { token, body, method = 'POST' }) {
   });
 }
 
-async function postRest(status, pathName, { token, body, method = 'POST' }) {
+async function postRest(status, pathName, { token, body, method = 'POST', apikey }) {
   const headers = {
-    apikey: status.ANON_KEY,
+    apikey: apikey ?? status.ANON_KEY,
     'content-type': 'application/json',
   };
   if (token) headers['authorization'] = `Bearer ${token}`;
@@ -934,6 +942,817 @@ function registrationSuite(status, users) {
   ];
 }
 
+// ---------------------------------------------------------------------------
+// Suite: requests
+// ---------------------------------------------------------------------------
+
+const REQUEST_MESSAGES_HTTP = {
+  targetRequired: 'target_user_id is required',
+  requestIdUuid: 'request_id must be a UUID',
+  duplicate: 'A request is already pending. Open the existing request.',
+  blocked: 'Requests cannot be sent to a blocked recipient. Re-request after unblock.',
+  alreadyFriends: 'Already friends. No new request is needed.',
+  notPending: 'The request is no longer pending.',
+  expired: 'This request has expired.',
+  notRegistered: 'Confirm the User ID before using the app.',
+  targetNotFound: 'Target user not found.',
+  requestNotFound: 'request not found',
+  mustBeRecipient: 'the authenticated actor must be the recipient',
+  mustBeSender: 'the authenticated actor must be the sender',
+  selfRequest: 'self request is not allowed',
+  opConflict:
+    'operation conflict: operation_id already used with different kind or payload',
+  rejectionDisplay: '今回は成立しませんでした',
+};
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+function requestsSuite(status, users) {
+  const { reqA, reqB, reqC, reqD, reqE } = users;
+  const envelope = (kind, payload, id = randomUUID()) => ({
+    operation_id: id,
+    kind,
+    payload,
+  });
+  const cmd = (user, kind, payload, id) =>
+    postFunction(status, 'app-command', {
+      token: user.token,
+      body: envelope(kind, payload, id),
+    });
+
+  // Server-side fixture and audit reads: the service credential reads the
+  // raw tables (events are granted to service_role only) and performs the
+  // time-travel fixtures no client path exposes.
+  const service = (path, opts = {}) =>
+    postRest(status, path, {
+      method: 'GET',
+      apikey: status.SERVICE_ROLE_KEY,
+      token: status.SERVICE_ROLE_KEY,
+      ...opts,
+    });
+  const pairRequests = (a, b) =>
+    service(
+      `friend_requests?or=${encodeURIComponent(
+        `(and(sender_user_id.eq.${a},recipient_user_id.eq.${b}),` +
+          `and(sender_user_id.eq.${b},recipient_user_id.eq.${a}))`,
+      )}&select=*`,
+    );
+  const pairFriendship = async (a, b) => {
+    const [first, second] = a < b ? [a, b] : [b, a];
+    return await expectJson(
+      await service(`friendships?user_a=eq.${first}&user_b=eq.${second}&select=*`),
+      200,
+      'friendship read',
+    );
+  };
+  const eventsFor = (requestId, type) =>
+    service(
+      `request_events?request_id=eq.${requestId}` +
+        (type ? `&event_type=eq.${type}` : '') +
+        '&select=*',
+    );
+  const listing = (view, user) =>
+    postRest(status, `${view}?select=*`, { token: user.token, method: 'GET' });
+  const outbox = async (user) =>
+    await expectJson(await listing('friend_request_outbox', user), 200, 'outbox read');
+  const inbox = async (user) =>
+    await expectJson(await listing('friend_request_inbox', user), 200, 'inbox read');
+
+  return [
+    {
+      name: 'request accounts register first',
+      run: async () => {
+        const results = await Promise.all([
+          cmd(reqA, 'register', { user_id_text: 'Req_A', display_name: 'Req A' }),
+          cmd(reqB, 'register', { user_id_text: 'Req_B', display_name: 'Req B' }),
+          cmd(reqC, 'register', { user_id_text: 'Req_C', display_name: 'Req C' }),
+          cmd(reqD, 'register', { user_id_text: 'Req_D', display_name: 'Req D' }),
+        ]);
+        for (const res of results) {
+          const body = await expectJson(res, 200, 'register');
+          expect(body.status === 'executed', `expected executed, got ${body.status}`);
+        }
+      },
+    },
+    {
+      name: 'request requires a verified session',
+      run: async () => {
+        const res = await postFunction(status, 'app-command', {
+          body: envelope('request', { target_user_id: reqB.id }),
+        });
+        await expectJson(res, 401, 'unauthenticated request');
+      },
+    },
+    {
+      name: 'the request payload gate rejects a missing target',
+      run: async () => {
+        const res = await cmd(reqA, 'request', {});
+        const body = await expectJson(res, 400, 'missing target');
+        expect(
+          body.error === REQUEST_MESSAGES_HTTP.targetRequired,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'the decision payload gate rejects a malformed request id',
+      run: async () => {
+        const res = await cmd(reqA, 'approve', { request_id: 'not-a-uuid' });
+        const body = await expectJson(res, 400, 'malformed request id');
+        expect(
+          body.error === REQUEST_MESSAGES_HTTP.requestIdUuid,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'A sends a request to B with 7-day server-side validity',
+      run: async (ctx) => {
+        ctx.reqEnv = envelope('request', { target_user_id: reqB.id });
+        const res = await postFunction(status, 'app-command', {
+          token: reqA.token,
+          body: ctx.reqEnv,
+        });
+        const body = await expectJson(res, 200, 'first request');
+        expect(body.status === 'executed', `expected executed, got ${body.status}`);
+        expect(
+          body.result.result === 'requested',
+          `unexpected result ${JSON.stringify(body.result)}`,
+        );
+        ctx.r1 = body.result.request_id;
+        expect(
+          typeof ctx.r1 === 'string' && UUID_PATTERN.test(ctx.r1),
+          `request id ${ctx.r1}`,
+        );
+        expect(
+          typeof body.result.expires_at === 'string',
+          `expires_at missing from ${JSON.stringify(body.result)}`,
+        );
+        const ttl = Date.parse(body.result.expires_at) - Date.now();
+        expect(
+          ttl > 6 * 86400_000 && ttl < 8 * 86400_000,
+          `expires_at should be about 7 days out, got ${ttl}ms`,
+        );
+      },
+    },
+    {
+      name: 'a duplicate pending request is refused with the shared guidance',
+      run: async () => {
+        const res = await cmd(reqA, 'request', { target_user_id: reqB.id });
+        const body = await expectJson(res, 409, 'duplicate request');
+        expect(
+          body.error === REQUEST_MESSAGES_HTTP.duplicate,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'raw request rows are closed even for participants',
+      run: async (ctx) => {
+        const rows = await expectJson(
+          await postRest(status, 'friend_requests?select=*', {
+            token: reqA.token,
+            method: 'GET',
+          }),
+          200,
+          'direct request read',
+        );
+        expect(Array.isArray(rows), 'direct read returns an array');
+        expect(rows.length === 0, `expected no raw rows, got ${rows.length}`);
+        const events = await expectJson(
+          await postRest(status, 'request_events?select=*', {
+            token: reqA.token,
+            method: 'GET',
+          }),
+          200,
+          'event read',
+        ).catch(() => null);
+        expect(
+          events === null || events.length === 0,
+          'clients cannot read the domain events',
+        );
+        expect(typeof ctx.r1 === 'string', 'the pending request id is known');
+      },
+    },
+    {
+      name: 'both sides see the pending request in their own listing',
+      run: async (ctx) => {
+        const aOut = await outbox(reqA);
+        expect(
+          aOut.some((r) => r.request_id === ctx.r1 && r.status === 'pending'),
+          `outbox missing pending r1: ${JSON.stringify(aOut)}`,
+        );
+        const bIn = await inbox(reqB);
+        expect(
+          bIn.some((r) => r.request_id === ctx.r1 && r.status === 'pending'),
+          `inbox missing pending r1: ${JSON.stringify(bIn)}`,
+        );
+        const cOut = await outbox(reqC);
+        expect(
+          cOut.length === 0,
+          `a third party's outbox must be empty, got ${JSON.stringify(cOut)}`,
+        );
+        const received = await expectJson(await eventsFor(ctx.r1, 'request_received'), 200, 'events');
+        expect(received.length === 1, `request_received recorded ${received.length} times`);
+      },
+    },
+    {
+      name: 'a third party cannot decide the request (not found, no leak)',
+      run: async (ctx) => {
+        const res = await cmd(reqC, 'approve', { request_id: ctx.r1 });
+        const body = await expectJson(res, 404, 'third party approve');
+        expect(
+          body.error === REQUEST_MESSAGES_HTTP.requestNotFound,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'participants are bound to their decision roles',
+      run: async (ctx) => {
+        const approve = await cmd(reqA, 'approve', { request_id: ctx.r1 });
+        const approveBody = await expectJson(approve, 403, 'sender tries approve');
+        expect(
+          approveBody.error === REQUEST_MESSAGES_HTTP.mustBeRecipient,
+          `unexpected body ${JSON.stringify(approveBody)}`,
+        );
+        const cancel = await cmd(reqB, 'cancel', { request_id: ctx.r1 });
+        const cancelBody = await expectJson(cancel, 403, 'recipient tries cancel');
+        expect(
+          cancelBody.error === REQUEST_MESSAGES_HTTP.mustBeSender,
+          `unexpected body ${JSON.stringify(cancelBody)}`,
+        );
+      },
+    },
+    {
+      name: 'an unknown request id is a 404',
+      run: async () => {
+        const res = await cmd(reqA, 'approve', { request_id: randomUUID() });
+        const body = await expectJson(res, 404, 'unknown request id');
+        expect(
+          body.error === REQUEST_MESSAGES_HTTP.requestNotFound,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'the identical operation replays its stored result once',
+      run: async (ctx) => {
+        const res = await postFunction(status, 'app-command', {
+          token: reqA.token,
+          body: ctx.reqEnv,
+        });
+        const body = await expectJson(res, 200, 'replay');
+        expect(body.status === 'replayed', `expected replayed, got ${body.status}`);
+        expect(
+          body.result.request_id === ctx.r1,
+          'the replay returns the original request id',
+        );
+        const received = await expectJson(await eventsFor(ctx.r1, 'request_received'), 200, 'events');
+        expect(received.length === 1, 'a replay records no second arrival event');
+      },
+    },
+    {
+      name: 'the settled operation id conflicts when the payload changes',
+      run: async (ctx) => {
+        const res = await postFunction(status, 'app-command', {
+          token: reqA.token,
+          body: { ...ctx.reqEnv, payload: { target_user_id: reqC.id } },
+        });
+        const body = await expectJson(res, 409, 'changed payload');
+        expect(
+          typeof body.error === 'string' &&
+            body.error.startsWith('operation conflict:'),
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+        expect(
+          body.error === REQUEST_MESSAGES_HTTP.opConflict,
+          `unexpected conflict message ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'an existing block refuses the request until unblock',
+      run: async (ctx) => {
+        const insert = await service('blocks', {
+          method: 'POST',
+          body: { user_id: reqA.id, blocked_user_id: reqB.id },
+        });
+        await expectJson(insert, 201, 'block fixture insert');
+        try {
+          const res = await cmd(reqA, 'request', { target_user_id: reqB.id });
+          const body = await expectJson(res, 409, 'blocked request');
+          expect(
+            body.error === REQUEST_MESSAGES_HTTP.blocked,
+            `unexpected body ${JSON.stringify(body)}`,
+          );
+        } finally {
+          const remove = await service(
+            `blocks?user_id=eq.${reqA.id}&blocked_user_id=eq.${reqB.id}`,
+            { method: 'DELETE' },
+          );
+          await expectJson(remove, 204, 'block fixture cleanup');
+        }
+        expect(typeof ctx.r1 === 'string', 'the pending request survived the block probe');
+      },
+    },
+    {
+      name: 'opposite simultaneous requests serialize into one friendship',
+      run: async () => {
+        const [first, second] = await Promise.all([
+          cmd(reqA, 'request', { target_user_id: reqC.id }),
+          cmd(reqC, 'request', { target_user_id: reqA.id }),
+        ]);
+        const firstBody = await expectJson(first, 200, 'A->C request');
+        const secondBody = await expectJson(second, 200, 'C->A request');
+        const outcomes = [firstBody.result.result, secondBody.result.result];
+        expect(
+          outcomes.filter((o) => o === 'crossed').length === 1,
+          `expected exactly one crossed outcome, got ${JSON.stringify(outcomes)}`,
+        );
+        expect(
+          outcomes.filter((o) => o === 'requested').length === 1,
+          `expected exactly one requested outcome, got ${JSON.stringify(outcomes)}`,
+        );
+        const rows = await expectJson(await pairRequests(reqA.id, reqC.id), 200, 'pair read');
+        expect(
+          rows.length === 1,
+          `expected one row for the pair, got ${rows.length}`,
+        );
+        expect(
+          rows[0].status === 'approved',
+          `expected the row to settle approved, got ${rows[0].status}`,
+        );
+        const friendships = await pairFriendship(reqA.id, reqC.id);
+        expect(friendships.length === 1, 'exactly one friendship row');
+        const received = await expectJson(await eventsFor(rows[0].request_id, 'request_received'), 200, 'events');
+        expect(received.length === 1, 'exactly one arrival event for the pair');
+        const established = await expectJson(
+          await eventsFor(rows[0].request_id, 'friendship_established'),
+          200,
+          'events',
+        );
+        expect(established.length === 1, 'exactly one establishment event');
+      },
+    },
+    {
+      name: 'concurrent cancel and approve resolve to exactly one winner',
+      run: async (ctx) => {
+        const created = await cmd(reqB, 'request', { target_user_id: reqD.id });
+        const createdBody = await expectJson(created, 200, 'B->D request');
+        ctx.bdRow = createdBody.result.request_id;
+        const [cancelRes, approveRes] = await Promise.all([
+          postFunction(status, 'app-command', {
+            token: reqB.token,
+            body: envelope('cancel', { request_id: ctx.bdRow }),
+          }),
+          postFunction(status, 'app-command', {
+            token: reqD.token,
+            body: envelope('approve', { request_id: ctx.bdRow }),
+          }),
+        ]);
+        const statuses = [cancelRes.status, approveRes.status].sort((a, b) => a - b);
+        expect(
+          statuses[0] === 200 && statuses[1] === 409,
+          `expected one 200 and one 409, got [${cancelRes.status}, ${approveRes.status}]`,
+        );
+        ctx.bdApproveWon = approveRes.status === 200;
+        const rows = await expectJson(
+          await service(`friend_requests?request_id=eq.${ctx.bdRow}&select=*`),
+          200,
+          'decision row read',
+        );
+        expect(rows.length === 1, 'the decision row still exists');
+        const friendships = await pairFriendship(reqB.id, reqD.id);
+        if (ctx.bdApproveWon) {
+          expect(
+            rows[0].status === 'approved',
+            `approve won but status is ${rows[0].status}`,
+          );
+          expect(friendships.length === 1, 'approve won: friendship exists');
+        } else {
+          expect(
+            rows[0].status === 'cancelled',
+            `cancel won but status is ${rows[0].status}`,
+          );
+          expect(friendships.length === 0, 'cancel won: no friendship');
+        }
+        const bOut = await outbox(reqB);
+        const entry = bOut.find((r) => r.request_id === ctx.bdRow);
+        expect(
+          entry !== undefined && entry.status === rows[0].status,
+          `the sender's listing matches the winner: ${JSON.stringify(entry)}`,
+        );
+      },
+    },
+    {
+      name: 'the sender cancels and re-requests immediately with a new id',
+      run: async (ctx) => {
+        ctx.canEnv = envelope('cancel', { request_id: ctx.r1 });
+        const cancelRes = await postFunction(status, 'app-command', {
+          token: reqA.token,
+          body: ctx.canEnv,
+        });
+        const cancelBody = await expectJson(cancelRes, 200, 'cancel r1');
+        expect(
+          cancelBody.result.result === 'cancelled',
+          `unexpected result ${JSON.stringify(cancelBody.result)}`,
+        );
+        const re = await cmd(reqA, 'request', { target_user_id: reqB.id });
+        const reBody = await expectJson(re, 200, 're-request');
+        ctx.r2 = reBody.result.request_id;
+        expect(
+          typeof ctx.r2 === 'string' && ctx.r2 !== ctx.r1,
+          `re-request must be a new id, got ${ctx.r2}`,
+        );
+        const events = await expectJson(await eventsFor(ctx.r1), 200, 'events');
+        expect(
+          events.length === 1,
+          `cancellation records no event, row has ${events.length}`,
+        );
+      },
+    },
+    {
+      name: 'a stale request id never applies to the newer request',
+      run: async (ctx) => {
+        const res = await cmd(reqB, 'approve', { request_id: ctx.r1 });
+        const body = await expectJson(res, 409, 'stale approve');
+        expect(
+          body.error === REQUEST_MESSAGES_HTTP.notPending,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+        const bIn = await inbox(reqB);
+        expect(
+          bIn.some((r) => r.request_id === ctx.r2 && r.status === 'pending'),
+          'the newer request is untouched and still pending',
+        );
+        const friendships = await pairFriendship(reqA.id, reqB.id);
+        expect(friendships.length === 0, 'no friendship appeared from the stale id');
+      },
+    },
+    {
+      name: 'a reused operation id with a new request id conflicts at the boundary',
+      run: async (ctx) => {
+        const res = await postFunction(status, 'app-command', {
+          token: reqA.token,
+          body: {
+            operation_id: ctx.canEnv.operation_id,
+            kind: 'cancel',
+            payload: { request_id: ctx.r2 },
+          },
+        });
+        const body = await expectJson(res, 409, 'reused operation id');
+        expect(
+          body.error === REQUEST_MESSAGES_HTTP.opConflict,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+        const bIn = await inbox(reqB);
+        expect(
+          bIn.some((r) => r.request_id === ctx.r2 && r.status === 'pending'),
+          'the conflicted operation applied nothing',
+        );
+      },
+    },
+    {
+      name: 'the recipient rejects without establishing anything',
+      run: async (ctx) => {
+        const res = await cmd(reqB, 'reject', { request_id: ctx.r2 });
+        const body = await expectJson(res, 200, 'reject r2');
+        expect(
+          body.result.result === 'rejected',
+          `unexpected result ${JSON.stringify(body.result)}`,
+        );
+        const friendships = await pairFriendship(reqA.id, reqB.id);
+        expect(friendships.length === 0, 'rejection never establishes friendship');
+        const events = await expectJson(await eventsFor(ctx.r2), 200, 'events');
+        expect(
+          events.length === 1,
+          `rejection records no extra event, row has ${events.length}`,
+        );
+      },
+    },
+    {
+      name: 'the sender sees a neutral ended result, never "rejected"',
+      run: async (ctx) => {
+        const aOut = await outbox(reqA);
+        const entry = aOut.find((r) => r.request_id === ctx.r2);
+        expect(
+          entry !== undefined && entry.status === 'ended',
+          `expected the sender's view to read "ended": ${JSON.stringify(entry)}`,
+        );
+        expect(
+          !JSON.stringify(aOut).includes('rejected'),
+          `the outbox body must never mention rejected: ${JSON.stringify(aOut)}`,
+        );
+        const bIn = await inbox(reqB);
+        const bEntry = bIn.find((r) => r.request_id === ctx.r2);
+        expect(
+          bEntry !== undefined && bEntry.status === 'rejected',
+          'the recipient keeps the raw status in their own inbox',
+        );
+      },
+    },
+    {
+      name: 're-request after rejection is immediately allowed with a new id',
+      run: async (ctx) => {
+        const res = await cmd(reqA, 'request', { target_user_id: reqB.id });
+        const body = await expectJson(res, 200, 're-request after rejection');
+        ctx.r3 = body.result.request_id;
+        expect(
+          typeof ctx.r3 === 'string' && ctx.r3 !== ctx.r2 && ctx.r3 !== ctx.r1,
+          `expected a fresh request id, got ${ctx.r3}`,
+        );
+      },
+    },
+    {
+      name: 'ended items leave both listings exactly after 7 days',
+      run: async (ctx) => {
+        await expectJson(
+          await service(`friend_requests?request_id=eq.${ctx.r1}`, {
+            method: 'PATCH',
+            body: { decided_at: new Date(Date.now() - 8 * 86400_000).toISOString() },
+          }),
+          204,
+          'age the cancelled row',
+        );
+        await expectJson(
+          await service(`friend_requests?request_id=eq.${ctx.r2}`, {
+            method: 'PATCH',
+            body: { decided_at: new Date(Date.now() - 6 * 86400_000).toISOString() },
+          }),
+          204,
+          'age the rejected row',
+        );
+        const aOut = await outbox(reqA);
+        expect(
+          !aOut.some((r) => r.request_id === ctx.r1),
+          'an item ended 8 days ago is gone from the sender listing',
+        );
+        const r2 = aOut.find((r) => r.request_id === ctx.r2);
+        expect(
+          r2 !== undefined && r2.status === 'ended',
+          'an item ended 6 days ago is still listed as ended',
+        );
+        expect(
+          aOut.some((r) => r.request_id === ctx.r3 && r.status === 'pending'),
+          'the pending request is still listed',
+        );
+        const bIn = await inbox(reqB);
+        expect(
+          !bIn.some((r) => r.request_id === ctx.r1),
+          'the 7-day window applies to the recipient listing too',
+        );
+        expect(
+          bIn.some((r) => r.request_id === ctx.r2 && r.status === 'rejected'),
+          'the recent ended item stays in the recipient inbox',
+        );
+      },
+    },
+    {
+      name: 'a stale pending row derives as expired on server time',
+      run: async (ctx) => {
+        await expectJson(
+          await service(`friend_requests?request_id=eq.${ctx.r3}`, {
+            method: 'PATCH',
+            body: {
+              created_at: new Date(Date.now() - 8 * 86400_000).toISOString(),
+              expires_at: new Date(Date.now() - 86400_000).toISOString(),
+            },
+          }),
+          204,
+          'age the pending row',
+        );
+        const aOut = await outbox(reqA);
+        const entry = aOut.find((r) => r.request_id === ctx.r3);
+        expect(
+          entry !== undefined && entry.status === 'expired',
+          `the outbox derives expiry before any sweep: ${JSON.stringify(entry)}`,
+        );
+        const bIn = await inbox(reqB);
+        const bEntry = bIn.find((r) => r.request_id === ctx.r3);
+        expect(
+          bEntry !== undefined && bEntry.status === 'expired',
+          `the inbox derives expiry before any sweep: ${JSON.stringify(bEntry)}`,
+        );
+      },
+    },
+    {
+      name: 'approving an expired request is refused before any sweep runs',
+      run: async (ctx) => {
+        const res = await cmd(reqB, 'approve', { request_id: ctx.r3 });
+        const body = await expectJson(res, 409, 'expired approval');
+        expect(
+          body.error === REQUEST_MESSAGES_HTTP.expired,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+        const friendships = await pairFriendship(reqA.id, reqB.id);
+        expect(friendships.length === 0, 'the refused approval established nothing');
+      },
+    },
+    {
+      name: 'the sweep lapses the stale row and records its event exactly once',
+      run: async (ctx) => {
+        const first = await postFunction(status, 'request-expiry', {
+          token: status.SERVICE_ROLE_KEY,
+        });
+        const firstText = await first.text();
+        if (first.status !== 200 || firstText !== 'expiry ok') {
+          throw new Error(`expected 200 "expiry ok", got ${first.status}: ${firstText.slice(0, 200)}`);
+        }
+        const rows = await expectJson(
+          await service(`friend_requests?request_id=eq.${ctx.r3}&select=*`),
+          200,
+          'expired row read',
+        );
+        expect(
+          rows.length === 1 && rows[0].status === 'expired' &&
+            rows[0].decided_at !== null,
+          `the sweep moved the row to expired: ${JSON.stringify(rows)}`,
+        );
+        const expiredEvents = await expectJson(
+          await eventsFor(ctx.r3, 'request_expired'),
+          200,
+          'events',
+        );
+        expect(expiredEvents.length === 1, 'the expiry event is recorded once');
+        const second = await postFunction(status, 'request-expiry', {
+          token: status.SERVICE_ROLE_KEY,
+        });
+        const secondText = await second.text();
+        if (second.status !== 200 || secondText !== 'expiry ok') {
+          throw new Error(`expected 200 "expiry ok" on re-run, got ${second.status}`);
+        }
+        const after = await expectJson(
+          await eventsFor(ctx.r3, 'request_expired'),
+          200,
+          'events',
+        );
+        expect(after.length === 1, 're-running the sweep adds no duplicate event');
+      },
+    },
+    {
+      name: 'an actor without a confirmed profile may not send requests',
+      run: async () => {
+        const res = await cmd(reqE, 'request', { target_user_id: reqA.id });
+        const body = await expectJson(res, 403, 'unregistered actor');
+        expect(
+          body.error === REQUEST_MESSAGES_HTTP.notRegistered,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'self requests and unknown targets are refused',
+      run: async () => {
+        const self = await cmd(reqA, 'request', { target_user_id: reqA.id });
+        const selfBody = await expectJson(self, 400, 'self request');
+        expect(
+          selfBody.error === REQUEST_MESSAGES_HTTP.selfRequest,
+          `unexpected body ${JSON.stringify(selfBody)}`,
+        );
+        const unknown = await cmd(reqA, 'request', { target_user_id: randomUUID() });
+        const unknownBody = await expectJson(unknown, 404, 'unknown target');
+        expect(
+          unknownBody.error === REQUEST_MESSAGES_HTTP.targetNotFound,
+          `unexpected body ${JSON.stringify(unknownBody)}`,
+        );
+      },
+    },
+    {
+      name: 'the legacy friendship-admin proxy duplicates with shared guidance',
+      run: async (ctx) => {
+        const body = {
+          action: 'request',
+          sender_user_id: reqC.id,
+          recipient_user_id: reqD.id,
+        };
+        const created = await postFunction(status, 'friendship-admin', {
+          token: reqC.token,
+          body,
+        });
+        const createdBody = await expectJson(created, 201, 'legacy request');
+        expect(
+          createdBody.result === 'requested' &&
+            typeof createdBody.request_id === 'string',
+          `unexpected body ${JSON.stringify(createdBody)}`,
+        );
+        ctx.legacyRow = createdBody.request_id;
+        const dup = await postFunction(status, 'friendship-admin', {
+          token: reqC.token,
+          body,
+        });
+        const dupBody = await expectJson(dup, 409, 'legacy duplicate');
+        expect(
+          dupBody.error === REQUEST_MESSAGES_HTTP.duplicate,
+          `unexpected body ${JSON.stringify(dupBody)}`,
+        );
+      },
+    },
+    {
+      name: 'the legacy reject keeps the neutral display text',
+      run: async () => {
+        const res = await postFunction(status, 'friendship-admin', {
+          token: reqD.token,
+          body: {
+            action: 'reject',
+            sender_user_id: reqC.id,
+            recipient_user_id: reqD.id,
+          },
+        });
+        const body = await expectJson(res, 200, 'legacy reject');
+        expect(body.result === 'rejected', `unexpected body ${JSON.stringify(body)}`);
+        expect(
+          body.display === REQUEST_MESSAGES_HTTP.rejectionDisplay,
+          `unexpected display ${JSON.stringify(body.display)}`,
+        );
+      },
+    },
+    {
+      name: 'the legacy proxy approves and then refuses requests between friends',
+      run: async (ctx) => {
+        const created = await postFunction(status, 'friendship-admin', {
+          token: reqC.token,
+          body: {
+            action: 'request',
+            sender_user_id: reqC.id,
+            recipient_user_id: reqD.id,
+          },
+        });
+        const createdBody = await expectJson(created, 201, 'legacy re-request');
+        ctx.legacyRow2 = createdBody.request_id;
+        const approved = await postFunction(status, 'friendship-admin', {
+          token: reqD.token,
+          body: {
+            action: 'approve',
+            sender_user_id: reqC.id,
+            recipient_user_id: reqD.id,
+          },
+        });
+        const approvedBody = await expectJson(approved, 200, 'legacy approve');
+        expect(
+          approvedBody.result === 'approved',
+          `unexpected body ${JSON.stringify(approvedBody)}`,
+        );
+        const again = await postFunction(status, 'friendship-admin', {
+          token: reqC.token,
+          body: {
+            action: 'request',
+            sender_user_id: reqC.id,
+            recipient_user_id: reqD.id,
+          },
+        });
+        const againBody = await expectJson(again, 409, 'legacy already friends');
+        expect(
+          againBody.error === REQUEST_MESSAGES_HTTP.alreadyFriends,
+          `unexpected body ${JSON.stringify(againBody)}`,
+        );
+        const established = await expectJson(
+          await eventsFor(ctx.legacyRow2, 'friendship_established'),
+          200,
+          'events',
+        );
+        expect(established.length === 1, 'legacy approval records one event');
+      },
+    },
+    {
+      name: 'the legacy cancel settles through the boundary',
+      run: async () => {
+        const created = await postFunction(status, 'friendship-admin', {
+          token: reqC.token,
+          body: {
+            action: 'request',
+            sender_user_id: reqC.id,
+            recipient_user_id: reqB.id,
+          },
+        });
+        const createdBody = await expectJson(created, 201, 'legacy C->B request');
+        const cancelled = await postFunction(status, 'friendship-admin', {
+          token: reqC.token,
+          body: {
+            action: 'cancel',
+            sender_user_id: reqC.id,
+            recipient_user_id: reqB.id,
+          },
+        });
+        const cancelledBody = await expectJson(cancelled, 200, 'legacy cancel');
+        expect(
+          cancelledBody.result === 'cancelled',
+          `unexpected body ${JSON.stringify(cancelledBody)}`,
+        );
+        const rows = await expectJson(
+          await service(`friend_requests?request_id=eq.${createdBody.request_id}&select=*`),
+          200,
+          'legacy cancelled row',
+        );
+        expect(
+          rows.length === 1 && rows[0].status === 'cancelled',
+          `the legacy cancel moved the row: ${JSON.stringify(rows)}`,
+        );
+      },
+    },
+  ];
+}
+
 const SUITES = {
   'command-boundary': {
     definitions: (runId) => [
@@ -951,6 +1770,16 @@ const SUITES = {
       { key: 'regD', email: `reg-${runId}-d@registration.test` },
     ],
     build: registrationSuite,
+  },
+  requests: {
+    definitions: (runId) => [
+      { key: 'reqA', email: `req-${runId}-a@requests.test` },
+      { key: 'reqB', email: `req-${runId}-b@requests.test` },
+      { key: 'reqC', email: `req-${runId}-c@requests.test` },
+      { key: 'reqD', email: `req-${runId}-d@requests.test` },
+      { key: 'reqE', email: `req-${runId}-e@requests.test` },
+    ],
+    build: requestsSuite,
   },
 };
 

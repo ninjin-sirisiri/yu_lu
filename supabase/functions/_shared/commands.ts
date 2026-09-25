@@ -15,6 +15,7 @@
 
 import { jsonError } from './auth.ts';
 import { validateCommandPayload } from './profile-validation.ts';
+import { validateRequestCommandPayload } from './request-commands.ts';
 
 export interface CommandRequest {
   operationId: string;
@@ -81,6 +82,10 @@ export function parseCommandBody(
  * Map RPC SQLSTATEs to the HTTP contract. `expose: true` forwards the
  * server message (these are boundary-authored messages: conflicts and
  * validation); everything else falls back to a generic 500 body.
+ *
+ * Task 4 adds P0002 (no_data_found): request commands raise it when the
+ * named request row or target user does not exist (or is not visible to
+ * the actor), which is a 404 - never a 500.
  */
 export function mapRpcError(code: string | null): {
   status: number;
@@ -93,6 +98,8 @@ export function mapRpcError(code: string | null): {
       return { status: 400, expose: true };
     case '42501':
       return { status: 403, expose: true };
+    case 'P0002':
+      return { status: 404, expose: true };
     default:
       return { status: 500, expose: false };
   }
@@ -169,6 +176,9 @@ export async function executeCommand(
   if (!parsed.ok) return jsonError(400, parsed.error);
 
   const payloadError = validateCommandPayload(
+    parsed.value.kind,
+    parsed.value.payload,
+  ) ?? validateRequestCommandPayload(
     parsed.value.kind,
     parsed.value.payload,
   );

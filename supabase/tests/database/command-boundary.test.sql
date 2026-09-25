@@ -11,7 +11,8 @@
 --   content conflicts (23505), a failed handler leaves no log row (same
 --   transaction), a failed operation id can be retried, and a second actor
 --   may reuse an operation id independently.
--- - closures: 0006's direct-write policies are gone (reads kept), and
+-- - closures: 0006's direct-write policies are gone, and (since Task 4)
+--   the direct read policy moved to the masked listing views; and
 --   create_friendship_from_request / expiry RPCs are no longer
 --   client-callable.
 --
@@ -148,8 +149,8 @@ select is(
     where schemaname = 'public'
       and tablename = 'friend_requests'
       and cmd = 'SELECT'),
-  1::bigint,
-  'friend_requests participant read is kept');
+  0::bigint,
+  'friend_requests direct reads moved to the masked views (Task 4)');
 
 select is(
   (select count(*) from pg_policies
