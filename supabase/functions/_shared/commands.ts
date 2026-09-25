@@ -8,14 +8,19 @@
 // database remains the authority. `mapRpcError` turns known
 // SQLSTATEs into HTTP statuses (409 operation conflict, 400 validation,
 // 403 privilege) and hides everything else behind a generic 500 so raw
-// database internals never reach a client. The transport is injectable for
-// tests; the default one forwards the caller's verified Authorization
+// database internals never reach a client. Task 7 adds one structured
+// outcome: a settled `result.status = 'conflict'` is answered as HTTP 409
+// with `{error, conflict}` because the conflict payload (latest published
+// profile + version + differing fields) does not fit a message-only body.
+// The transport is injectable for tests; the default one forwards the
+// caller's verified Authorization
 // header so the database derives the actor from the same JWT — no actor
 // field exists anywhere in this envelope.
 
 import { jsonError } from './auth.ts';
 import { validateCommandPayload } from './profile-validation.ts';
 import { validateInvitationCommandPayload } from './invitation-commands.ts';
+import { validateProfileCommandPayload } from './profile-commands.ts';
 import { validateRequestCommandPayload } from './request-commands.ts';
 
 export interface CommandRequest {
@@ -185,6 +190,9 @@ export async function executeCommand(
   ) ?? validateInvitationCommandPayload(
     parsed.value.kind,
     parsed.value.payload,
+  ) ?? validateProfileCommandPayload(
+    parsed.value.kind,
+    parsed.value.payload,
   );
   if (payloadError !== null) return jsonError(400, payloadError);
 
@@ -205,8 +213,35 @@ export async function executeCommand(
     );
   }
 
+  // Structured state conflicts (Task 7): a handler that reports
+  // `result.status = 'conflict'` has settled the operation WITHOUT
+  // changing anything and carries data a message-only error body cannot
+  // hold (the latest published profile, its version, the differing
+  // fields). The boundary answers 409 with `{error, conflict}` so conflict
+  // screens get the payload; every other outcome stays a 200 envelope,
+  // including replays of a stored conflict.
+  const settled = outcome.data['result'];
+  if (isStateConflictResult(settled)) {
+    const conflict = settled as Record<string, unknown>;
+    const message = typeof conflict['message'] === 'string'
+      ? conflict['message']
+      : 'conflict';
+    return new Response(JSON.stringify({ error: message, conflict }), {
+      status: 409,
+      headers: { 'content-type': 'application/json' },
+    });
+  }
+
   return new Response(JSON.stringify(outcome.data), {
     status: 200,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+/** True when a settled handler result is the boundary's conflict shape. */
+export function isStateConflictResult(result: unknown): boolean {
+  return typeof result === 'object' &&
+    result !== null &&
+    !Array.isArray(result) &&
+    (result as Record<string, unknown>)['status'] === 'conflict';
 }

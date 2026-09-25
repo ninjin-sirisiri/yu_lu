@@ -6,6 +6,7 @@
 //        node scripts/test-local-backend.mjs --suite requests
 //        node scripts/test-local-backend.mjs --suite discovery
 //        node scripts/test-local-backend.mjs --suite invitations
+//        node scripts/test-local-backend.mjs --suite profile-publication
 //        node scripts/test-local-backend.mjs --suite all
 //
 // Ownership: real-stack verification of the authenticated command boundary.
@@ -49,7 +50,17 @@
 // exactly one valid invitation, per-user row visibility (no enumeration),
 // the closed direct-write path, the missing list-all op, operation-log
 // replay/conflict, third-party isolation, and a block hiding the
-// invitation from resolve (invitations).
+// invitation from resolve (invitations); and profile publication - an
+// upload alone publishes nothing (owner-only storage visibility), one
+// command publishes text and image reference atomically behind a
+// compare-and-swap on profile_version, stale bases answer HTTP 409 with
+// the latest published fields + version + differing fields, identical
+// operation replays (success and conflict) never bump the version,
+// un-uploaded / other-user's / wrong-format / oversized image references
+// leave every field unchanged, same-version concurrent updates settle
+// exactly one winner, others can read only objects a published profile
+// references (clearing the image revokes that read), anon has no access,
+// and the direct profile write path stays closed (profile-publication).
 
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -3771,6 +3782,560 @@ function invitationsSuite(status, users) {
   ];
 }
 
+// ---------------------------------------------------------------------------
+// Suite: profile-publication
+// ---------------------------------------------------------------------------
+
+// Real image bytes (1x1) so the storage API records a genuine JPEG/PNG
+// mimetype; the format refusal uploads non-image bytes with a gif type.
+const TINY_JPEG = Buffer.from(
+  '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AVN//2Q==',
+  'base64',
+);
+const TINY_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
+
+const PROFILE_PUBLICATION_MESSAGES = {
+  confirmed: 'Confirm the User ID before using the app.',
+  baseVersionRequired: 'base_version is required',
+  unknownField: 'unknown field: nickname',
+  conflict: 'profile version conflict',
+  notFound: 'Referenced profile image was not found.',
+  foreignPath: 'avatar_path must be an image path under your account',
+  format: 'Referenced profile image must be a JPEG, PNG or HEIC image.',
+  size: 'Referenced profile image must be 10MB or smaller.',
+};
+
+function profilePublicationSuite(status, users) {
+  const { ppA, ppB, ppU } = users;
+  const envelope = (kind, payload, id = randomUUID()) => ({
+    operation_id: id,
+    kind,
+    payload,
+  });
+  const cmd = (user, kind, payload, id) =>
+    postFunction(status, 'app-command', {
+      token: user.token,
+      body: envelope(kind, payload, id),
+    });
+
+  const readOwn = async (user) => {
+    const rows = await expectJson(
+      await postRest(
+        status,
+        `profiles?user_id=eq.${user.id}` +
+          '&select=display_name,introduction,avatar_path,profile_version',
+        { token: user.token, method: 'GET' },
+      ),
+      200,
+      'own profile read',
+    );
+    expect(rows.length === 1, `expected one profile row, got ${rows.length}`);
+    return rows[0];
+  };
+
+  // --- storage helpers (direct upload with the user's own session, the
+  // same flow app/src/backend/profile.ts provides for the app) ---
+  const storageHeaders = (user, contentType) => {
+    const headers = { apikey: status.ANON_KEY };
+    if (user) headers['authorization'] = `Bearer ${user.token}`;
+    if (contentType) headers['content-type'] = contentType;
+    return headers;
+  };
+  const storagePut = async (user, path, bytes, contentType) => {
+    const res = await fetch(
+      `${status.API_URL}/storage/v1/object/profile-images/${path}`,
+      {
+        method: 'PUT',
+        headers: storageHeaders(user, contentType),
+        body: bytes,
+        signal: AbortSignal.timeout(60000),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(
+        `storage upload failed: HTTP ${res.status}: ` +
+          (await res.text()).slice(0, 200),
+      );
+    }
+    return path;
+  };
+  const storageGet = (user, path) =>
+    fetch(`${status.API_URL}/storage/v1/object/profile-images/${path}`, {
+      headers: storageHeaders(user),
+      signal: AbortSignal.timeout(10000),
+    });
+  const storageList = async (user, prefix) => {
+    const res = await fetch(
+      `${status.API_URL}/storage/v1/object/list/profile-images`,
+      {
+        method: 'POST',
+        headers: storageHeaders(user, 'application/json'),
+        body: JSON.stringify({ prefix, limit: 100 }),
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    if (!res.ok) {
+      throw new Error(
+        `storage list failed: HTTP ${res.status}: ` +
+          (await res.text()).slice(0, 200),
+      );
+    }
+    return res.json();
+  };
+
+  const avatarPath = `${ppA.id}/${randomUUID()}/avatar.jpg`;
+  const draftPath = `${ppA.id}/${randomUUID()}/draft.png`;
+  const ghostPath = `${ppA.id}/${randomUUID()}/ghost.jpg`;
+  const gifPath = `${ppA.id}/${randomUUID()}/bad.gif`;
+  const bigPath = `${ppA.id}/${randomUUID()}/big.jpg`;
+  const foreignPath = `${ppB.id}/${randomUUID()}/b.jpg`;
+  const keepPath = `${ppB.id}/${randomUUID()}/keep.png`;
+  const extraPath = `${ppB.id}/${randomUUID()}/extra.png`;
+
+  const opPublish = randomUUID();
+  const opConflict = randomUUID();
+
+  const publishPayload = {
+    base_version: 1,
+    display_name: '  Pub Renamed  ',
+    introduction: 'Hello there',
+    avatar_path: avatarPath,
+  };
+  const conflictPayload = { base_version: 1, display_name: 'Stale Name' };
+
+  let winnerName = null;
+
+  // Every image-refusal test asserts this exact snapshot: publication
+  // state after the first publish (version 2) must survive every failure.
+  const expectPublishedSnapshot = async (detail) => {
+    const row = await readOwn(ppA);
+    expect(
+      row.display_name === 'Pub Renamed' &&
+        row.introduction === 'Hello there' &&
+        row.avatar_path === avatarPath &&
+        row.profile_version === 2,
+      `${detail}: profile changed unexpectedly: ${JSON.stringify(row)}`,
+    );
+  };
+
+  return [
+    {
+      name: 'profile publication accounts register first',
+      run: async () => {
+        const [a, b] = await Promise.all([
+          cmd(ppA, 'register', {
+            user_id_text: 'Pub_A',
+            display_name: 'Pub One',
+          }),
+          cmd(ppB, 'register', {
+            user_id_text: 'Pub_B',
+            display_name: 'Pub B',
+          }),
+        ]);
+        const aBody = await expectJson(a, 200, 'register ppA');
+        const bBody = await expectJson(b, 200, 'register ppB');
+        expect(
+          aBody.result.profile_version === 1 &&
+            bBody.result.profile_version === 1,
+          'both profiles start at version 1',
+        );
+      },
+    },
+    {
+      name: 'update_profile requires a verified session',
+      run: async () => {
+        const res = await postFunction(status, 'app-command', {
+          body: envelope('update_profile', {
+            base_version: 1,
+            display_name: 'A',
+          }),
+        });
+        await expectJson(res, 401, 'unauthenticated update_profile');
+      },
+    },
+    {
+      name: 'an unregistered actor may not publish a profile',
+      run: async () => {
+        const res = await cmd(ppU, 'update_profile', {
+          base_version: 1,
+          display_name: 'Late',
+        });
+        const body = await expectJson(res, 403, 'unregistered publish');
+        expect(
+          body.error === PROFILE_PUBLICATION_MESSAGES.confirmed,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'the update_profile payload gate rejects malformed envelopes',
+      run: async () => {
+        const missing = await cmd(ppA, 'update_profile', {
+          display_name: 'No base',
+        });
+        const missingBody = await expectJson(missing, 400, 'missing base');
+        expect(
+          missingBody.error === PROFILE_PUBLICATION_MESSAGES.baseVersionRequired,
+          `unexpected body ${JSON.stringify(missingBody)}`,
+        );
+        const unknown = await cmd(ppA, 'update_profile', {
+          base_version: 1,
+          nickname: 'x',
+        });
+        const unknownBody = await expectJson(unknown, 400, 'unknown field');
+        expect(
+          unknownBody.error === PROFILE_PUBLICATION_MESSAGES.unknownField,
+          `unexpected body ${JSON.stringify(unknownBody)}`,
+        );
+      },
+    },
+    {
+      name: 'an upload alone publishes nothing and stays owner-only',
+      run: async () => {
+        await storagePut(ppA, avatarPath, TINY_JPEG, 'image/jpeg');
+        await storagePut(ppA, draftPath, TINY_PNG, 'image/png');
+
+        const own = await storageGet(ppA, avatarPath);
+        expect(own.ok, `the owner reads their upload (HTTP ${own.status})`);
+
+        const foreign = await storageGet(ppB, avatarPath);
+        expect(!foreign.ok, 'another user cannot read it before publication');
+
+        const row = await readOwn(ppA);
+        expect(
+          row.avatar_path === null && row.profile_version === 1,
+          `the profile still points nowhere: ${JSON.stringify(row)}`,
+        );
+
+        const listed = await storageList(ppB, `${ppA.id}/`);
+        expect(
+          listed.length === 0,
+          `uploads are not listable by others: ${JSON.stringify(listed)}`,
+        );
+      },
+    },
+    {
+      name: 'publication updates text and image reference in one operation',
+      run: async () => {
+        const res = await cmd(
+          ppA,
+          'update_profile',
+          publishPayload,
+          opPublish,
+        );
+        const body = await expectJson(res, 200, 'first publication');
+        expect(body.status === 'executed', `status ${body.status}`);
+        expect(
+          body.result.status === 'updated' && body.result.version === 2,
+          `unexpected result ${JSON.stringify(body.result)}`,
+        );
+        expect(
+          body.result.profile.display_name === 'Pub Renamed' &&
+            body.result.profile.avatar_path === avatarPath,
+          `unexpected profile ${JSON.stringify(body.result.profile)}`,
+        );
+
+        const row = await readOwn(ppA);
+        expect(
+          row.display_name === 'Pub Renamed' &&
+            row.introduction === 'Hello there' &&
+            row.avatar_path === avatarPath &&
+            row.profile_version === 2,
+          `stored row mismatch: ${JSON.stringify(row)}`,
+        );
+      },
+    },
+    {
+      name: 'the identical publication replays without double-increment',
+      run: async () => {
+        const res = await cmd(
+          ppA,
+          'update_profile',
+          publishPayload,
+          opPublish,
+        );
+        const body = await expectJson(res, 200, 'publication replay');
+        expect(body.status === 'replayed', `status ${body.status}`);
+        expect(
+          body.result.status === 'updated' && body.result.version === 2,
+          `replay must carry the stored result: ${JSON.stringify(body.result)}`,
+        );
+        const row = await readOwn(ppA);
+        expect(
+          row.profile_version === 2,
+          `version double-bumped: ${row.profile_version}`,
+        );
+      },
+    },
+    {
+      name: 'a stale base_version answers 409 with the latest content',
+      run: async () => {
+        const res = await cmd(
+          ppA,
+          'update_profile',
+          conflictPayload,
+          opConflict,
+        );
+        const body = await expectJson(res, 409, 'stale base_version');
+        expect(
+          body.error === PROFILE_PUBLICATION_MESSAGES.conflict,
+          `unexpected error ${JSON.stringify(body.error)}`,
+        );
+        const conflict = body.conflict;
+        expect(
+          conflict.status === 'conflict' && conflict.version === 2,
+          `unexpected conflict ${JSON.stringify(conflict)}`,
+        );
+        expect(
+          conflict.profile.display_name === 'Pub Renamed' &&
+            conflict.profile.avatar_path === avatarPath,
+          `conflict must carry the latest published content: ${JSON.stringify(conflict.profile)}`,
+        );
+        expect(
+          JSON.stringify(conflict.differing_fields) ===
+            '["display_name"]',
+          `differing fields ${JSON.stringify(conflict.differing_fields)}`,
+        );
+        await expectPublishedSnapshot('after the conflict');
+      },
+    },
+    {
+      name: 'a replayed conflict stays a conflict without writing',
+      run: async () => {
+        const res = await cmd(
+          ppA,
+          'update_profile',
+          conflictPayload,
+          opConflict,
+        );
+        const body = await expectJson(res, 409, 'conflict replay');
+        expect(
+          body.conflict && body.conflict.version === 2,
+          `stored conflict replayed: ${JSON.stringify(body)}`,
+        );
+        await expectPublishedSnapshot('after the conflict replay');
+      },
+    },
+    {
+      name: 'an un-uploaded image refuses every change',
+      run: async () => {
+        const res = await cmd(ppA, 'update_profile', {
+          base_version: 2,
+          display_name: 'Changed Too',
+          avatar_path: ghostPath,
+        });
+        const body = await expectJson(res, 400, 'un-uploaded image');
+        expect(
+          body.error === PROFILE_PUBLICATION_MESSAGES.notFound,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+        await expectPublishedSnapshot('after the un-uploaded image');
+      },
+    },
+    {
+      name: "another user's image cannot be referenced",
+      run: async () => {
+        await storagePut(ppB, foreignPath, TINY_JPEG, 'image/jpeg');
+        const res = await cmd(ppA, 'update_profile', {
+          base_version: 2,
+          avatar_path: foreignPath,
+        });
+        const body = await expectJson(res, 400, 'foreign image path');
+        expect(
+          body.error === PROFILE_PUBLICATION_MESSAGES.foreignPath,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+        await expectPublishedSnapshot('after the foreign image');
+      },
+    },
+    {
+      name: 'an unsupported image format is refused',
+      run: async () => {
+        await storagePut(
+          ppA,
+          gifPath,
+          Buffer.from('GIF89a definitely not a real image'),
+          'image/gif',
+        );
+        const res = await cmd(ppA, 'update_profile', {
+          base_version: 2,
+          avatar_path: gifPath,
+        });
+        const body = await expectJson(res, 400, 'gif image');
+        expect(
+          body.error === PROFILE_PUBLICATION_MESSAGES.format,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+        await expectPublishedSnapshot('after the format refusal');
+      },
+    },
+    {
+      name: 'an oversized image is refused',
+      run: async () => {
+        await storagePut(
+          ppA,
+          bigPath,
+          Buffer.alloc(10 * 1024 * 1024 + 1, 0x41),
+          'image/jpeg',
+        );
+        const res = await cmd(ppA, 'update_profile', {
+          base_version: 2,
+          avatar_path: bigPath,
+        });
+        const body = await expectJson(res, 400, 'oversized image');
+        expect(
+          body.error === PROFILE_PUBLICATION_MESSAGES.size,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+        await expectPublishedSnapshot('after the size refusal');
+      },
+    },
+    {
+      name: 'same-version concurrent updates settle exactly one winner',
+      run: async () => {
+        const [first, second] = await Promise.all([
+          cmd(ppA, 'update_profile', {
+            base_version: 2,
+            display_name: 'Race One',
+          }),
+          cmd(ppA, 'update_profile', {
+            base_version: 2,
+            display_name: 'Race Two',
+          }),
+        ]);
+        expect(
+          [first.status, second.status].sort((x, y) => x - y).join(',') ===
+            '200,409',
+          `expected one 200 and one 409, got [${first.status}, ${second.status}]`,
+        );
+        const winnerRes = first.status === 200 ? first : second;
+        const loserRes = first.status === 200 ? second : first;
+        const winnerBody = await winnerRes.json();
+        expect(
+          winnerBody.result.status === 'updated' &&
+            winnerBody.result.version === 3,
+          `winner result ${JSON.stringify(winnerBody.result)}`,
+        );
+        winnerName = winnerBody.result.profile.display_name;
+        const loserBody = await loserRes.json();
+        expect(
+          loserBody.conflict && loserBody.conflict.version === 3,
+          `loser must see the winner's version: ${JSON.stringify(loserBody)}`,
+        );
+        const row = await readOwn(ppA);
+        expect(
+          row.profile_version === 3 && row.display_name === winnerName,
+          `exactly one update must land: ${JSON.stringify(row)}`,
+        );
+      },
+    },
+    {
+      name: 'clearing the published image is an ordinary publication',
+      run: async () => {
+        const res = await cmd(ppA, 'update_profile', {
+          base_version: 3,
+          avatar_path: null,
+        });
+        const body = await expectJson(res, 200, 'clear the image');
+        expect(
+          body.result.status === 'updated' &&
+            body.result.version === 4 &&
+            body.result.profile.avatar_path === null,
+          `unexpected result ${JSON.stringify(body.result)}`,
+        );
+        const row = await readOwn(ppA);
+        expect(
+          row.avatar_path === null && row.profile_version === 4,
+          `stored row mismatch: ${JSON.stringify(row)}`,
+        );
+      },
+    },
+    {
+      name: 'others read only objects a published profile references',
+      run: async () => {
+        await storagePut(ppB, keepPath, TINY_PNG, 'image/png');
+        await storagePut(ppB, extraPath, TINY_PNG, 'image/png');
+        const publish = await cmd(ppB, 'update_profile', {
+          base_version: 1,
+          avatar_path: keepPath,
+        });
+        const publishBody = await expectJson(publish, 200, 'ppB publishes');
+        expect(
+          publishBody.result.status === 'updated' &&
+            publishBody.result.version === 2,
+          `unexpected result ${JSON.stringify(publishBody.result)}`,
+        );
+
+        const kept = await storageGet(ppA, keepPath);
+        expect(kept.ok, `published object readable (HTTP ${kept.status})`);
+        const extra = await storageGet(ppA, extraPath);
+        expect(!extra.ok, 'unreferenced upload stays hidden from others');
+        const foreign = await storageGet(ppA, foreignPath);
+        expect(!foreign.ok, "another user's unreferenced upload stays hidden");
+        const cleared = await storageGet(ppB, avatarPath);
+        expect(
+          !cleared.ok,
+          'clearing the image revokes the cross-user read again',
+        );
+
+        const ownExtra = await storageGet(ppB, extraPath);
+        expect(ownExtra.ok, 'the owner still reads their own upload');
+        const ownCleared = await storageGet(ppA, avatarPath);
+        expect(
+          ownCleared.ok,
+          'the owner still reads their own cleared upload',
+        );
+
+        const listed = await storageList(ppA, `${ppB.id}/`);
+        // The list endpoint works at folder level: each upload lives under
+        // its own operation-id folder, so only the folder that contains the
+        // published object may surface for another user.
+        const folders = listed.map((entry) => entry.name);
+        expect(
+          folders.includes(keepPath.split('/')[1]),
+          `the folder of the published object must be listable: ${JSON.stringify(folders)}`,
+        );
+        expect(
+          !folders.includes(extraPath.split('/')[1]) &&
+            !folders.includes(foreignPath.split('/')[1]),
+          `folders of unpublished uploads must not be listable: ${JSON.stringify(folders)}`,
+        );
+      },
+    },
+    {
+      name: 'profile images are never readable without a session',
+      run: async () => {
+        const anon = await storageGet(null, keepPath);
+        expect(
+          !anon.ok,
+          `anon must not read profile images (HTTP ${anon.status})`,
+        );
+      },
+    },
+    {
+      name: 'direct profile writes over the Data API stay closed',
+      run: async () => {
+        const res = await postRest(status, `profiles?user_id=eq.${ppA.id}`, {
+          token: ppA.token,
+          body: { display_name: 'Hacked' },
+          method: 'PATCH',
+        });
+        await expectJson(res, 204, 'direct profiles PATCH');
+        const row = await readOwn(ppA);
+        expect(
+          row.display_name === winnerName &&
+            row.avatar_path === null &&
+            row.profile_version === 4,
+          `direct write changed something: ${JSON.stringify(row)}`,
+        );
+      },
+    },
+  ];
+}
+
 const SUITES = {
   'command-boundary': {
     definitions: (runId) => [
@@ -3826,6 +4391,14 @@ const SUITES = {
       { key: 'invU', email: `inv-${runId}-u@invitations.test` },
     ],
     build: invitationsSuite,
+  },
+  'profile-publication': {
+    definitions: (runId) => [
+      { key: 'ppA', email: `pp-${runId}-a@profile-publication.test` },
+      { key: 'ppB', email: `pp-${runId}-b@profile-publication.test` },
+      { key: 'ppU', email: `pp-${runId}-u@profile-publication.test` },
+    ],
+    build: profilePublicationSuite,
   },
 };
 
