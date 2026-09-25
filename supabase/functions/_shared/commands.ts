@@ -2,7 +2,10 @@
 //
 // Ownership: envelope validation, the RPC transport, and the HTTP error
 // contract for the write boundary. `parseCommandBody` rejects malformed
-// commands before they reach the database; `mapRpcError` turns known
+// commands before they reach the database; `validateCommandPayload` (Task 3)
+// applies the shared input rules to the kinds that have registered them,
+// failing fast with the same 400 message the SQL handler would raise - the
+// database remains the authority. `mapRpcError` turns known
 // SQLSTATEs into HTTP statuses (409 operation conflict, 400 validation,
 // 403 privilege) and hides everything else behind a generic 500 so raw
 // database internals never reach a client. The transport is injectable for
@@ -11,6 +14,7 @@
 // field exists anywhere in this envelope.
 
 import { jsonError } from './auth.ts';
+import { validateCommandPayload } from './profile-validation.ts';
 
 export interface CommandRequest {
   operationId: string;
@@ -163,6 +167,12 @@ export async function executeCommand(
 
   const parsed = parseCommandBody(raw);
   if (!parsed.ok) return jsonError(400, parsed.error);
+
+  const payloadError = validateCommandPayload(
+    parsed.value.kind,
+    parsed.value.payload,
+  );
+  if (payloadError !== null) return jsonError(400, payloadError);
 
   const outcome = await transport(
     {

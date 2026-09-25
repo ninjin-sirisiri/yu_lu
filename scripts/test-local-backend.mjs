@@ -1,23 +1,28 @@
 #!/usr/bin/env node
-// Task 2: local backend integration runner.
+// Task 2/3: local backend integration runner.
 //
 // Usage: node scripts/test-local-backend.mjs --suite command-boundary
+//        node scripts/test-local-backend.mjs --suite registration
 //        node scripts/test-local-backend.mjs --suite all
 //
 // Ownership: real-stack verification of the authenticated command boundary.
 // Connection info comes from `npx supabase status --output json` (machine
 // readable) and is kept in memory only — keys, tokens and the DB URL are
 // never printed; every line this script outputs passes through redact().
-// The suite creates real local Auth users (two actors plus one third
-// party), starts `npx supabase functions serve` as a separate process, runs
-// the HTTP assertions, then deletes the users and stops the server even
-// when a test fails.
+// Each suite declares its own Auth users; the script creates them, starts
+// `npx supabase functions serve` as a separate process, runs the HTTP
+// assertions, then deletes the users and stops the server even when a test
+// fails.
 //
 // Covered here (pgTAP covers the SQL layer, deno test the offline function
 // layer): unauthenticated and forged-credential rejection, execution,
 // idempotent replay, conflict on changed content, per-actor operation
 // scoping, direct table/RPC bypass attempts, actor-role binding in
-// friendship-admin, and the service-credential gate on request-expiry.
+// friendship-admin, the service-credential gate on request-expiry
+// (command-boundary); registration normalization, immutability, atomic
+// case-insensitive uniqueness under simultaneous registration, shared
+// visual-count rules at the boundaries, onboarding-seen persistence and the
+// closed direct-update path (registration).
 
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -561,7 +566,393 @@ function commandBoundarySuite(status, users) {
   ];
 }
 
-const SUITES = { 'command-boundary': commandBoundarySuite };
+// ---------------------------------------------------------------------------
+// Suite: registration
+// ---------------------------------------------------------------------------
+
+// Unicode built from code points so the script source stays unambiguous.
+const FAMILY = String.fromCodePoint(
+  0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467, 0x200d, 0x1f466,
+);
+const COMBINING = String.fromCharCode(0x61, 0x301);
+const NEWLINE = String.fromCharCode(10);
+const KANA = 'あ';
+
+const REGISTRATION_MESSAGES = {
+  userId: 'User ID must be 2-20 characters of A-Z, a-z, 0-9, or underscore.',
+  blank: 'Display name must not be blank.',
+  newline: 'Display name must not contain a newline.',
+  tooLong: 'Display name must be 15 visual characters or fewer.',
+  confirmed: 'User ID is already confirmed.',
+  taken: 'User ID is already taken.',
+  idRequired: 'user_id_text is required',
+  idType: 'user_id_text must be a string',
+  nameRequired: 'display_name is required',
+  nameType: 'display_name must be a string',
+  onboarding: 'Complete registration before marking the guide as seen.',
+};
+
+function registrationSuite(status, users) {
+  const { regA, regB, regC, regD } = users;
+  const envelope = (kind, payload, id = randomUUID()) => ({
+    operation_id: id,
+    kind,
+    payload,
+  });
+  const cmd = (user, kind, payload, id) =>
+    postFunction(status, 'app-command', {
+      token: user.token,
+      body: envelope(kind, payload, id),
+    });
+  const register = (user, payload, id) => cmd(user, 'register', payload, id);
+  const readProfile = (user) =>
+    postRest(status, `profiles?user_id=eq.${user.id}&select=*`, {
+      token: user.token,
+      method: 'GET',
+    });
+  const kana16 = KANA.repeat(16);
+  const family15 = FAMILY.repeat(15);
+  const family16 = FAMILY.repeat(16);
+  const combining16 = COMBINING.repeat(16);
+  const emoji16 = String.fromCodePoint(0x1f600).repeat(16);
+
+  return [
+    {
+      name: 'register requires a verified session',
+      run: async () => {
+        const res = await postFunction(status, 'app-command', {
+          body: envelope('register', {
+            user_id_text: 'anon_user',
+            display_name: 'Anon',
+          }),
+        });
+        await expectJson(res, 401, 'unauthenticated register');
+      },
+    },
+    {
+      name: 'register normalizes input and confirms the profile',
+      run: async (ctx) => {
+        ctx.regAOperationId = randomUUID();
+        const res = await register(
+          regA,
+          { user_id_text: '  Alice_Yamada  ', display_name: '  花子 Hanako  ' },
+          ctx.regAOperationId,
+        );
+        const body = await expectJson(res, 200, 'first register');
+        expect(body.status === 'executed', `expected executed, got ${body.status}`);
+        expect(
+          body.result.user_id_text === 'Alice_Yamada',
+          `stored id ${body.result.user_id_text}`,
+        );
+        expect(
+          body.result.display_name === '花子 Hanako',
+          `stored name ${body.result.display_name}`,
+        );
+        expect(
+          body.result.profile_version === 1,
+          `profile_version ${body.result.profile_version}`,
+        );
+      },
+    },
+    {
+      name: 'the registered profile is readable with its confirmation state',
+      run: async () => {
+        const rows = await expectJson(await readProfile(regA), 200, 'profile read');
+        expect(rows.length === 1, `expected one row, got ${rows.length}`);
+        const row = rows[0];
+        expect(row.user_id_text === 'Alice_Yamada', `user_id_text ${row.user_id_text}`);
+        expect(row.display_name === '花子 Hanako', `display_name ${row.display_name}`);
+        expect(
+          typeof row.user_id_confirmed_at === 'string' && row.user_id_confirmed_at !== '',
+          'the profile is confirmed',
+        );
+        expect(row.onboarding_seen_at === null, 'the guide is not marked yet');
+        expect(row.profile_version === 1, `profile_version ${row.profile_version}`);
+      },
+    },
+    {
+      name: 'the identical register operation replays the stored result',
+      run: async (ctx) => {
+        const res = await register(
+          regA,
+          { user_id_text: '  Alice_Yamada  ', display_name: '  花子 Hanako  ' },
+          ctx.regAOperationId,
+        );
+        const body = await expectJson(res, 200, 'register replay');
+        expect(body.status === 'replayed', `expected replayed, got ${body.status}`);
+        expect(
+          body.result.user_id_text === 'Alice_Yamada',
+          'the replay carries the original result',
+        );
+      },
+    },
+    {
+      name: 'a new register operation cannot change the confirmed User ID',
+      run: async () => {
+        const res = await register(regA, {
+          user_id_text: 'Alice_New',
+          display_name: 'Alice',
+        });
+        const body = await expectJson(res, 400, 'immutable re-register');
+        expect(
+          body.error === REGISTRATION_MESSAGES.confirmed,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'simultaneous case-variant registrations succeed exactly once',
+      run: async () => {
+        const [first, second] = await Promise.all([
+          register(regB, { user_id_text: 'Case_Race', display_name: 'Case B' }),
+          register(regC, { user_id_text: 'case_race', display_name: 'Case C' }),
+        ]);
+        expect(
+          (first.status === 200 && second.status === 409) ||
+            (first.status === 409 && second.status === 200),
+          `expected one 200 and one 409, got [${first.status}, ${second.status}]`,
+        );
+        const loser = first.status === 409 ? first : second;
+        const loserBody = await loser.json();
+        expect(
+          loserBody.error === REGISTRATION_MESSAGES.taken,
+          `unexpected loser body ${JSON.stringify(loserBody)}`,
+        );
+        const winnerUser = first.status === 200 ? regB : regC;
+        const winnerId = first.status === 200 ? 'Case_Race' : 'case_race';
+        const winnerRows = await expectJson(
+          await readProfile(winnerUser),
+          200,
+          'winner profile',
+        );
+        expect(winnerRows.length === 1, 'the winner has exactly one profile row');
+        expect(
+          winnerRows[0].user_id_text === winnerId,
+          `display case preserved: ${winnerRows[0].user_id_text}`,
+        );
+        const loserUser = first.status === 200 ? regC : regB;
+        const loserRows = await expectJson(
+          await readProfile(loserUser),
+          200,
+          'loser profile read',
+        );
+        expect(loserRows.length === 0, 'the loser has no profile row');
+      },
+    },
+    {
+      name: 'register rejects invalid User IDs with the shared message',
+      run: async () => {
+        const invalid = ['a', 'ab cd', 'あいう', 'x'.repeat(21), ''];
+        for (const bad of invalid) {
+          const res = await register(regD, {
+            user_id_text: bad,
+            display_name: 'Reg D',
+          });
+          const body = await expectJson(res, 400, `user id ${JSON.stringify(bad)}`);
+          expect(
+            body.error === REGISTRATION_MESSAGES.userId,
+            `unexpected body ${JSON.stringify(body)}`,
+          );
+        }
+      },
+    },
+    {
+      name: 'register rejects blank and newline display names',
+      run: async () => {
+        const blank = await register(regD, {
+          user_id_text: 'Reg_D',
+          display_name: '   ',
+        });
+        const blankBody = await expectJson(blank, 400, 'blank display name');
+        expect(
+          blankBody.error === REGISTRATION_MESSAGES.blank,
+          `unexpected body ${JSON.stringify(blankBody)}`,
+        );
+        const newline = await register(regD, {
+          user_id_text: 'Reg_D',
+          display_name: 'a' + NEWLINE + 'b',
+        });
+        const newlineBody = await expectJson(newline, 400, 'newline display name');
+        expect(
+          newlineBody.error === REGISTRATION_MESSAGES.newline,
+          `unexpected body ${JSON.stringify(newlineBody)}`,
+        );
+      },
+    },
+    {
+      name: 'visual limits match for kana, emoji, combining marks and ZWJ families',
+      run: async () => {
+        const cases = [
+          ['kana x16', kana16],
+          ['emoji x16', emoji16],
+          ['combining x16', combining16],
+          ['family x16', family16],
+        ];
+        for (const [label, display] of cases) {
+          const res = await register(regD, {
+            user_id_text: 'Reg_D',
+            display_name: display,
+          });
+          const body = await expectJson(res, 400, label);
+          expect(
+            body.error === REGISTRATION_MESSAGES.tooLong,
+            `${label}: ${JSON.stringify(body)}`,
+          );
+        }
+      },
+    },
+    {
+      name: 'register rejects missing and non-string required fields',
+      run: async () => {
+        const cases = [
+          [{ user_id_text: 'Reg_D' }, REGISTRATION_MESSAGES.nameRequired],
+          [{ display_name: 'Reg D' }, REGISTRATION_MESSAGES.idRequired],
+          [{ user_id_text: 42, display_name: 'Reg D' }, REGISTRATION_MESSAGES.idType],
+          [{ user_id_text: 'Reg_D', display_name: 42 }, REGISTRATION_MESSAGES.nameType],
+        ];
+        for (const [payload, message] of cases) {
+          const res = await register(regD, payload);
+          const body = await expectJson(res, 400, JSON.stringify(payload));
+          expect(
+            body.error === message,
+            `expected ${message}, got ${JSON.stringify(body)}`,
+          );
+        }
+      },
+    },
+    {
+      name: 'mark_onboarding_seen is refused before registration',
+      run: async () => {
+        const res = await cmd(regD, 'mark_onboarding_seen', {});
+        const body = await expectJson(res, 400, 'early onboarding mark');
+        expect(
+          body.error === REGISTRATION_MESSAGES.onboarding,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'a 15-grapheme emoji display name registers; introduction stays out',
+      run: async () => {
+        const res = await register(regD, {
+          user_id_text: 'Emoji_Fan',
+          display_name: family15,
+          introduction: 'set later',
+        });
+        const body = await expectJson(res, 200, 'emoji register');
+        expect(body.status === 'executed', `expected executed, got ${body.status}`);
+        expect(
+          body.result.display_name === family15,
+          'the 15-grapheme emoji display name is stored as sent',
+        );
+      },
+    },
+    {
+      name: 'validation still runs before the immutability check over HTTP',
+      run: async () => {
+        const tooLong = await register(regD, {
+          user_id_text: 'Emoji_Fan',
+          display_name: family16,
+        });
+        const tooLongBody = await expectJson(tooLong, 400, 'post-confirm validation');
+        expect(
+          tooLongBody.error === REGISTRATION_MESSAGES.tooLong,
+          `expected the length error, got ${JSON.stringify(tooLongBody)}`,
+        );
+        const confirmed = await register(regD, {
+          user_id_text: 'Emoji_Fan',
+          display_name: family15,
+        });
+        const confirmedBody = await expectJson(confirmed, 400, 'immutability');
+        expect(
+          confirmedBody.error === REGISTRATION_MESSAGES.confirmed,
+          `expected the immutability error, got ${JSON.stringify(confirmedBody)}`,
+        );
+      },
+    },
+    {
+      name: 'mark_onboarding_seen persists once per account',
+      run: async () => {
+        const first = await cmd(regD, 'mark_onboarding_seen', {});
+        const firstBody = await expectJson(first, 200, 'first mark');
+        expect(firstBody.status === 'executed', `expected executed, got ${firstBody.status}`);
+        expect(
+          firstBody.result.onboarding_seen === true,
+          `unexpected result ${JSON.stringify(firstBody.result)}`,
+        );
+        const second = await cmd(regD, 'mark_onboarding_seen', {});
+        const secondBody = await expectJson(second, 200, 'second mark');
+        expect(
+          secondBody.result.onboarding_seen_at === firstBody.result.onboarding_seen_at,
+          'repeating the command keeps the first timestamp',
+        );
+      },
+    },
+    {
+      name: 'the emoji profile shows the persisted onboarding state',
+      run: async () => {
+        const rows = await expectJson(await readProfile(regD), 200, 'regD profile');
+        expect(rows.length === 1, `expected one row, got ${rows.length}`);
+        expect(rows[0].display_name === family15, 'the emoji display name is stored');
+        expect(
+          rows[0].introduction === null,
+          'the register command never writes the introduction',
+        );
+        expect(
+          typeof rows[0].onboarding_seen_at === 'string' && rows[0].onboarding_seen_at !== '',
+          'the onboarding state is persisted',
+        );
+      },
+    },
+    {
+      name: 'the onboarding state is per account',
+      run: async () => {
+        const rows = await expectJson(await readProfile(regA), 200, 'regA profile');
+        expect(rows.length === 1, `expected one row, got ${rows.length}`);
+        expect(
+          rows[0].onboarding_seen_at === null,
+          'another account is unaffected',
+        );
+      },
+    },
+    {
+      name: 'direct profile updates over the Data API stay closed',
+      run: async () => {
+        const res = await postRest(status, `profiles?user_id=eq.${regA.id}`, {
+          token: regA.token,
+          body: { display_name: 'Hacked' },
+          method: 'PATCH',
+        });
+        await expectJson(res, 204, 'direct profiles PATCH');
+        const rows = await expectJson(await readProfile(regA), 200, 'profile after PATCH');
+        expect(
+          rows[0].display_name === '花子 Hanako',
+          `display must be unchanged, got ${rows[0].display_name}`,
+        );
+      },
+    },
+  ];
+}
+
+const SUITES = {
+  'command-boundary': {
+    definitions: (runId) => [
+      { key: 'actorA', email: `cb-${runId}-a@command-boundary.test` },
+      { key: 'actorB', email: `cb-${runId}-b@command-boundary.test` },
+      { key: 'thirdParty', email: `cb-${runId}-c@command-boundary.test` },
+    ],
+    build: commandBoundarySuite,
+  },
+  registration: {
+    definitions: (runId) => [
+      { key: 'regA', email: `reg-${runId}-a@registration.test` },
+      { key: 'regB', email: `reg-${runId}-b@registration.test` },
+      { key: 'regC', email: `reg-${runId}-c@registration.test` },
+      { key: 'regD', email: `reg-${runId}-d@registration.test` },
+    ],
+    build: registrationSuite,
+  },
+};
 
 // ---------------------------------------------------------------------------
 // Main
@@ -595,11 +986,8 @@ async function main() {
   log(`  api: ${status.API_URL}`);
 
   const runId = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`;
-  const definitions = [
-    { key: 'actorA', email: `cb-${runId}-a@command-boundary.test` },
-    { key: 'actorB', email: `cb-${runId}-b@command-boundary.test` },
-    { key: 'thirdParty', email: `cb-${runId}-c@command-boundary.test` },
-  ];
+  const suiteNames = suite === 'all' ? Object.keys(SUITES) : [suite];
+  const definitions = suiteNames.flatMap((name) => SUITES[name].definitions(runId));
 
   const users = {};
   const createdIds = [];
@@ -608,7 +996,7 @@ async function main() {
   let failed = 0;
 
   try {
-    log('creating local Auth users (2 actors + 1 third party)...');
+    log(`creating ${definitions.length} local Auth users...`);
     for (const def of definitions) {
       const password = `${randomUUID()}aA1!`;
       const id = await adminCreateUser(status, def.email, password);
@@ -625,11 +1013,11 @@ async function main() {
 
     const selected = [];
     if (suite === 'all') {
-      for (const [name, build] of Object.entries(SUITES)) {
-        selected.push(...build(status, users).map((t) => ({ ...t, suite: name })));
+      for (const [name, definition] of Object.entries(SUITES)) {
+        selected.push(...definition.build(status, users).map((t) => ({ ...t, suite: name })));
       }
     } else {
-      selected.push(...SUITES[suite](status, users).map((t) => ({ ...t, suite })));
+      selected.push(...SUITES[suite].build(status, users).map((t) => ({ ...t, suite })));
     }
 
     const context = {};

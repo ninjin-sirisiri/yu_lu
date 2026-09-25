@@ -1,9 +1,11 @@
 import {
+  assertRegistrationInput,
   assertUserIdConfirmed,
   normalizeUserId,
   suggestSimilarUserIds,
   USER_ID_RESERVATION_HOLD,
 } from './registration';
+import { USER_ID_ERROR } from './validation';
 
 describe('USER_ID_RESERVATION_HOLD', () => {
   it('is none', () => {
@@ -24,6 +26,48 @@ describe('normalizeUserId', () => {
   it('maps blank input to an empty string', () => {
     expect(normalizeUserId('')).toBe('');
     expect(normalizeUserId('   ')).toBe('');
+  });
+
+  it('trims ideographic spaces with the shared trim rules', () => {
+    expect(normalizeUserId('\u3000Hanako\u3000')).toBe('hanako');
+  });
+});
+
+describe('assertRegistrationInput', () => {
+  it('returns the normalized values of a valid draft', () => {
+    expect(
+      assertRegistrationInput('  Alice_Yamada  ', '  花子 Hanako  '),
+    ).toEqual({ userIdText: 'Alice_Yamada', displayName: '花子 Hanako' });
+  });
+
+  it('throws the shared User ID error for an invalid ID', () => {
+    expect(() => assertRegistrationInput('a', 'Hanako')).toThrow(USER_ID_ERROR);
+    expect(() => assertRegistrationInput('bad id', 'Hanako')).toThrow(
+      USER_ID_ERROR,
+    );
+    expect(() => assertRegistrationInput('x'.repeat(21), 'Hanako')).toThrow(
+      USER_ID_ERROR,
+    );
+  });
+
+  it('throws the shared display name errors', () => {
+    expect(() => assertRegistrationInput('hanako', '   ')).toThrow(
+      'Display name must not be blank.',
+    );
+    expect(() => assertRegistrationInput('hanako', 'a\nb')).toThrow(
+      'Display name must not contain a newline.',
+    );
+    expect(() =>
+      assertRegistrationInput('hanako', '\u{1F600}'.repeat(16)),
+    ).toThrow('Display name must be 15 visual characters or fewer.');
+  });
+
+  it('accepts 15 emoji as a display name (visual counting)', () => {
+    const draft = assertRegistrationInput(
+      'hanako',
+      '\u{1F600}'.repeat(15),
+    );
+    expect(draft.displayName).toBe('\u{1F600}'.repeat(15));
   });
 });
 
