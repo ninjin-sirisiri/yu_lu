@@ -32,6 +32,25 @@ jest.mock('../src/auth/provider', () => {
   };
 });
 
+// Task 12 replaced the friends placeholders with the real list/search
+// screens; this shell test mocks only the read boundary (server contract
+// itself is covered by the backend suites) so navigation stays
+// deterministic and no test ever reaches the network.
+jest.mock('../src/backend/queries', () => {
+  const actual = jest.requireActual('../src/backend/queries');
+  return {
+    ...actual,
+    searchProfiles: jest.fn(),
+    getProfile: jest.fn(),
+    listFriends: jest.fn(),
+    listRequests: jest.fn(),
+  };
+});
+
+import { listFriends } from '../src/backend/queries';
+
+(listFriends as jest.Mock).mockResolvedValue({ items: [], nextCursor: null });
+
 // Renders the real route tree under app/src/app so the tab shell, the home
 // entry point and every tab destination are verified through actual router
 // startup instead of hand-built fixtures. Jest runs with cwd = app/
@@ -76,8 +95,10 @@ describe('navigation shell', () => {
     await fireEvent.press(screen.getByText('友達を追加'));
 
     await waitFor(() => expect(app.getPathname()).toBe('/friends/add'));
-    expect(screen.getByText('友達追加')).toBeTruthy();
-    expect(screen.getByText('友達追加は準備中です')).toBeTruthy();
+    // The real search screen (label + field) replaces the old placeholder —
+    // nothing was searched or added yet.
+    expect(screen.getByText('User ID 検索')).toBeTruthy();
+    expect(screen.getByTestId('search-input')).toBeTruthy();
     // The bottom tab bar stays visible while inside the friends area, so the
     // entry lands in the friends tab area rather than a separate flow.
     expect(screen.getByTestId('tab-friends')).toBeTruthy();
@@ -98,7 +119,10 @@ describe('navigation shell', () => {
 
     await fireEvent.press(screen.getByTestId('tab-friends'));
     await waitFor(() => expect(app.getPathname()).toBe('/friends'));
-    expect(screen.getByText('友達一覧は準備中です')).toBeTruthy();
+    // The real friends list: its add entry renders on first paint, and the
+    // empty state (zero-friend guidance) settles after the initial read.
+    expect(screen.getByTestId('friends-add-entry')).toBeTruthy();
+    expect(await screen.findByTestId('friends-zero')).toBeTruthy();
 
     await fireEvent.press(screen.getByTestId('tab-mypage'));
     await waitFor(() => expect(app.getPathname()).toBe('/mypage'));

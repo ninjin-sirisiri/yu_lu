@@ -33,6 +33,9 @@ export interface FieldProps extends Pick<
   | 'textContentType'
   | 'autoComplete'
   | 'editable'
+  // Task 12: the search field needs the raw change event for IME
+  // composition detection (入力変換中は検索しない); forwarded verbatim.
+  | 'onChange'
 > {
   label: string;
   value: string;
@@ -84,6 +87,7 @@ export function Field({
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
+        // onChange (composition detection) rides along via {...inputProps}.
         placeholderTextColor={tokens.muted}
         accessibilityLabel={label}
         accessibilityHint={
