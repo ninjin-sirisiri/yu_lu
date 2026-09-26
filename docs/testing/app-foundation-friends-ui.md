@@ -6,6 +6,92 @@
 
 ---
 
+## Task 20: バックグラウンド再送とログアウト境界 (2026-09-27 JST)
+
+### 環境
+
+| 項目 | 値 |
+| --- | --- |
+| Mac / Xcode | Xcode 27.0, macOS 27 |
+| シミュレータ | iPhone 18 Pro / iOS 27.0 (UDID 7072095A-…、Boot済み)。**GUI不在・タップ入力なし** (タスク16/19と同じ制約) |
+| ネイティブビルド | `npx expo prebuild --platform ios` → `app/app.json` に `expo-background-task` プラグイン追加 (expo install の指示どおり) → Info.plist に **`UIBackgroundModes: processing`** と **`BGTaskSchedulerPermittedIdentifiers: com.expo.modules.backgroundtask.processing`** を確認。`npx expo run:ios --device 7072095A-…` → **Build Succeeded, 0 error** (警告は既存の Build Phase 依存関係表示のみ)。Podfile.lock に **ExpoBackgroundTask (57.0.20) / ExpoTaskManager (57.0.20) / ExpoNetwork (57.0.2)** を確認 |
+| JS | Metro `localhost:8081`。`xcrun simctl terminate` → `xcrun simctl launch … --initialUrl "exp+app://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081"` で cold launch |
+
+### JS層 (MOCKED-LAYER: expo-task-manager / expo-background-task / expo-router/entry。アウトボックスは**実SQLite**、キュー・ワーカー・lifecycle・ログアウトは**本物の実装**)
+
+```
+$ npm --prefix app test -- --runInBand __tests__/sync-lifecycle.test.ts   → 27 passed
+$ npm --prefix app test -- --runInBand                                     → 34 suites / 612 tests 全通過 (タスク19比 +27)
+$ npm --prefix app run typecheck                                          → 0 errors
+$ node --test scripts/invite-web.test.mjs                                 → 25 passed (app.json にプラグイン追加後も expo config 両状態green)
+$ npx supabase test db                                                    → 621 passed / Files=7
+$ npx deno test --allow-env --allow-net --config supabase/functions/deno.json supabase/functions/tests/ → 128 passed (サーバー未変更の回帰)
+```
+
+27件の主な内容 (計画が指定した4シナリオ + 要件):
+
+| グループ | 検証したこと |
+| --- | --- |
+| **定義順序** (要件2) | `expo-router/entry` の評価**時に** `TaskManager.isTaskDefined('app-foundation.sync-drain')` が true — index.ts の import 運行順でタスク定義がRouterより先であることを実行時証明 |
+| **OS登録** (要件2) | Available → `registerTaskAsync(name, {minimumInterval:15})`; Restricted → `'unavailable'` でregisterTaskAsync**呼ばず**; throw → `'failed'` で例外を出さない (Expo Go/シミュレータで壊れない) |
+| **ハンドラ→同一claim経路** (要件2) | 捕獲したTaskManagerハンドラを呼び出し → 共有lifecycle → **本物の `queue.claim`** 経由で送信 Success; drainエラー時 Failed; `runBackgroundSyncNow` 同樣 |
+| **前景/背景同時送信** (計画) | (a) 同一lifecycleへの `drain('foreground')`+`drain('background')` 同時発火 → 各操作IDちょうど1回; (b) **独立した2つのlifecycle** (画面泵 vs バックグラウンド) が同一キューで競合 (送信を遅延させて両方in-flight化) → 2操作とも1回のみ・`attempts===1` ( guarded claim が二重送信を防ぐ ) |
+| **復帰トリガー** (要件2) | `start()` の初期前景ドレイン → `AppState 'active'` → ドレイン; 接続 `false→true` → ドレイン; 連続 `true` は再ドレインしない (復帰のみ); `stop()` で送信停止 → `start()` で再開; detach でリスナー解除 |
+| **認証失効で停止** (要件2) | セッションnull → `no-session` で**送信ゼロ**・行不変; セッションが別アカウントに切り替わっても元アカウントの行は触らず (`claim` はアカウント結合)、同一資格の復帰後に1回だけ送信 |
+| **タスクキル** (計画) | claim後に"死亡"し未settle → リース内は**再送しない** (他ワーカーの可能性) → `SEND_LEASE_MS`超過後に `結果確認中` 経由で**同一操作ID**で再送 (attempts=2・行は1件・新規IDを作らない = サーバー冪等) |
+| **24時間期限** (計画) | 超過後は**自動実行ゼロ**で `needs_confirmation` へ; `retryAsNew` で**新しい操作ID**・同一ペイロードで送信、旧IDは `superseded` |
+| **ログアウト5順序** (要件3) | `confirm → stop → invalidate → discard → purge → resume` の**厳密な順序** (失効呼び出し時にpendingマーカー在りをassert)、要約 `{unsent:1, inFlight:1}` (未送信と送信中の別々説明); 拒否時は `confirm` のみで何も触らない; purge後も**テーマ (端末スコープ) は残存**、アカウント設定は消える |
+| **オフライン境界** (要件4) | transient失効 → `'pending'`: **discard/purge未実行**・セッション保持・マーカー保存; マーカー在り中は**全drainが halted-pending-logout** (オフラインログアウト後に再送しない); 接続復帰 → ゲートが invalidate→discard→purge→マーカー消去 を完遂し**それでも送信しない**; 指紋不一致 (同一アカウントの再ログイン) は purge のみで**セッション破棄せず**、別アカウントのセッションも絶対に破棄しない |
+| **ログアウト中の応答** (計画) | 送信in-flight中にログアウトがpurge → 迟れて戻った `ok` 応答は `applySendResult → null` (**復活ゼロ**: 行0件・新規行なし)、以降のドレインは `no-session` で送信ゼロ、テーマは保持 |
+
+### 実機試行 (実dev build + 実Metro — 実測できたこと)
+
+手順: (1) prebuild+`expo run:ios` で新ネイティブモジュール込みビルド → (2) Metro 起動 → (3) terminate+launch で cold start → (4) Metroコンソールの `[sync]` ログ取得 → (5) スクリーンショット。
+
+| 検証項目 | 期待 | 実測 |
+| --- | --- | --- |
+| 新パッケージ込みの実dev build | ビルド成功 | **Build Succeeded (0 errors)**、`Podfile.lock` に ExpoBackgroundTask/ExpoTaskManager/ExpoNetwork |
+| Task 20 起動経路 (defineTask → Router → index本文) | クラッシュなく起動 | `iOS Bundled … index.ts (1662 modules)` → **ログイン画面到達** — `docs/testing/screenshots/task-20/01-launch-login-guard.png` / `02-final-code-login-guard.png` |
+| 起動時drainが**実機の実SQLite・実pending-logoutゲート・実セッション判定**を完走 | 段階ログが最後まで到達 | 計装版の実機ログ: `[sync] index: starting lifecycle` → `[sync] lifecycle.start()` → `[sync] drainOnce(foreground) enter` → `[sync] drainOnce: storage open` → `[sync] drainOnce: gate passed` → `[sync] drainOnce: account=null` → `[sync] initial drain: no-session` — **実機SQLite opened / ゲート通過 / セッションなしで送信せず停止** を実測 |
+| リスナーも同一のdrain経路を使う (要件2) | 接続イベントが別の送信経路を作らない | 同じ実機ログに `[sync] drainOnce(network) enter` → `storage open` → `gate passed` → `account=null` — **同一関数を経由**していることを実測 (別のsend pathは存在しない) |
+| 最終コードの起動 (計装除去後) | 同上 | `[sync] background task registration: unavailable` + `[sync] initial drain: no-session` を実機で取得 — `02-final-code-login-guard.png` |
+| OSへのバックグラウンド登録 | 非対応環境では no-op | **実OSの回答は `unavailable`** (iOSシミュレータは BGTaskScheduler 非対応: SDK57ドキュメント「The Background Tasks API is unavailable on iOS simulators」) → `registerTaskAsync` は呼ばず、復帰ドレインで代替。仕様「OSが許す範囲で試行し、実行されなければ次の復帰で再開する」に整合 |
+
+### 設計境界の記録 — オフラインログアウトと配信済みOS通知 (要件4)
+
+**事実 (実機+実装):**
+1. **オフラインログアウトはサーバーへ即時通知できない。** 端末失効 (`device-session` unregister) はTask18契約上**認証必須** (401 without session)。オフライン時に先にローカルのセッションを破棄すれば失効を送れないため、本実装は: 未送信確認 → worker停止 → `logout.pending` マーカー保存 → 失効試行 → **transient失敗は `pending` で停止 (セッション・アカウントデータ保持)**。接続復帰のdrainゲートが 失効 → セッション破棄 → purge → マーカー消去 を完遂する (jest: 「オフラインログアウト境界」4件)。
+2. **配信済みOS通知は取り消せない。** OS通知センターはアプリの制御外。
+
+**仕様照合 (`docs/sdd/specs/2026-09-25-app-foundation-friends-ui-design.md` §オフライン106-107行・§通知109-116行) → 衝突なし:**
+- 107行「ログアウト後はそのアカウントの自動送信と通知配信を停止」— 本実装は**ログアウト完了を端末失効成功の時点と定義**している (失効できない間はログアウト未完了=pending)。完了した瞬間に通知配信・自動送信・ローカル消去がすべて停止するため条件は充足。自動送信は**確認直後から**停止 (worker停止) しており、仕様の要求を前倒しで満たす。
+- pending中は114行「許可済みでログイン中の全端末に配信する」が字義どおり成立する (セッション保持 = ログイン中)。
+- 配信済み通知の**取り消し**は仕様が要求しない (停止は将来の配信についてのみ; 拒否・期限切れのプッシュ対象も§通知111行で定義済み) → 矛盾なし。
+- 残余境界として記録: (a) pending窓 (オフライン確認〜接続復帰) ではこの端末への配信が継続し得る、(b) 配信済みOS通知は取り消せない。**いずれも仕様が要求する「ログアウト後」の停止条件には抵触しない**ため、本タスクは完了とする。
+
+### device-pending (今回実測できない項目・理由)
+
+| 検証項目 | 状態 | 理由・代替検証 |
+| --- | --- | --- |
+| BGTaskScheduler によるバックグラウンドタスクの実OS実行 | **DEVICE-PENDING** | **iOSシミュレータは Background Tasks API 非対応** (SDK57ドキュメント明記)。実機の実OS回答が `unavailable` であることは実測済み (上表)。タスクの実スケジュール実行・`triggerTaskWorkerForTestingAsync` (アプリ内呼び出し要) は物理端末が必要 — タスク21の `npx expo run:ios --device` 範囲 |
+| オフラインログアウトの対話的E2E (実機で確認→機内モード→復帰で完遂) | **DEVICE-PENDING** | (1) 実セッションが必要だが実OAuthはUI入力を要し (タスク10のBLOCKED条件)、headlessシミュレータで完了不可、(2) ログアウトUI (マイページ入口・確認ダイアログ) は今回のファイル範囲外。実行経路の完全検証はjest27件 (5順序・pending保持・復帰完遂・ゲート遮断・指紋/アカウントガード) で実施 |
+| 配信済みOS通知「取り消せない」の目視確認 | **DEVICE-PENDING** | 実配信が無い (タスク19のproject id欠如)。OSの仕様上の事実として上記に記録 |
+| 物理端末でのオフラインログアウト境界記録 | **DEVICE-PENDING** | 物理iPhone (00008120-…) は未署名ビルド導入・ロック解除入力が必要でこの環境から操作不可。タスク21の `--device` 実行時に同じ境界を再記録する |
+
+### 検証中に判明した環境問題と対処 (再発時に再利用可)
+
+1. **Metro (`expo start --localhost`) が `[::1]:8081` (IPv6 loopback) にのみ bind** し、アプリが接続する `127.0.0.1` (IPv4) から拒否され「Could not connect to development server」に到達。→ `npx expo start --port 8081` (全インターフェース) に変更して解決。
+2. **watchman の recrawl 警告 (`MustScanSubDirs UserDroppedTo`) で Metro が変更を検知せず、同一バイト数の古いバンドルを配信し続ける** (curl で新ロジック文字列が入っていないことを確認)。→ `watchman watch-del /Users/h-uma/orca/projects/yu_lu` + `watch-project` + Metro再起動で解決。**JS変更が実機に反映されないときはまずbundleをcurlして文字列確認**すること。
+3. `simctl launch` は**既存プロセスでは再起動しない** (同一PID)。cold launch は必ず `simctl terminate` → `simlaunch` の順 (タスク19と同じ)。
+4. 既存のMetro (別タスク起動分, pid95769) が8081を掴んでいた → `kill` してから再起動。
+
+### 既知の無害なコンソール
+
+- `expo-notifications` の Expo Go push廃止に関する `console.warn` — `auth/logout → notify/registration → expo-notifications` のimport連鎖により、index.ts を import するスイート (scaffold / sync-lifecycle) で各1回出る (実行結果に影響なし)。
+- 起動時の `[sync] background task registration: unavailable` / `[sync] initial drain: …` は **__DEV__専用の診断ログ** (機証用。本番では出ない)。
+
+---
+
 ## Task 19: 通知受信・画面更新・外部入口の統合 (2026-09-27 JST)
 
 ### 環境
