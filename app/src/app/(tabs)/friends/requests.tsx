@@ -26,6 +26,10 @@ import {
   subscribeAppResume,
   subscribeFriendsChanged,
 } from '../../../requests/friendsRepository';
+import {
+  OPEN_REQUEST_STATES,
+  enqueueFriendRequest,
+} from '../../../requests/sendRequest';
 import { randomId } from '../../../storage/database';
 import { listOperations, type OutboxRecord } from '../../../storage/outbox';
 import { createCommandApi, type CommandApi, type CommandOutcome } from '../../../sync/api';
@@ -57,8 +61,10 @@ import { ProfilePanel } from './[userId]';
 // - re-request (申請の再送) goes through the QUEUE (app-command via
 //   queue + worker): a new outbound request must survive offline, retry
 //   with backoff and show up as 送信待ち. Enqueueing is guarded by "one
-//   open `request` operation per target", so a double-tap or a repeated
-//   tap while 送信待ち can never create a second operation.
+//   open `request` operation per target" (the shared guard in
+//   requests/sendRequest.ts, also used by the profile screen's 申請), so a
+//   double-tap or a repeated tap while 送信待ち can never create a second
+//   operation.
 //
 // Refresh: the list re-reads the SERVER on mount, on tab switch, on app
 // 復帰 and on 友達成立 (subscribeAppResume / subscribeFriendsChanged from
@@ -73,14 +79,6 @@ interface ScreenNotice {
   message?: string;
   testID: string;
 }
-
-/** Queue states in which a `request` operation still owns its target. */
-const OPEN_REQUEST_STATES: readonly string[] = [
-  'pending',
-  'sending',
-  'sent_unknown',
-  'needs_confirmation',
-];
 
 /**
  * Overlay display states — OPEN_REQUEST_STATES plus `succeeded` (the server
@@ -101,12 +99,6 @@ function queuedStateOf(state: string): QueuedRequestRow['state'] | null {
  * ended request still inside its 7-day window) never hide a 送信待ち send.
  */
 const SERVER_ROW_FRESH_MS = 2 * 60 * 1000;
-
-function requestTargetOf(operation: OutboxRecord): unknown {
-  const payload = operation.payload;
-  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return undefined;
-  return (payload as Record<string, unknown>)['target_user_id'];
-}
 
 export function RequestsArea() {
   const router = useRouter();
@@ -402,19 +394,14 @@ export function RequestsArea() {
       busyRef.current.add(key);
       setBusyKeys();
       try {
-        const rows = await listOperations(storage, accountId);
-        const open = rows.find(
-          (row) =>
-            row.kind === 'request' &&
-            OPEN_REQUEST_STATES.includes(row.state) &&
-            requestTargetOf(row) === target,
-        );
-        if (open === undefined) {
-          const { operation } = await bindings.queue.enqueue({
-            accountId,
-            kind: 'request',
-            payload: { target_user_id: target },
-          });
+        const outcome = await enqueueFriendRequest({
+          queue: bindings.queue,
+          storage,
+          accountId,
+          target,
+        });
+        if (outcome.enqueued) {
+          const operation = outcome.operation;
           setQueuedRows([
             ...queuedRef.current,
             { operationId: operation.operationId, counterpart: entry.counterpart, state: 'pending' },
@@ -437,6 +424,7 @@ export function RequestsArea() {
             void refreshUnfinished();
           })();
         } else {
+          const open = outcome.existing;
           const state = queuedStateOf(open.state);
           if (
             state !== null &&
