@@ -132,6 +132,48 @@ export interface AvatarProcessDeps {
   fs: FileSystemPort;
 }
 
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+function decodeBase64Head(head: string): number[] {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  // Strip line-wrapping FIRST (iOS NSData encodes with newlines), then keep
+  // only the first 32 chars = 24 bytes, which covers signature + IHDR size.
+  const clean = head.replace(/[^A-Za-z0-9+/]/g, '').slice(0, 32);
+  const bytes: number[] = [];
+  for (let i = 0; i + 3 < clean.length; i += 4) {
+    const n =
+      (alphabet.indexOf(clean[i]) << 18) |
+      (alphabet.indexOf(clean[i + 1]) << 12) |
+      (alphabet.indexOf(clean[i + 2]) << 6) |
+      alphabet.indexOf(clean[i + 3]);
+    bytes.push((n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff);
+  }
+  return bytes;
+}
+
+/**
+ * Reads width/height from a base64-encoded PNG without decoding the image:
+ * the fixed 8-byte signature + IHDR chunk put both big-endian dimensions in
+ * the first 24 bytes (32 base64 chars). Returns null when the prefix is not
+ * a PNG. The white-composite stage uses this to learn the ACTUAL rasterized
+ * size — iOS rasterizes at the screen scale, so it can exceed the requested
+ * bounds, and reporting the requested size instead would silently break the
+ * 1024×1024 guarantee.
+ */
+export function pngDimensionsFromBase64(base64: string): { width: number; height: number } | null {
+  const bytes = decodeBase64Head(base64);
+  if (bytes.length < 24) return null;
+  for (let i = 0; i < PNG_SIGNATURE.length; i += 1) {
+    if (bytes[i] !== PNG_SIGNATURE[i]) return null;
+  }
+  const readUInt32BE = (offset: number): number =>
+    bytes[offset] * 0x1000000 + bytes[offset + 1] * 0x10000 + bytes[offset + 2] * 0x100 + bytes[offset + 3];
+  const width = readUInt32BE(16);
+  const height = readUInt32BE(20);
+  if (width < 1 || height < 1) return null;
+  return { width, height };
+}
+
 export interface AvatarDraftBody {
   /** The staged, unpublished image; `null` means "no image selected". */
   avatar: ImageReference | null;
@@ -333,7 +375,18 @@ export async function applyAvatarSelection(
     const geometry = fitAvatarGeometry(decoded.width, decoded.height);
     const fitted = track(await deps.ops.fit(decoded, geometry));
     // White composite BEFORE JPEG: transparency must never reach the encoder.
-    const flattened = track(await deps.ops.flattenOntoWhite(fitted));
+    let flattened = track(await deps.ops.flattenOntoWhite(fitted));
+    // The rasterizer may emit MORE pixels than requested (iOS renders the
+    // offscreen scene at the screen scale), so the 1024 cap is re-applied to
+    // the actual composite dimensions before the JPEG encode. For a composite
+    // that already matches the cap this is a no-op.
+    const flatGeometry = fitAvatarGeometry(flattened.width, flattened.height);
+    if (
+      flattened.width !== flatGeometry.outWidth ||
+      flattened.height !== flatGeometry.outHeight
+    ) {
+      flattened = track(await deps.ops.fit(flattened, flatGeometry));
+    }
     const jpeg = track(await deps.ops.encodeJpeg(flattened, AVATAR_JPEG_QUALITY));
     if (jpeg.width > AVATAR_MAX_DIMENSION || jpeg.height > AVATAR_MAX_DIMENSION) {
       return { status: 'failed', message: AVATAR_PROCESSING_FAILED };

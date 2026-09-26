@@ -5,6 +5,7 @@ import { Dimensions, View } from 'react-native';
 import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
 
 import { AuthProvider } from '../auth/provider';
+import { AvatarProbeHost } from '../media/avatarProbe';
 import { rememberDestination } from '../navigation/entry';
 import { runPersistenceProbeIfEnabled } from '../storage/persistenceProbe';
 import { ThemeProvider, useTheme } from '../theme/provider';
@@ -48,6 +49,9 @@ function ThemedRoot() {
     <View style={{ flex: 1, backgroundColor: tokens.surface }}>
       <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
       <DestinationRecorder />
+      {/* Dev-only: renders null unless Documents/avatar-probe.enabled exists
+          (see src/media/avatarProbe.tsx, Task 16 device evidence). */}
+      <AvatarProbeHost />
       <Stack>
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />

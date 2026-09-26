@@ -26,6 +26,7 @@ import {
   applyAvatarSelection,
   clearAvatarWork,
   discardAvatarDraft,
+  pngDimensionsFromBase64,
   readAvatarDraft,
   type AvatarImage,
   type AvatarOps,
@@ -193,13 +194,20 @@ export function useAvatarComposite(fs: FileSystemPort): AvatarComposite {
     svgRef.current?.toDataURL(
       (encoded) => {
         try {
-          const base64 = String(encoded ?? '').replace(/^data:image\/png;base64,/, '');
+          const base64 = String(encoded ?? '')
+            .replace(/^data:image\/png;base64,/, '')
+            .replace(/\s+/g, '');
           if (base64.length === 0) throw new Error('composite produced no data');
+          // iOS rasterizes at the screen scale, so trust the PNG header over
+          // the requested bounds; the pipeline re-applies the 1024 cap to
+          // these real dimensions before encoding the JPEG.
+          const actual = pngDimensionsFromBase64(base64);
+          if (actual === null) throw new Error('composite is not a PNG');
           const directory = fs.join(fs.documentRoot, 'images', '.avatar-work');
           fs.ensureDirectory(directory);
           const uri = fs.join(directory, `${randomId()}.composite.png`);
           fs.writeFile(uri, base64, 'base64');
-          settle((done) => done.resolve({ uri, width, height }));
+          settle((done) => done.resolve({ uri, width: actual.width, height: actual.height }));
         } catch (error) {
           settle((done) =>
             done.reject(error instanceof Error ? error : new Error('composite failed')),

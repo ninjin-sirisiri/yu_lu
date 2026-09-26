@@ -6,6 +6,78 @@
 
 ---
 
+## Task 16: プロフィール画像処理と永続化 (2026-09-26 JST)
+
+### 環境
+
+| 項目 | 値 |
+| --- | --- |
+| Mac / Xcode | Xcode 27.0, macOS 27 |
+| ネイティブビルド | `npx expo run:ios --no-bundler` (Debug, dev client) — `expo-image-manipulator` 追加後に再ビルド成功 (0 errors、末尾のosascript警告はタスク8と同じ表示手順の失敗のみ) |
+| シミュレータ | iPhone 18 Pro / iOS 27.0 (UDID 7072095A-…、ヘッドレス) |
+| JS | Metro localhost:8081 (既存プロセス)。起動は `xcrun simctl launch <udid> com.anonymous.app --initialUrl "exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081"` (タスク8と同じ手順) |
+| プローブ | `app/src/media/avatarProbe.tsx` — `Documents/avatar-probe.enabled` 存在時のみ起動 (storage-probe と同じ方式・レンダリングは無し)。ヘッドレスでタップできないため、入力は埋め込みfixture (透過PNG 1600×1200 / EXIF Orientation=6 JPEG 320×240、`avatarProbeFixtures.ts`) を使用 |
+
+### JS層 (モック層 — MOCKED-LAYER)
+
+```
+$ npm --prefix app test -- --runInBand src/media/avatar.test.ts        → 40 passed
+$ npm --prefix app test -- --runInBand src/media/AvatarPicker.test.tsx →  6 passed
+$ npm --prefix app test             → 31 suites / 540 tests 全通過 (タスク16で +46)
+$ npm --prefix app run typecheck    → 0 errors
+```
+
+- **形式判定**: MIME別名 (`image/jpg`・パラメータ付き) 受理、MIME欠落時はファイル名→URI拡張子、**MIMEがあれば偽装拡張子より優先** (`.jpg` のGIFは拒否)、拒否文言に JPEG・PNG・HEIC を明記。
+- **10MB境界**: ちょうど10MB受理 / +1byte拒否 (`media/images.ts` の `validImageSize` と同一値) / `fileSize` 欠落時はファイルシステム実サイズ。
+- **ステージ順** decode → fit → flatten → encodeJpeg。**透過は必ずJPEGより前に白合成** (合成入力はgeometry適用後の画像)。EXIFはdecode後の寸法からgeometryを計算し二重回転しない (decodeは1回だけ)。
+- **キャンセル**: `source=null` は読む・書く・消すすべての前で `canceled` を返す。UIではエラー表示なし・下書き変更なし・onChangeなし。
+- **失敗で旧下書き保持**: decoder例外・透過合成失敗・ENOSPC (コミットコピー)・1024超過の出力・下書き書込み失敗のそれぞれで、下書き行と旧ファイルが不変。下書き書込み失敗時はコミット済みファイルをロールバック (参照と下書きは不変のまま)。
+- **順序**: コミット→下書き (実呼び出し順をテストで固定)、コミット失敗時は下書き書込み自体が無い。差し替え成功時は旧stagedファイルを回収。
+- **再起動復元**: DBを閉じて開き直すと同一参照を読込、破損した下書きbodyは「画像なし」に退避して例外にしない。
+- **削除**: 下書き行を先に消してからファイルを削除 (削除失敗時は一時ファイル残存のみで参照切れにならない)。公開済み画像 (別の参照) は一切触らない。
+- **UI配線**: カメラ権限拒否は説明のみでカメラを起動しない、形式拒否はエラー通知で表示、削除後は `onChange(null)` かつ削除ボタン無効化。
+
+### 実機実測 (iOS・実ネイティブモジュール・実SQLite・実ファイルシステム)
+
+手順: (1) フラグ配置→プロセス#1起動→ログ取得、(2) `simctl terminate` (rc=0・プロセス消滅確認) →プロセス#2起動→復元ログ取得、(3) 出力画像を端末からコピーして `sips` で画素確認、(4) 検証後にフラグ・ログ・fixture・プローブ画像を端末から削除し、フラグ無しで再起動して成果物が増えないことを確認。
+
+```json
+# プロセス#1
+{"phase":"restore","draft":null,"draftExists":false,"draftBytes":0}
+{"phase":"exif-decode","source":"320x240 jpeg, EXIF Orientation=6","width":240,"height":320,"normalized":true}
+{"phase":"commit","status":"committed","width":1024,"height":1024,
+ "relativePath":"images/__avatar_probe/070ef2e1-….jpg","bytes":27226,
+ "stages":{"decode":{"ok":2},"fit":{"ok":2},"flatten":{"ok":1},"encodeJpeg":{"ok":1},"commit":{"ok":1}}}
+# プロセス#2 (terminate rc=0 → プロセス消滅確認 → 再起動)
+{"phase":"restore","draft":"images/__avatar_probe/070ef2e1-….jpg","draftExists":true,"draftBytes":27226}
+```
+
+| 検証項目 | 期待 | 実測 |
+| --- | --- | --- |
+| EXIF回転 (320×240, Orientation=6) のdecode寸法 | 240×320 | width 240 × height 320、`normalized: true` — **向き補正を実ネイティブで確認** |
+| 透過PNG (1600×1200) の確定結果 | 1024×1024 JPEG | `committed`、**1024×1024**、27,226 bytes、`images/__avatar_probe/….jpg` |
+| 出力の4隅画素 (透過だった箇所) | 白・不透明 | topLeft/topRight/bottomLeft/bottomRight すべて **(254,254,254)・alpha 255** (JPEG量子化による1の差のみ) |
+| 出力の中央画素 | 画像内容が残る | **(219,40,40)** — fixtureの不透明赤コア (220,40,40)。白合成であって白紙ではないことの確認 |
+| 終了→再起動後の読込み | 前回の下書き参照+実ファイル | terminate rc=0・プロセス消滅確認後、プロセス#2が `070ef2e1-….jpg` を復元、`draftExists: true`・27,226 bytes |
+| 差し替え後の旧staged回収 | 旧ファイル削除 | 差し替え後に `images/__avatar_probe/` は新ファイル1件のみ |
+| フラグ削除後の再起動 | プローブ無動作 | avatar-probe の成果物ゼロ (フラグゲート確認) |
+
+- ステージ所要時間 (実機): decode 13〜42ms / fit 41〜43ms (二段) / flatten 68〜72ms / encode 4〜5ms / commit 5〜9ms。
+- **検証中に判明し修正した点**: iOS の `UIGraphicsImageRenderer` は**画面スケールでラスタライズ**するため、1024² 要求のSVG合成が 3072² (3×) になり、最初の実行はコミット前検査で拒否された (全ネイティブステージは成功)。対処として合成PNGのIHDRから実寸を読む `pngDimensionsFromBase64` と、合成後に1024キャップを再適用するステージを追加 (`src/media/avatar.ts`)。iOS base64の改行は除去してから書き込む。修正後の同一環境で `committed` まで到達。
+
+### device-pending (今回実測できない項目・理由)
+
+| 検証項目 | 状態 | 理由・代替検証 |
+| --- | --- | --- |
+| OSピッカー/カメラUIでの撮影・選択 (正方形切り抜き画面) と実写真ライブラリの操作 | **DEVICE-PENDING** | Xcode 27ヘッドレスシミュレータはタップ入力が無くOSピッカーUIを操作できない。加えてAvatarPickerはタスク17で初めて画面へ配線され、本タスク時点で到達可能なルートが無い。jestではキャンセル・権限拒否・形式拒否・削除の配線を実測 |
+| ピッカー出力そのものの向き (ピッカーがEXIFを焼き・タグを外すこと) | **DEVICE-PENDING** (ソース確認のみ) | ピッカーUIが操作不能なため実測不可。expo-image-picker のソースで iOS `fixOrientation()` / Android `copyExifData` が `TAG_ORIENTATION` を除外することを確認。本プローブはその「タグが付いていない/焼き済み」入力を扱うdecode段階を実機で確認 |
+| Android の白背景合成・寸法・EXIF | **DEVICE-PENDING** | この環境にAndroidビルド/実機が無い (タスク14と同じ外部条件)。`SvgView.toDataURL(w,h)` は指定寸法のBitmapを使う実装 (ソース確認) で、合成も含め同一コードをjestで通している |
+| 物理端末でのカメラ撮影 | **DEVICE-PENDING** | タスク21/22の実機パスへ |
+
+- JS層の46件はすべてMOCKED-LAYERの下、**実機で白背景・寸法・再起動読込みを確認したのは上記のプローブ実測のみ**。モックを実機成功の証拠にはしていない。
+
+---
+
 ## Task 15: 招待Web入口とドメイン関連付け (2026-09-26 JST)
 
 **すべてローカル検証・未公開。** 実HTTPSドメイン・実bundle id・実署名・実ストアIDは

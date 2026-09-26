@@ -25,6 +25,7 @@ import {
   detectAvatarFormat,
   discardAvatarDraft,
   fitAvatarGeometry,
+  pngDimensionsFromBase64,
   readAvatarDraft,
   saveAvatarDraft,
   validateAvatarSource,
@@ -132,6 +133,8 @@ interface FakeOpsOptions {
   decoded?: { width: number; height: number };
   /** Fail a stage with this error. */
   failAt?: 'decode' | 'fit' | 'flatten' | 'encode';
+  /** Dimensions the flatten stage reports (rasterizer can overshoot scale). */
+  flattened?: { width: number; height: number };
   /** Dimensions the JPEG stage reports (defaults to its input). */
   encoded?: { width: number; height: number };
   /** Append a file to disk that importImage will try to copy (disk-full path). */
@@ -187,7 +190,8 @@ function createFakeOps(fs: FileSystemPort, options: FakeOpsOptions = {}): FakeOp
       calls.push('flatten');
       flatInputs.push(image);
       fail('flatten');
-      return { uri: output('composite.png'), width: image.width, height: image.height };
+      const dims = options.flattened ?? { width: image.width, height: image.height };
+      return { uri: output('composite.png'), ...dims };
     },
     async encodeJpeg(image: AvatarImage, quality: number): Promise<AvatarImage> {
       calls.push('encodeJpeg');
@@ -403,6 +407,33 @@ describe('applyAvatarSelection — accepted inputs', () => {
     expect(fake.calls).toEqual(['decode', 'fit', 'flatten', 'encodeJpeg']);
     if (outcome.status !== 'committed') throw new Error('unreachable');
     expect(outcome).toMatchObject({ width: 300, height: 300 });
+  });
+
+  it('re-applies the 1024 cap when the rasterizer overshoots (screen-scale composite)', async () => {
+    // iOS rasterizes the offscreen SVG scene at the device screen scale, so
+    // a 1024² request can come back as 3072² (3×). The pipeline must trust
+    // the ACTUAL composite size and cap it before the JPEG encode instead of
+    // committing an oversized image (or failing the whole run).
+    const fake = createFakeOps(harness.fs, {
+      decoded: { width: 1600, height: 1200 },
+      flattened: { width: 3072, height: 3072 },
+    });
+    const outcome = await applyAvatarSelection(
+      harness.db,
+      ACCOUNT,
+      picked(harness.sourcePath),
+      deps(fake),
+    );
+
+    expect(outcome.status).toBe('committed');
+    expect(fake.calls).toEqual(['decode', 'fit', 'flatten', 'fit', 'encodeJpeg']);
+    expect(fake.geometries).toHaveLength(2);
+    expect(fake.geometries[0]).toEqual(fitAvatarGeometry(1600, 1200));
+    expect(fake.geometries[1]).toEqual(fitAvatarGeometry(3072, 3072));
+    expect(fake.geometries[1]).toMatchObject({ outWidth: 1024, outHeight: 1024 });
+    if (outcome.status !== 'committed') throw new Error('unreachable');
+    expect(outcome).toMatchObject({ width: 1024, height: 1024 });
+    expect(harness.workFiles()).toHaveLength(0);
   });
 
   it('uses the file system size when the picker reports no fileSize', async () => {
@@ -735,6 +766,41 @@ describe('draft survives a database reopen (relaunch restore)', () => {
 // ---------------------------------------------------------------------------
 // 削除 (discard the staged image, never the published one)
 // ---------------------------------------------------------------------------
+
+describe('pngDimensionsFromBase64', () => {
+  function pngHeadBase64(width: number, height: number): string {
+    const head = Buffer.alloc(24);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(head, 0);
+    head.writeUInt32BE(13, 8); // IHDR length
+    head.write('IHDR', 12, 'ascii');
+    head.writeUInt32BE(width, 16);
+    head.writeUInt32BE(height, 20);
+    return head.toString('base64');
+  }
+
+  it('reads the rasterized dimensions from a PNG header', () => {
+    expect(pngDimensionsFromBase64(pngHeadBase64(3072, 3072))).toEqual({
+      width: 3072,
+      height: 3072,
+    });
+    expect(pngDimensionsFromBase64(pngHeadBase64(1024, 768))).toEqual({
+      width: 1024,
+      height: 768,
+    });
+  });
+
+  it('tolerates line-wrapped base64 (iOS NSData encoding adds newlines)', () => {
+    const base64 = pngHeadBase64(1024, 1024).replace(/(.{16})/g, '$1\n');
+    expect(pngDimensionsFromBase64(base64)).toEqual({ width: 1024, height: 1024 });
+  });
+
+  it('returns null for non-PNG or truncated prefixes', () => {
+    expect(pngDimensionsFromBase64('')).toBeNull();
+    expect(pngDimensionsFromBase64('iVBOR')).toBeNull();
+    // JPEG SOI marker instead of the PNG signature.
+    expect(pngDimensionsFromBase64(Buffer.from([0xff, 0xd8, 0xff, 0xe0]).toString('base64'))).toBeNull();
+  });
+});
 
 describe('discardAvatarDraft', () => {
   async function seedPublishedImage(): Promise<ImageReference> {
