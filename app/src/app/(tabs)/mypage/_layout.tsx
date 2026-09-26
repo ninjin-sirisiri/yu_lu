@@ -7,6 +7,7 @@ export default function MypageLayout() {
     <Stack>
       <Stack.Screen name="index" options={{ title: 'マイページ' }} />
       <Stack.Screen name="theme" options={{ title: 'テーマ' }} />
+      <Stack.Screen name="sync" options={{ title: '送信状況' }} />
     </Stack>
   );
 }

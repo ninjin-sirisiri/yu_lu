@@ -117,6 +117,13 @@ export function FriendsArea({ metrics }: FriendsAreaProps) {
             onPress={() => router.push('/friends/add')}
           />
         )}
+        <Button
+          label="申請を確認"
+          variant="secondary"
+          testID="friends-requests-entry"
+          accessibilityHint="受信した申請と送信した申請を確認します"
+          onPress={() => router.push('/friends/requests')}
+        />
         {snapshot !== null && snapshot.fetchedAt !== null && (
           <Text
             style={[styles.updated, { color: tokens.muted }]}

@@ -16,6 +16,7 @@ export default function FriendsLayout() {
       <Stack>
         <Stack.Screen name="index" options={{ title: '友達' }} />
         <Stack.Screen name="add" options={{ title: '友達追加' }} />
+        <Stack.Screen name="requests" options={{ title: '申請' }} />
         <Stack.Screen name="[userId]" options={{ title: 'プロフィール' }} />
       </Stack>
     </AdaptiveLayoutProvider>
