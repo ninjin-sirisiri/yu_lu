@@ -1,8 +1,10 @@
 import {
   getOwnPublication,
   PROFILE_IMAGE_BUCKET,
+  PROFILE_IMAGE_URL_TTL_SECONDS,
   ProfileUpdateError,
   profileImagePath,
+  profileImageUrl,
   updateProfile,
   uploadProfileImage,
 } from './profile';
@@ -20,6 +22,7 @@ interface FakeOptions {
   getUser?: { data: { user: { id: string } | null }; error?: unknown };
   upload?: { data?: unknown; error?: { message: string } | null };
   row?: { data?: unknown; error?: { message: string } | null };
+  signedUrl?: { data?: { signedUrl?: string } | null; error?: { message: string } | null };
 }
 
 function fakeClient(options: FakeOptions = {}) {
@@ -30,6 +33,7 @@ function fakeClient(options: FakeOptions = {}) {
     table: null as string | null,
     select: null as string | null,
     eq: null as Array<string> | null,
+    signed: null as { path: string; ttl: number } | null,
   };
   const client = {
     functions: {
@@ -51,6 +55,12 @@ function fakeClient(options: FakeOptions = {}) {
           upload: (path: string, data: unknown, opts: unknown) => {
             calls.upload.push({ path, data, opts });
             return Promise.resolve(options.upload ?? { data: { path }, error: null });
+          },
+          createSignedUrl: (path: string, ttl: number) => {
+            calls.signed = { path, ttl };
+            return Promise.resolve(
+              options.signedUrl ?? { data: { signedUrl: `https://signed.test/${path}` }, error: null },
+            );
           },
         };
       },
@@ -335,6 +345,7 @@ describe('getOwnPublication', () => {
           introduction: null,
           avatar_path: `${UUID_A}/${UUID_B}/photo.jpg`,
           profile_version: 4,
+          user_id_text: 'pub_renamed',
         },
         error: null,
       },
@@ -347,13 +358,56 @@ describe('getOwnPublication', () => {
       introduction: null,
       avatarPath: `${UUID_A}/${UUID_B}/photo.jpg`,
       profileVersion: 4,
+      userIdText: 'pub_renamed',
     });
     expect(f.calls.table).toBe('profiles');
     expect(f.calls.eq).toEqual(['user_id', UUID_A]);
   });
 
+  it('reports a null User ID as null instead of inventing one', async () => {
+    const f = fakeClient({
+      row: {
+        data: {
+          display_name: 'Pending',
+          introduction: null,
+          avatar_path: null,
+          profile_version: 1,
+          user_id_text: null,
+        },
+        error: null,
+      },
+    });
+
+    const publication = await getOwnPublication(f.client);
+    expect(publication.userIdText).toBeNull();
+  });
+
   it('fails closed without a confirmed row', async () => {
     const f = fakeClient({ row: { data: null, error: null } });
     await expect(getOwnPublication(f.client)).rejects.toThrow('profile not found');
+  });
+});
+
+describe('profileImageUrl', () => {
+  it('signs the private-bucket path for a preview', async () => {
+    const f = fakeClient();
+    const url = await profileImageUrl(`${UUID_A}/${UUID_B}/photo.jpg`, f.client);
+    expect(url).toBe(`https://signed.test/${UUID_A}/${UUID_B}/photo.jpg`);
+    expect(f.calls.bucket).toBe(PROFILE_IMAGE_BUCKET);
+    expect(f.calls.signed).toEqual({
+      path: `${UUID_A}/${UUID_B}/photo.jpg`,
+      ttl: PROFILE_IMAGE_URL_TTL_SECONDS,
+    });
+  });
+
+  it('degrades to null instead of inventing a URL when signing fails', async () => {
+    const f = fakeClient({ signedUrl: { data: null, error: { message: 'nope' } } });
+    await expect(profileImageUrl('a/b/c.jpg', f.client)).resolves.toBeNull();
+  });
+
+  it('never signs an empty path', async () => {
+    const f = fakeClient();
+    await expect(profileImageUrl('', f.client)).resolves.toBeNull();
+    expect(f.calls.bucket).toBeNull();
   });
 });

@@ -36,6 +36,9 @@ export interface FieldProps extends Pick<
   // Task 12: the search field needs the raw change event for IME
   // composition detection (入力変換中は検索しない); forwarded verbatim.
   | 'onChange'
+  // Task 17: the introduction field accepts newlines (自己紹介は改行可能),
+  // so multiline mode rides the shared field instead of a raw TextInput.
+  | 'multiline'
 > {
   label: string;
   value: string;
@@ -78,6 +81,7 @@ export function Field({
             borderColor: hasError ? tokens.danger : focused ? focusRing.color : tokens.line,
             color: tokens.text,
           },
+          inputProps.multiline === true && styles.multilineInput,
           focused && {
             outlineColor: focusRing.color,
             outlineWidth: focusRing.width,
@@ -133,6 +137,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.s3,
     paddingVertical: spacing.s3,
     fontSize: typography.sizes.bodyLarge,
+  },
+  multilineInput: {
+    // A multi-line field (自己紹介) grows into a small editing area with the
+    // text pinned to the top instead of sitting centred in a tall box.
+    minHeight: controls.buttonMinHeight * 2,
+    textAlignVertical: 'top',
   },
   hint: {
     fontSize: typography.sizes.caption,

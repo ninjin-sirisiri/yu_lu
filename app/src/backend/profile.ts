@@ -67,6 +67,12 @@ export interface ProfilePublicationFields {
 
 export interface ProfilePublication extends ProfilePublicationFields {
   profileVersion: number;
+  /**
+   * The visible User ID of the confirmed row (Task 17: the edit screen
+   * shows it read-only — User ID is immutable after confirmation, so it
+   * rides along with the own-row read instead of costing a second query).
+   */
+  userIdText: string | null;
 }
 
 export interface ProfileUpdateInput {
@@ -312,6 +318,7 @@ interface WireOwnProfileRow {
   introduction: string | null;
   avatar_path: string | null;
   profile_version: number;
+  user_id_text: string | null;
 }
 
 /**
@@ -324,7 +331,7 @@ export async function getOwnPublication(
   const userId = await requireUserId(client);
   const { data, error } = await client
     .from('profiles')
-    .select('display_name, introduction, avatar_path, profile_version')
+    .select('display_name, introduction, avatar_path, profile_version, user_id_text')
     .eq('user_id', userId)
     .maybeSingle();
   if (error) throw new ProfileUpdateError(error.message, 0);
@@ -333,5 +340,29 @@ export async function getOwnPublication(
   return {
     ...toFields(row),
     profileVersion: row.profile_version,
+    userIdText: row.user_id_text ?? null,
   };
+}
+
+/** Lifetime of the short-lived signed URL used to preview an own avatar. */
+export const PROFILE_IMAGE_URL_TTL_SECONDS = 600;
+
+/**
+ * A short-lived signed URL for a published profile image, or null when the
+ * bucket cannot sign it (offline, path unknown). The bucket is private
+ * (Task 7): upload is never publication and only a confirmed profile row
+ * opens the read — a signed URL therefore only ever exists for the caller
+ * to PREVIEW an image; failing to sign degrades to "no preview", never to
+ * a fabricated placeholder path.
+ */
+export async function profileImageUrl(
+  path: string,
+  client: SupabaseClient = defaultClient(),
+): Promise<string | null> {
+  if (path === '') return null;
+  const { data, error } = await client.storage
+    .from(PROFILE_IMAGE_BUCKET)
+    .createSignedUrl(path, PROFILE_IMAGE_URL_TTL_SECONDS);
+  if (error || !data?.signedUrl) return null;
+  return data.signedUrl;
 }
