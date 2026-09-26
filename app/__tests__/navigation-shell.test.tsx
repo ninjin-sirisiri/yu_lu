@@ -47,6 +47,23 @@ jest.mock('../src/backend/queries', () => {
   };
 });
 
+// Task 17: マイページ shows the published profile; mock the own-row read so
+// navigation stays deterministic and no test ever reaches the network.
+jest.mock('../src/backend/profile', () => {
+  const actual = jest.requireActual('../src/backend/profile');
+  return {
+    ...actual,
+    getOwnPublication: jest.fn(async () => ({
+      userIdText: 'shell_user',
+      displayName: '自分',
+      introduction: null,
+      avatarPath: null,
+      profileVersion: 1,
+    })),
+    profileImageUrl: jest.fn(async () => null),
+  };
+});
+
 import { listFriends } from '../src/backend/queries';
 
 (listFriends as jest.Mock).mockResolvedValue({ items: [], nextCursor: null });
@@ -126,7 +143,10 @@ describe('navigation shell', () => {
 
     await fireEvent.press(screen.getByTestId('tab-mypage'));
     await waitFor(() => expect(app.getPathname()).toBe('/mypage'));
-    expect(screen.getByText('マイページは準備中です')).toBeTruthy();
+    // Task 17: the placeholder became the published profile + its entries.
+    await waitFor(() => expect(screen.getByTestId('mypage-profile-name')).toBeTruthy());
+    expect(screen.getByText('自分')).toBeTruthy();
+    expect(screen.getByTestId('mypage-edit-entry')).toBeTruthy();
     expect(screen.queryByText(/変更しました|保存しました/)).toBeNull();
   });
 });

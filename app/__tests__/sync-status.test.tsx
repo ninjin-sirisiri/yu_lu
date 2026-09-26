@@ -96,6 +96,23 @@ jest.mock('../src/sync/api', () => {
   };
 });
 
+// Task 17: マイページ reads the published profile; mock the own-row read so
+// the route tests never reach the network.
+jest.mock('../src/backend/profile', () => {
+  const actual = jest.requireActual('../src/backend/profile');
+  return {
+    ...actual,
+    getOwnPublication: jest.fn(async () => ({
+      userIdText: 'sync_user',
+      displayName: '同期太郎',
+      introduction: null,
+      avatarPath: null,
+      profileVersion: 1,
+    })),
+    profileImageUrl: jest.fn(async () => null),
+  };
+});
+
 // ---------------------------------------------------------------------------
 // Harness: real SQLite + injected clock + deterministic operation ids
 // ---------------------------------------------------------------------------

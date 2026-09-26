@@ -89,6 +89,23 @@ jest.mock('../src/storage/database', () => {
   };
 });
 
+// Task 17: マイページ reads the published profile; mock the own-row read so
+// the route tests never reach the network.
+jest.mock('../src/backend/profile', () => {
+  const actual = jest.requireActual('../src/backend/profile');
+  return {
+    ...actual,
+    getOwnPublication: jest.fn(async () => ({
+      userIdText: 'theme_user',
+      displayName: 'テーマ太郎',
+      introduction: null,
+      avatarPath: null,
+      profileVersion: 1,
+    })),
+    profileImageUrl: jest.fn(async () => null),
+  };
+});
+
 const actualDatabase = jest.requireActual('../src/storage/database') as typeof import('../src/storage/database');
 const { NodeSqliteDriver } = jest.requireActual('../src/storage/testSupport/nodePorts') as typeof import('../src/storage/testSupport/nodePorts');
 const { readDeviceSetting, writeDeviceSetting, writeAccountSetting } = jest.requireActual('../src/storage/settings') as typeof import('../src/storage/settings');
@@ -810,7 +827,8 @@ describe('theme settings screen', () => {
   it('reaches the screen from マイページ with the 端末に合わせる default', async () => {
     const { app } = await renderApp('/mypage');
     await waitFor(() => expect(app.getPathname()).toBe('/mypage'));
-    expect(screen.getByText('マイページは準備中です')).toBeTruthy();
+    // Task 17: the placeholder became the published profile + its entries.
+    await waitFor(() => expect(screen.getByTestId('mypage-edit-entry')).toBeTruthy());
 
     await fireEvent.press(screen.getByTestId('mypage-theme-entry'));
     await waitFor(() => expect(app.getPathname()).toBe('/mypage/theme'));
