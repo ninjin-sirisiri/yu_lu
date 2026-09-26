@@ -1,10 +1,12 @@
-import { Redirect } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { useState } from 'react';
 
 import { useAuth } from '../auth/provider';
 import type { OAuthProvider } from '../auth/session';
+import { InstallHandoff } from '../invitations/InstallHandoff';
+import { peekPostAuthInvitation } from '../invitations/pending';
 import { useTheme } from '../theme/provider';
 import type { ThemeTokens } from '../theme/tokens';
 
@@ -16,6 +18,12 @@ import type { ThemeTokens } from '../theme/tokens';
 // user attempted, shows the reason, and offers 再試行 which re-attempts the
 // same provider without re-asking the user to choose. Registration input is
 // preserved separately by the account-scoped draft (register.tsx).
+//
+// Task 14: the login screen doubles as the install hand-off host — Android
+// reads the install referrer once, iOS offers the OS paste control (an
+// explicit action; no clipboard is ever read automatically). After sign-in
+// the post-auth invitation target takes priority over /home so an invitee
+// who was asked to log in returns to the confirmation they opened.
 
 type Notice =
   | { kind: 'cancelled'; message: string }
@@ -24,6 +32,7 @@ type Notice =
 
 export default function LoginScreen() {
   const auth = useAuth();
+  const router = useRouter();
   // Task 11: themed — colours come from the resolved scheme, so the screen
   // stays readable in both light and dark.
   const { tokens } = useTheme();
@@ -34,11 +43,16 @@ export default function LoginScreen() {
   const [lastProvider, setLastProvider] = useState<OAuthProvider | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
 
-  // Already signed in: the guard decides register vs home.
+  // Already signed in: the guard decides invitation / register / home.
+  // The post-auth invitation target (set by the invitation route) wins so
+  // 「招待経則では登録後…招待先確認へ直接戻る」 holds for login too; it is
+  // only PEEKED here — the invitation route consumes it on arrival.
   if (auth.status === 'ready' && auth.accountId !== null) {
-    return (
-      <Redirect href={auth.registration === 'registered' ? '/home' : '/register'} />
-    );
+    const invitation = peekPostAuthInvitation();
+    if (auth.registration === 'registered') {
+      return <Redirect href={invitation !== null ? `/invitation/${invitation}` : '/home'} />;
+    }
+    return <Redirect href="/register" />;
   }
 
   const attempt = async (provider: OAuthProvider): Promise<void> => {
@@ -115,6 +129,14 @@ export default function LoginScreen() {
           ) : null}
         </View>
       )}
+
+      {/* Task 14: install hand-off (referrer / explicit paste). Always
+          rendered below the login actions so a hand-off failure or an
+          unavailable paste control can never block signing in. */}
+      <InstallHandoff
+        onInvitation={(token) => router.push(`/invitation/${token}`)}
+        testID="login-handoff"
+      />
     </View>
   );
 }

@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View, type TextInputProps } from 'react-native';
+import { useIsFocused, useRouter } from 'expo-router';
 
 import { searchProfiles } from '../../../backend/queries';
+import { useAuth } from '../../../auth/provider';
 import { SearchController, RELATIONSHIP_LABELS, type SearchState } from '../../../discovery/searchController';
+import { InvitationPanel } from '../../../invitations/InvitePanel';
+import { InvitationScanner } from '../../../invitations/scanner';
 import { useTheme } from '../../../theme/provider';
 import { radius, spacing, typography, controls } from '../../../theme/tokens';
 import { Button } from '../../../ui/Button';
@@ -20,18 +24,27 @@ import { ProfilePanel } from './[userId]';
 //
 // The screen is only wiring: TextInput events → SearchController (which
 // owns the 2文字/300ms/変換中/世代 rules), controller state → visible
-// status blocks, candidate row → shared selection → ProfilePanel. The
-// 旧 resolveSingleCandidate single-candidate flow is NOT used: any number
-// of partial matches may render, each row selectable. QR / invite parts
-// of the 友達追加画面 arrive with Task 14.
+// status blocks, candidate row → shared selection → ProfilePanel.
+//
+// Task 14 adds the QR / invite parts of the 友達追加画面:
+// - 招待QR表示 toggles InvitationPanel (own link + QR, inviter side);
+// - QR読み取り toggles InvitationScanner, which mounts the camera ONLY
+//   while the screen is visible (`focused` gates `active`, so a hidden
+//   screen stops the camera session);
+// - a scanned token opens /invitation/<token> — the scanner never talks
+//   to the network itself.
 
 export interface AddAreaProps {
   /** Window metrics override (tests); defaults to the real window. */
   metrics?: LayoutMetricsInput;
+  /** Screen visibility (tests default to visible); gates the camera. */
+  focused?: boolean;
 }
 
-export function AddArea({ metrics }: AddAreaProps) {
+export function AddArea({ metrics, focused = true }: AddAreaProps) {
   const { tokens } = useTheme();
+  const router = useRouter();
+  const auth = useAuth();
   const { selectedPeerId, selectPeer } = useAdaptiveLayoutState();
   const controller = useMemo(
     () => new SearchController({ search: (query, cursor) => searchProfiles(query, cursor) }),
@@ -39,6 +52,8 @@ export function AddArea({ metrics }: AddAreaProps) {
   );
   const [state, setState] = useState<SearchState>(() => controller.getState());
   const composingRef = useRef(false);
+  const [showInvite, setShowInvite] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
 
   useEffect(() => controller.subscribe(setState), [controller]);
   useEffect(() => () => controller.dispose(), [controller]);
@@ -110,6 +125,39 @@ export function AddArea({ metrics }: AddAreaProps) {
         <Text style={[styles.hint, { color: tokens.muted }]} testID="search-empty">
           一致するUser IDが見つかりません
         </Text>
+      )}
+
+      {/* Task 14: 招待QR表示 / QR読み取り — both are explicit toggles so the
+          camera and the panel exist only while the user asked for them. */}
+      <View style={styles.inviteToggles}>
+        <Button
+          label={showInvite ? '招待QRを閉じる' : '招待QRを表示'}
+          variant={showInvite ? 'secondary' : 'primary'}
+          testID="toggle-invite"
+          onPress={() => setShowInvite((value) => !value)}
+        />
+        <Button
+          label={showScanner ? 'QR読み取りを閉じる' : 'QRコードを読み取る'}
+          variant={showScanner ? 'secondary' : 'primary'}
+          testID="toggle-scanner"
+          onPress={() => setShowScanner((value) => !value)}
+        />
+      </View>
+
+      {showInvite && (
+        <InvitationPanel
+          accountId={auth.accountId}
+          storage={auth.storage}
+          testID="friends-invite-panel"
+        />
+      )}
+
+      {showScanner && (
+        <InvitationScanner
+          active={focused}
+          testID="friends-scanner"
+          onToken={(token) => router.push(`/invitation/${token}`)}
+        />
       )}
 
       <AdaptiveLayout
@@ -202,13 +250,22 @@ export function AddArea({ metrics }: AddAreaProps) {
 }
 
 export default function AddFriendScreen() {
-  return <AddArea />;
+  // The scanner's camera must stop when the screen is hidden — `focused`
+  // gates InvitationScanner's `active`, which unmounts the CameraView.
+  const focused = useIsFocused();
+  return <AddArea focused={focused} />;
 }
 
 const styles = StyleSheet.create({
   hint: {
     fontSize: typography.sizes.caption,
     lineHeight: typography.sizes.caption * typography.lineHeightRatio,
+    paddingVertical: spacing.s1,
+  },
+  inviteToggles: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.s2,
     paddingVertical: spacing.s1,
   },
   errorBlock: {

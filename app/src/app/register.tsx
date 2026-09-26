@@ -4,6 +4,10 @@ import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-nativ
 
 import type { RegistrationResult } from '../auth/provider';
 import { useAuth } from '../auth/provider';
+import {
+  peekPostAuthInvitation,
+  takePostAuthInvitation,
+} from '../invitations/pending';
 import { useTheme } from '../theme/provider';
 import type { ThemeTokens } from '../theme/tokens';
 import { deleteDraft, readDraft, saveDraft } from '../storage/drafts';
@@ -81,14 +85,20 @@ export default function RegisterScreen() {
     });
     setSubmitting(false);
     switch (result.status) {
-      case 'registered':
+      case 'registered': {
         if (accountId && storage) {
           await deleteDraft(storage, accountId, REGISTRATION_DRAFT_KEY).catch(() => {
             // Draft cleanup is best effort; the guard no longer reads it.
           });
         }
-        router.replace('/home');
+        // Task 14: 招待経則では登録後に招待先確認へ直接戻る — the target
+        // recorded by the invitation route wins over /home, once.
+        const invitationTarget = takePostAuthInvitation();
+        router.replace(
+          invitationTarget !== null ? `/invitation/${invitationTarget}` : '/home',
+        );
         return;
+      }
       case 'conflict':
         // Input is kept exactly as typed; candidates are editable
         // suggestions, never reservations.
@@ -123,7 +133,9 @@ export default function RegisterScreen() {
     return <Redirect href="/login" />;
   }
   if (auth.status === 'ready' && auth.registration === 'registered') {
-    return <Redirect href="/home" />;
+    // Peek only: reaching the invitation route clears the target itself.
+    const invitation = peekPostAuthInvitation();
+    return <Redirect href={invitation !== null ? `/invitation/${invitation}` : '/home'} />;
   }
 
   if (auth.status !== 'ready') {

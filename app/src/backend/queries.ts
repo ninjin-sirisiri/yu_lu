@@ -24,7 +24,9 @@ export type QueryOp =
   | 'search_profiles'
   | 'get_profile'
   | 'list_friends'
-  | 'list_requests';
+  | 'list_requests'
+  | 'resolve_invitation'
+  | 'get_invitation_status';
 
 export type RequestDirection = 'incoming' | 'outgoing';
 
@@ -252,5 +254,88 @@ export async function listRequests(
   return {
     items: (page.items ?? []).map(toRequest),
     nextCursor: page.next_cursor ?? null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Task 14: invitation reads (app-query). The server answers with the
+// inviter's confirmation fields ONLY — resolving never lists invitations
+// and never reveals anything but the target of the exact token.
+// ---------------------------------------------------------------------------
+
+/** Server-side invitation lifecycle states (0011 invitation_state). */
+export type InvitationStatus = 'valid' | 'invalidated' | 'expired';
+
+export interface InvitationResolution {
+  status: InvitationStatus;
+  /** Server ISO expiry of the invitation itself (7 days from issue). */
+  expiresAt: string;
+  inviter: ProfileSummary;
+}
+
+interface WireInvitationResolution {
+  status: InvitationStatus;
+  expires_at: string;
+  inviter: WireProfile;
+}
+
+/**
+ * Resolves one invitation token to the inviter's confirmation info.
+ * Unknown, malformed, blocked or unconfirmed-inviter tokens all surface as
+ * `QueryError` with status 404 (the server answers `invitation not found`);
+ * an unregistered actor gets 403. Validity is the server's judgement at
+ * resolve time — a link reissued after this screen was shown comes back
+ * invalidated here.
+ */
+export async function resolveInvitation(
+  token: string,
+  client: SupabaseClient = defaultClient(),
+): Promise<InvitationResolution> {
+  const wire = await invokeQuery<WireInvitationResolution>(
+    'resolve_invitation',
+    { invitation_token: token },
+    client,
+  );
+  return {
+    status: wire.status,
+    expiresAt: wire.expires_at,
+    inviter: toSummary(wire.inviter),
+  };
+}
+
+/** The actor's own invitation, as the server reports it. */
+export type OwnInvitationStatus =
+  | { status: 'none' }
+  | {
+      status: InvitationStatus;
+      /** Present ONLY while valid — a dead link never re-delivers it. */
+      invitationToken: string | null;
+      expiresAt: string;
+    };
+
+interface WireOwnInvitationStatus {
+  status: InvitationStatus | 'none';
+  invitation_token?: string;
+  expires_at?: string;
+}
+
+/**
+ * Reads the caller's own newest invitation. A dead link never re-delivers
+ * its token (`invitation_token` is present only while valid), so an
+ * expired/invalidated status has no token to display or share.
+ */
+export async function getInvitationStatus(
+  client: SupabaseClient = defaultClient(),
+): Promise<OwnInvitationStatus> {
+  const wire = await invokeQuery<WireOwnInvitationStatus>(
+    'get_invitation_status',
+    {},
+    client,
+  );
+  if (wire.status === 'none') return { status: 'none' };
+  return {
+    status: wire.status,
+    invitationToken: typeof wire.invitation_token === 'string' ? wire.invitation_token : null,
+    expiresAt: typeof wire.expires_at === 'string' ? wire.expires_at : '',
   };
 }

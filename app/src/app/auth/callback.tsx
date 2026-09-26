@@ -5,6 +5,7 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { exchangeCallbackUrl, parseAuthCallback } from '../../auth/oauth';
 import { useAuth } from '../../auth/provider';
 import { getAppClient } from '../../backend/client';
+import { peekPostAuthInvitation } from '../../invitations/pending';
 import { useTheme } from '../../theme/provider';
 import type { ThemeTokens } from '../../theme/tokens';
 
@@ -78,7 +79,15 @@ export default function AuthCallbackScreen() {
 
   // Signed in through the exchange above → entry guard picks the destination.
   if (auth.status === 'ready' && auth.accountId !== null) {
-    const href = auth.registration === 'registered' ? '/home' : '/register';
+    // Task 14: an invitee returning from OAuth goes back to the invitation
+    // they opened (peek only — the route clears the target on arrival).
+    const invitation = peekPostAuthInvitation();
+    const href =
+      auth.registration === 'registered'
+        ? invitation !== null
+          ? `/invitation/${invitation}`
+          : '/home'
+        : '/register';
     return <Redirect href={href} />;
   }
 

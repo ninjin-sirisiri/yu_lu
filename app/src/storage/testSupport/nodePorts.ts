@@ -23,12 +23,22 @@ function bindValues(params?: SqlParams): Array<string | number | null> {
 
 export class NodeSqliteDriver implements StorageDriver {
   private readonly db: DatabaseSync;
-  private depth = 0;
+  /**
+   * Mirrors ExpoSqliteDriver: ONLY the handle handed to a transaction
+   * callback is marked, so a concurrent external write never mistakes an
+   * in-flight transaction for its own nesting (it must queue, not take a
+   * savepoint that a premature COMMIT would destroy).
+   */
+  private readonly inTransaction: boolean;
+  private savepointSeq = 0;
   private queue: Promise<unknown> = Promise.resolve();
   private closed = false;
 
-  constructor(filePath: string) {
-    this.db = new DatabaseSync(filePath);
+  /** `filePath` for the root handle; a live connection for the transaction
+   * handle created inside `withWriteTransaction` (test-only helper). */
+  constructor(source: string | DatabaseSync, inTransaction = false) {
+    this.db = typeof source === 'string' ? new DatabaseSync(source) : source;
+    this.inTransaction = inTransaction;
   }
 
   async execAsync(sql: string): Promise<void> {
@@ -53,7 +63,9 @@ export class NodeSqliteDriver implements StorageDriver {
   }
 
   async withWriteTransaction<T>(fn: (tx: Storage) => Promise<T>): Promise<T> {
-    if (this.depth > 0) {
+    if (this.inTransaction) {
+      // Nested call inside an open transaction: savepoint on THIS
+      // connection, exactly like the device driver's tx handle.
       savepointSeq += 1;
       const name = `test_sp_${savepointSeq}`;
       this.db.exec(`SAVEPOINT ${name}`);
@@ -67,6 +79,9 @@ export class NodeSqliteDriver implements StorageDriver {
         throw error;
       }
     }
+    // Root handle: serialize through the queue and hand `fn` a marked tx
+    // handle sharing the same connection, so nested calls become savepoints
+    // on THIS transaction instead of racing it.
     const run = this.queue
       .then(
         () => undefined,
@@ -74,9 +89,8 @@ export class NodeSqliteDriver implements StorageDriver {
       )
       .then(async () => {
         this.db.exec('BEGIN IMMEDIATE');
-        this.depth = 1;
         try {
-          const result = await fn(this);
+          const result = await fn(new NodeSqliteDriver(this.db, true));
           this.db.exec('COMMIT');
           return result;
         } catch (error) {
@@ -86,8 +100,6 @@ export class NodeSqliteDriver implements StorageDriver {
             // The transaction may already be gone; rethrow the original error.
           }
           throw error;
-        } finally {
-          this.depth = 0;
         }
       });
     this.queue = run.then(

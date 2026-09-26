@@ -54,6 +54,7 @@ function ThemedRoot() {
         <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="register" options={{ headerShown: false }} />
         <Stack.Screen name="auth/callback" options={{ headerShown: false }} />
+        <Stack.Screen name="invitation/[token]" options={{ headerShown: false }} />
       </Stack>
     </View>
   );

@@ -10,6 +10,7 @@ import React, {
 } from 'react';
 
 import { getAppClient } from '../backend/client';
+import { attachPendingInvitations } from '../invitations/pending';
 import { clearRememberedDestination } from '../navigation/entry';
 import { assertRegistrationInput, suggestSimilarUserIds } from '../profiles/registration';
 import { USER_ID_TAKEN_ERROR } from '../profiles/validation';
@@ -189,6 +190,21 @@ export function AuthProvider({
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   }, [clientOf]);
+
+  // Task 14: OAuth復帰で招待情報を失わない — once an account and its
+  // storage are both available, move any pre-login invitation rows onto the
+  // signed-in account (attachPendingInvitations keeps the account's own
+  // live invitation when both exist). Best effort: a storage failure must
+  // never break auth; the row simply stays in the pre-login bucket.
+  const attachedAccountRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (accountId === null || storage === null) return;
+    if (attachedAccountRef.current === accountId) return;
+    attachedAccountRef.current = accountId;
+    void attachPendingInvitations(storage, accountId).catch(() => {
+      // Attachment is best effort; nothing here may block sign-in.
+    });
+  }, [accountId, storage]);
 
   const markOnboardingSeen = useCallback(async (): Promise<boolean> => {
     try {

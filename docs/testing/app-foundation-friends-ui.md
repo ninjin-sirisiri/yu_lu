@@ -6,6 +6,74 @@
 
 ---
 
+## Task 14: 招待保存・QR・iOS貼り付け・Android取得 (2026-09-26 JST)
+
+### JS層 (モック層 — MOCKED-LAYER)
+
+```
+$ npm --prefix app test -- --runInBand __tests__/invitation-flow.test.tsx
+Test Suites: 1 passed, 1 total
+Tests:       44 passed, 44 total   (3回連続で同結果、actリークなし)
+
+$ npm --prefix app run typecheck   → OK (0 errors)
+$ npm --prefix app test            → 29 suites / 494 tests 全通過 (タスク14で +44)
+```
+
+`__tests__/invitation-flow.test.tsx` (**MOCKED-LAYER**: `backend/queries` = 読み取りワイヤ、
+`sync/api` = コマンドワイヤ、端末DBは実SQLite、
+camera/clipboard/install-referrer/image-picker はネイティブモック) の主な内容:
+
+- **リンク構築/解析**: `<origin>/invitation/<32hex>` の構築、`EXPO_PUBLIC_INVITE_ORIGIN` 欠落時は
+  名前付きエラー (偽ドメインを作らない)、URL/ディープリンク/生パスの3形態、不正URLは null。
+  Install Referrer は**許可した `invitation` パラメータのみ**を読み (utm_* 等は無視、
+  有効な32hexが他のパラメータにあってもトークンにしない)、完全URLとは限らない値 (クエリ文字列・
+  生パラメータ) を解析。貼り付けも同様 (空=none/乱文=invalid は説明のみ)。
+- **QR**: URLから `qrcode-generator` で行列を生成 (奇数サイズ・決定的・URL変更で行列変更)、
+  `qrPath` で1本のSVGパスに変換 (ダークモジュール数と一致)。パネルは `invite-qr` としてSVG描画。
+- **別招待 (keep-first)**: 実SQLiteで 初回の招待を維持・期限切れ初回のみ置換・破損行は削除して
+  続行 (復元不能でも登録を止めない)・OAuth後に pre-login 行をアカウントへ移動 (アカウント既存の
+  ライブ招待が優先、pre-login バケットは空になる)・同一トークンのみ resolution 記録。
+- **スキャナ**: カメラの不正コードは説明のみ (emitなし)、有効コードは**1回だけ** latch、
+  `active=false` (画面非表示) でカメラごと消える、権限拒否は説明+画像フォールバック、
+  保存画像は 複数コード/不正URL/空/ネイティブ失敗 をすべて文言で説明し例外を投げない、
+  OSキャンセルはエラー扱いしない。
+- **インストール引き継ぎ**: Android = referrer をマウント毎に1回だけ読み、
+  許可パラメータを解析 (無いインストール=UIなし、`ERR_APPLICATION_INSTALL_REFERRER_*` =
+  無音で継続、不正値=説明のみ)。iOS = `ClipboardPasteButton` + 近接説明、
+  **children/title でOSラベルを上書きしない**、`getStringAsync` が一度も呼ばれない
+  (起動時の自動読取りなし)、iOS<16 は描画なし。
+- **招待パネル (inviter側)**: 有効リンクは再利用 (マウントでコマンド0回)、origin未設定は
+  明確なエラー、status none は明示発行ボタン、expired は自動発行、
+  手動再発行は確認画面 (確認なしではコマンド0回) + 同一フレームの二重タップでも
+  `reissue_invitation` は**1回だけ** (競合封じ) + 旧リンクは新リンクで置換、
+  オフラインはキャッシュ+取得時点表示+再発行ボタン非表示、成功結果はアカウント別キャッシュに保存。
+- **確認ルート**: valid=確認カード+案内済み記録 (`mark_onboarding_seen`)+申請
+  (`request` + `invitation_token` + `target_user_id` をキュー経由で送信)、
+  invalidated/expired=失効・期限切れ表示 (申請ボタンなし)、404=見つかりません、
+  不正トークン=ネットワークに触れずローカル説明、オフライン再起動=取得時点のキャッシュ表示
+  (現在の有効性は未確認と明示・申請不可)、オフライン+キャッシュなし=説明+再試行で回復。
+- **認証をまたぐ復元**: ログイン中保存 (pre-loginバケット) → OAuth成功後に
+  **同じ確認画面へ戻る** (post-authターゲット) + pre-login行がアカウントへ移動、
+  OAuth callback 深リンクでも復元、登録後は /home ではなく **/invitation/&lt;token&gt; へ**
+  (招待経則・ターゲットは1回だけ消費)、招待なし登録は従来どおり /home。
+- **友達追加画面配線**: 招待QR表示/QR読み取りのトグル、画像から読み取った1件の招待で
+  確認ルートへ遷移、`focused=false` でカメラが消える (画面非表示時はカメラ停止)。
+
+### ネイティブ挙動 (device-pending — 実機/実OSでの未検証項目)
+
+| 検証項目 | 状態 | 理由・代替検証 |
+| --- | --- | --- |
+| 実カメラでのQR読取り (CameraView プレビュー・フレーム走査) | **DEVICE-PENDING** | Xcode 27ヘッドレスシミュレータはタップ入力がなくGUI操作不可 (タスク8/10と同じ制約)。jestではネイティブモック経由で走査コールバック・権限拒否・latchを検証済み。タスク21/22の実機パスで確認 |
+| `Camera.scanFromURLAsync` の実OS画像デコード | **DEVICE-PENDING** | 同上。モックで URI 引数 (`file:…`, `['qr']) と結果分類を検証済み |
+| iOS `ClipboardPasteButton` (UIPasteControl) の実表示・実貼り付け | **DEVICE-PENDING** | 同上。モックで children なし (OSラベル非改変)・明示 onPress のみ・`getStringAsync` 非呼び出しを検証済み |
+| Android `Application.getInstallReferrerAsync` の実Play Store値 | **DEVICE-PENDING** | Androidビルド/実機が本環境に無い。許可パラメータ解析 (クエリ文字列/生パラメータ/完全URL) はjestで実測、SDK 57ドキュメントの「完全URLとは限らない」形をカバー済み |
+| 実機カメラ画面非表示時のセッション停止 (バックグラウンド等) | **DEVICE-PENDING** | jestでは `active=false` でカメラコンポーネントがアンマウントされることを検証済み。実セッション停止はタスク21/22の実機パスで確認 |
+
+- JS層の44件はすべて MOCKED-LAYER。実機カメラ・貼り付け・Install Referrer の成功を
+  **主張しない** (上記のとおり device-pending として記録)。
+
+---
+
 ## Task 11: モノトーンUI・テーマ・可変レイアウト (2026-09-26 JST)
 
 ### 環境
