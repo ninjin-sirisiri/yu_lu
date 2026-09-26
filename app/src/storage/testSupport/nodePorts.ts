@@ -149,5 +149,9 @@ export function createNodeFileSystemPort(documentRoot: string): FileSystemPort {
     removeDirectory(target: string): void {
       fs.rmSync(target, { recursive: true, force: true });
     },
+    writeFile(target: string, contents: string, encoding: 'utf8' | 'base64' = 'utf8'): void {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, contents, encoding);
+    },
   };
 }

@@ -27,6 +27,12 @@ export interface FileSystemPort {
   removeFile(path: string): void;
   /** Deletes a directory and its contents. Throws on real failures, no-op when absent. */
   removeDirectory(path: string): void;
+  /**
+   * Creates/overwrites `path` with `contents` (UTF-8 text by default, or raw
+   * base64 bytes). Used by the avatar pipeline to persist the base64 PNG that
+   * the SVG white-composite step renders, before it is encoded to JPEG.
+   */
+  writeFile(path: string, contents: string, encoding?: 'utf8' | 'base64'): void;
 }
 
 function stripTrailingSlash(value: string): string {
@@ -82,6 +88,11 @@ export const expoFileSystemPort: FileSystemPort = {
   removeDirectory(path: string): void {
     const directory = new Directory(path);
     if (directory.exists) directory.delete();
+  },
+  writeFile(path: string, contents: string, encoding: 'utf8' | 'base64' = 'utf8'): void {
+    const file = new File(path);
+    if (!file.exists) file.create({ intermediates: true });
+    file.write(contents, { encoding });
   },
 };
 
