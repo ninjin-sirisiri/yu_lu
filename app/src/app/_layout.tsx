@@ -7,6 +7,7 @@ import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-c
 import { AuthProvider } from '../auth/provider';
 import { AvatarProbeHost } from '../media/avatarProbe';
 import { rememberDestination } from '../navigation/entry';
+import { NotificationHost } from '../notify/NotificationHost';
 import { runPersistenceProbeIfEnabled } from '../storage/persistenceProbe';
 import { ThemeProvider, useTheme } from '../theme/provider';
 
@@ -24,6 +25,11 @@ import { ThemeProvider, useTheme } from '../theme/provider';
 // - ThemeProvider: the 4-mode theme resolves ABOVE the router so a theme
 //   change never unmounts the current screen or its input, and the themed
 //   root background + status bar follow the resolved scheme.
+//
+// Task 19: NotificationHost owns notification receipt (foreground
+// suppression, the shared response path, cold-start seeding, the in-app
+// notice) — it renders nothing unless a notification actually arrived, so
+// every other route's behaviour is unchanged.
 
 function DestinationRecorder() {
   const pathname = usePathname();
@@ -60,6 +66,9 @@ function ThemedRoot() {
         <Stack.Screen name="auth/callback" options={{ headerShown: false }} />
         <Stack.Screen name="invitation/[token]" options={{ headerShown: false }} />
       </Stack>
+      {/* Task 19: notification receipt + in-app notice. Renders null until a
+          notification actually arrives, so routes/tests are unaffected. */}
+      <NotificationHost />
     </View>
   );
 }

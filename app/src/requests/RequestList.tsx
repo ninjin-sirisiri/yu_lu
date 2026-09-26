@@ -103,6 +103,12 @@ export interface RequestListProps {
   onAction?: (action: RequestActionKind, entry: RequestEntry) => void;
   /** Opens the counterpart's profile (受信一覧からプロフィールも開ける). */
   onOpenProfile?: (entry: RequestEntry) => void;
+  /**
+   * Task 19: the request a notification entry pointed at (通知から開くと
+   * 対象が分かる位置を表示する) — that row gets a visible marker. Only one
+   * row can match (request ids are unique), so the marker testID is stable.
+   */
+  focusRequestId?: string | null;
   emptyText?: string;
   testID?: string;
 }
@@ -119,6 +125,7 @@ export function RequestList({
   busyKeys,
   onAction,
   onOpenProfile,
+  focusRequestId = null,
   emptyText,
   testID = 'request-list',
 }: RequestListProps) {
@@ -171,6 +178,7 @@ export function RequestList({
 
   const renderRow = (entry: RequestEntry) => {
     const confirmingThis = confirm !== null && confirm.requestId === entry.requestId;
+    const focused = focusRequestId !== null && focusRequestId === entry.requestId;
     const canDecide = direction === 'incoming' && entry.status === 'pending';
     const canCancel = direction === 'outgoing' && entry.status === 'pending';
     // While this target already has an open queued send, the re-request
@@ -184,7 +192,23 @@ export function RequestList({
       (entry.status === 'ended' || entry.status === 'expired' || entry.status === 'cancelled');
 
     return (
-      <View key={entry.requestId} style={styles.rowBlock} testID={`request-row-${entry.requestId}`}>
+      <View
+        key={entry.requestId}
+        style={[
+          styles.rowBlock,
+          focused && [styles.rowBlockFocused, { borderLeftColor: tokens.accent }],
+        ]}
+        testID={`request-row-${entry.requestId}`}
+      >
+        {focused && (
+          <Text
+            style={[styles.focusBadge, { color: tokens.accent }]}
+            testID="request-focus-badge"
+            allowFontScaling
+          >
+            通知から開いた申請
+          </Text>
+        )}
         <View style={[styles.row, { borderColor: tokens.line, backgroundColor: tokens.soft }]}>
           <Pressable
             testID={`request-profile-${entry.requestId}`}
@@ -337,6 +361,16 @@ const styles = StyleSheet.create({
   },
   rowBlock: {
     gap: spacing.s2,
+  },
+  rowBlockFocused: {
+    borderLeftWidth: 3,
+    paddingLeft: spacing.s2,
+    borderRadius: 4,
+  },
+  focusBadge: {
+    fontSize: typography.sizes.caption,
+    fontWeight: typography.weights.semibold,
+    lineHeight: typography.sizes.caption * typography.lineHeightRatio,
   },
   queuedBlock: {
     opacity: 0.95,

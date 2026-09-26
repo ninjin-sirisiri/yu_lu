@@ -6,6 +6,69 @@
 
 ---
 
+## Task 19: 通知受信・画面更新・外部入口の統合 (2026-09-27 JST)
+
+### 環境
+
+| 項目 | 値 |
+| --- | --- |
+| Mac / Xcode | Xcode 27.0, macOS 27 |
+| シミュレータ | iPhone 18 Pro / iOS 27.0 (UDID 7072095A-…、Boot済み)。**Simulator.app (GUI) はこの環境に存在しない** (`/Applications/Xcode.app/Contents/Developer/Applications/` 無し) — タップ入力が使えない |
+| JS | Metro localhost:8081 稼働 (`/status` → 200)。実dev buildへTask 19のJSを流し込み `xcrun simctl launch 7072095A-… com.anonymous.app --initialUrl "exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081"` で起動 |
+| 入力手段 | **無** — GUI不在 + `idb` / `fb-idb` 未導入 + ヘッドレス運用 (タスク16と同じ制約) |
+
+### JS層 (モック層 — MOCKED-LAYER)
+
+```
+$ npm --prefix app test -- --runInBand __tests__/notification-entry.test.tsx → 22 passed
+$ npm --prefix app test -- --runInBand → 33 suites / 585 tests 全通過 (タスク19で +22)
+$ npm --prefix app run typecheck    → 0 errors
+```
+
+- **権限拒否**: OSプロンプトは有効化ボタン (`friends-notify-enable`) の操作時のみ。起動・読込では prompt / トークン取得 / device-session 登録のどれも呼ばない。拒否時は `friends-notify-denied` を出し、トークン取得・登録はゼロ、`申請を確認` の入口は残存。
+- **2端末**: 同一アカウントの別インストール (別SQLite) がそれぞれ device-session へ登録され device_id が分かれる。同一トークンの再有効化は transport を二度叩かず `alreadyRegistered` (冪等)。許可済みなら prompt を挟まない (`get` のみ)。
+- **前景**: 抑止ハンドラが `{shouldShowBanner, shouldShowList, shouldPlaySound, shouldSetBadge}` すべて false (SDK 57 形状)。到着では `notify-in-app-notice` を表示し (タップ/5秒で消える)、`list_requests` の pending 件数を読み直して `friends-unread-count` を更新、**画面は移動しない** (移動はタップ時のみ)。
+- **背景タップ**: `/friends/requests?tab=incoming&focus=<request_id>` へ遷移し `request-focus-badge` (通知から開いた申請) を表示。
+- **終了状態 (cold)**: `getLastNotificationResponse` → 実行中応答と**同一の処理経路**。既読idはアカウント別SQLite (`notify.seen_ids`) に永続し、プロセス再起動後 (インメモリ破棄後) の同一通知は duplicate で再処理されない。
+- **古い通知**: pending → 対象行へfocus、終了済み → `requests-entry-ended` 説明 + focus、期間切れ (一覧に無し) → `requests-entry-stale` 説明で**失敗しない**、検証不能 (オフライン) → 画面既存の状態へ。サーバ確認 (`list_requests`) はナビゲーション**より前**。
+- **重複callback**: 同一通知の2回目は headless・実ルーターの両方で1回しかナビゲーションしない (サーバ状態が変わっていても再遷移・stale追記なし)。
+- **招待/OAuth混同なし**: 通知の `url` ペイロードは `notification-carries-url` で拒否 (招待/OAuth経路へ流れない)、招待URL起動時は通知応答を種付けせず入口を奪わない、URLはパス優先分類でクエリに `code` が付いても型が反転しない、`/invitation*` `/auth/*` `/login` `/register` 中は通知エントリを保留。
+- **未登録**: cold応答は登録画面で**既読化せず保持** → 登録完了後、サーバ確認を経て申請一覧へ (テストID: `requests-entry-ended` / `requests-entry-stale` / `request-focus-badge`)。
+- **編集下書き**: 通知タップで `/friends/requests` へ移動しても `profile.edit` 下書き行は失われない。
+
+### 実機試行 (実dev build + 実Metro — 実測できたこと)
+
+手順: (1) Metro稼働確認 (`/status`=200) → (2) 実dev buildをTask 19のJSで launch → (3) ディープリンク `app:///friends` を openurl → (4) スクリーンショット取得。
+
+```
+$ xcrun simctl launch 7072095A-… com.anonymous.app --initialUrl "exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081"
+com.anonymous.app: 51186
+$ xcrun simctl openurl 7072095A-… "app:///friends"   → iOS確認ダイアログ '"app" で開きますか？' が出現
+```
+
+| 検証項目 | 期待 | 実測 |
+| --- | --- | --- |
+| 実dev buildでのTask 19 JS起動 | クラッシュなく起動 | **起動成功 (pid 51186)**、Metroから新JSをロードしルートレイアウト (NotificationHost = 実expo-notifications import) まで到達、クラッシュ/デッドログなし — `docs/testing/screenshots/task-19/01-launch-login-guard.png` |
+| 起動時にOS許可プロンプトが出ないこと | 出ない | 起動〜ログイン画面表示までの間、プロンプトは**発生していない** (01)。ただし有効化ボタンの押下自体は入力不能で未実施 (下記 device-pending) |
+| `/friends` へのディープリンク | 友達タブへ遷移 | 系統の確認ダイアログで停止 — **タップ手段が無く先へ進めない** — `02-deeplink-confirm-dialog.png` |
+| 認証状態 | セッションあり前提 | **セッション無効でログイン画面** (01) — 認証ガードが友達タブを遮断。実OAuth完了にもUI入力が必要でこの環境では完了不可 |
+
+- 対応するJS層の検証は上記MOCKED-LAYERの22件。**実機で確認したのは「実dev buildがTask 19のJSでクラッシュなく起動し、起動時に許可プロンプトが出ないこと」のみ**。実プッシュの配信・タップ遷移は一切主張しない。
+
+### device-pending (今回実測できない項目・理由)
+
+| 検証項目 | 状態 | 理由・代替検証 |
+| --- | --- | --- |
+| 有効化ボタン押下 → 実OS許可プロンプト → 許可/拒否の実機挙動 | **DEVICE-PENDING** | この環境にSimulator.app GUIが無く (Xcode 27に同梱アプリが存在しない)、`idb` も未導入のためタップ入力が存在しない。加えてセッション無効で認証ガードを突破できず (実OAuthもUI入力が必要)、友達タブ自体に到達できない。jestでプロンプトが出る経路 (get→request) と拒否時のUI・入口残存を実測済み |
+| 実pushトークン取得 (`getExpoPushTokenAsync`) | **DEVICE-PENDING** | `app/app.json` に `extra.eas.projectId` も `expo-notifications` プラグイン設定も無く、`app/eas.json` は未作成 (タスク21で作る予定)。**EAS資格情報が提供されていない**ためSDK 57がproject idを推定できずトークン取得は失敗する。jestではトークン失敗 → `token-unavailable` の国内語フォールバックと登録ゼロを検証済み |
+| 実プッシュ配信 (2端末・前景/背景/終了状態) | **DEVICE-PENDING** | (1) 上記の資格情報欠如で送信側も受信側もトークンが無い、(2) **iOSシミュレータはAPNs受信不可**、(3) この環境に物理のiOS/Android端末が無い。Task 22の実機範囲に留める |
+| 配信済み通知のタップ → エントリ遷移の実機挙動 | **DEVICE-PENDING** | 配信された通知が無いとタップが発生しない (上記に同じ)。応答経路はjestで cold / 背景タップ / 重複 / 未登録保持 / 古い通知 / 招待OAuth非混同 の全分岐を実測 |
+| 前景受信時のOSバナー抑止とアプリ内案内の実機表示 | **DEVICE-PENDING** | 前景受信を作るには実配信が必要 (上記に同じ)。抑止ハンドラの戻り値 (全false) と案内・件数更新の配線はjestで実測 |
+
+- 既知の無害なコンソール: ルートツリーを実際にjestで描画するスイートでは、`_layout → NotificationHost → expo-notifications` のimport連鎖により Expo Go の push 廃止に関する `console.warn` がスイート1件につき1回出る (実行結果に影響なし)。また `invitation-flow` の `act(...)` 環境エラー21件は**タスク19以前からベースラインと同数** (ワークチェックで増分ゼロを確認)。
+
+---
+
 ## Task 16: プロフィール画像処理と永続化 (2026-09-26 JST)
 
 ### 環境

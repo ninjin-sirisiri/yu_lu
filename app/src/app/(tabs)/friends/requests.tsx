@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -126,7 +126,19 @@ export function RequestsArea() {
     return { queue, worker };
   }, [auth.accountId, auth.storage, api]);
 
-  const [tab, setTab] = useState<RequestTab>('incoming');
+  // Task 19: notification entries land here via /friends/requests?tab&focus&notice.
+  const entryParams = useLocalSearchParams<{ tab?: string; focus?: string; notice?: string }>();
+  const entryTab: RequestTab = entryParams.tab === 'outgoing' ? 'outgoing' : 'incoming';
+  const entryFocus =
+    typeof entryParams.focus === 'string' && entryParams.focus !== '' ? entryParams.focus : null;
+  const entryNotice: 'ended' | 'stale' | null =
+    entryParams.notice === 'ended'
+      ? 'ended'
+      : entryParams.notice === 'stale'
+        ? 'stale'
+        : null;
+
+  const [tab, setTab] = useState<RequestTab>(entryTab);
   const [data, setData] = useState<{
     incoming: RequestEntry[] | null;
     outgoing: RequestEntry[] | null;
@@ -138,7 +150,7 @@ export function RequestsArea() {
   const [established, setEstablished] = useState<ProfileSummary | null>(null);
   const [unfinished, setUnfinished] = useState(0);
 
-  const tabRef = useRef<RequestTab>('incoming');
+  const tabRef = useRef<RequestTab>(entryTab);
   const mountedRef = useRef(true);
   const queuedRef = useRef<QueuedRequestRow[]>([]);
   const busyRef = useRef<Set<string>>(new Set());
@@ -482,6 +494,17 @@ export function RequestsArea() {
     [refreshDirection],
   );
 
+  // Task 19: while this screen is already mounted, a newly tapped
+  // notification can push new tab/focus/notice params — follow them (same
+  // behaviour as the first mount). User-driven tab switches win afterwards.
+  useEffect(() => {
+    if (entryTab !== tabRef.current) {
+      tabRef.current = entryTab;
+      setTab(entryTab);
+      void refreshDirection(entryTab);
+    }
+  }, [entryTab, refreshDirection]);
+
   const retryRead = useCallback((): void => {
     void refreshDirection(tabRef.current);
     void refreshUnfinished();
@@ -523,6 +546,25 @@ export function RequestsArea() {
         />
       )}
 
+      {/* Task 19: 通知から開いたときの説明 (終了済み/表示期間切れ) — the
+          pending-focus row itself is marked by RequestList. */}
+      {entryNotice === 'ended' && (
+        <StatusNotice
+          tone="neutral"
+          title="この申請は終了しています"
+          message="最新の状態を一覧で確認できます。"
+          testID="requests-entry-ended"
+        />
+      )}
+      {entryNotice === 'stale' && (
+        <StatusNotice
+          tone="info"
+          title="この申請は表示期間を過ぎています"
+          message="終了から7日を経過した申請は一覧に表示されません。"
+          testID="requests-entry-stale"
+        />
+      )}
+
       {notice !== null && (
         <StatusNotice
           tone={notice.tone}
@@ -560,6 +602,7 @@ export function RequestsArea() {
           entries={entries}
           queued={tab === 'outgoing' ? queued : []}
           busyKeys={busyKeySet}
+          focusRequestId={entryFocus}
           onAction={handleAction}
           onOpenProfile={(entry) => selectPeer(entry.counterpart.userId)}
         />
