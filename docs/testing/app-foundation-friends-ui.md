@@ -6,6 +6,105 @@
 
 ---
 
+## Task 22: 仕様14節対応表・ストア/プッシュ試行・全体回帰 (2026-09-27 JST)
+
+### 仕様14節「テストと完了条件」と Task 1〜21 の対応表
+
+対象: `docs/sdd/specs/2026-09-25-app-foundation-friends-ui-design.md`
+**14節「テストと完了条件」 (134〜146行)** — 見出し `#` を含めた通し番号で14番目の節。
+凡例: **実施済み** = 実行して実結果あり / **未実施** = 実行していない (合格として扱わない) /
+**外部入力待ち** = 依存する外部入力が未提供。**未実施を「pass」に置き換えていない。**
+
+| # | 要件 (仕様行) | 該当Task | 証明するテスト・実測 (実行済み) | 実機証拠 | 状態 |
+| --- | --- | --- | --- | --- | --- |
+| R1 | 登録の重複ID・登録途中の復元・アカウントまたぎ分離・変更不可ID (136) | 3, 8, 10, 21 | `src/profiles/validation.test.ts`・`src/profiles/registration.test.ts` (ID正規化/一意性/変更不可/文字数境界)、`__tests__/registration-flow.test.tsx` (ID衝突候補・アカウント別下書き復元・未登録ガード)、`__tests__/storage.integration.test.ts` (アカウント分離)、pgTAP `registration.test.sql`、deno `profile-validation.test.ts`、`--suite registration`、journey#1-2 (実後端で未登録ガード・A/B登録) | ログイン画面到達のみ (`screenshots/task-19,20,21/`) | 自動・実後端 **実施済み** / 登録画面の実機操作 **未実施** (Apple Team ID・Google Client ID未提供 + ヘッドレスでタップ入力なし) |
+| R2 | 部分一致・完全一致優先・追加取得・古い結果の抑止・ブロック除外・友達前Streak非表示 (137) | 5, 12, 21 | `src/discovery/lookup.test.ts`、`__tests__/friends-discovery.test.tsx` (2文字境界・300ms・遅い旧応答破棄・もっと見る)、pgTAP `discovery.test.sql` (ブロック除外・Streak非公開)、deno `discovery.test.ts`、`--suite discovery`、journey#3 (完全一致・前方でない大文字部分一致・Streakキーなし) | なし (検索UIはログイン後) | 自動・実後端 **実施済み** / 実機UI **未実施** (R1と同じ理由) |
+| R3 | 相互申請・重複送信・承認と取消/期限切れの競合・終了表示・再申請・拒否通知なし (138) | 4, 13, 18, 21 | pgTAP `requests.test.sql`、deno `requests.test.ts`、`--suite requests` (並行競合・古いrequest_id・第三者・重複操作)、`__tests__/request-flow.test.tsx`・`sync-status.test.tsx`、拒否通知なし = pgTAP `notifications.test.sql` + deno `notifications.test.ts` (rejectは配送しない)、journey#4-5 (申請→承認→成立) | なし (申請UIはログイン後) | 自動・実後端 **実施済み** / 実機UI **未実施** (R1と同じ理由) |
+| R4 | オフライン再起動復元・送信開始と取消の競合・応答喪失・24時間期限・ログアウト中の停止 (139) | 8, 9, 20, 21 | `__tests__/storage.integration.test.ts`、`src/sync/queue.test.ts`・`worker.test.ts` (応答喪失・取消競合・24時間)、`__tests__/sync-lifecycle.test.ts` (前景/背景同時・タスクキル・期限超過・ログアウト5順序・オフライン境界)、`__tests__/logout-entry.test.tsx` (仕様28行 マイページ入口・pending説明・順序)、journey#7 (実後端: transient pending→storage閉/開→同一操作IDで drain 再送) | Task 20 実機ログ (`[sync] storage open → gate passed → no-session`、`screenshots/task-20/`) | **実施済み** / オフラインログアウトの**対話E2E**と物理端末での境界確認 **未実施** (実OAuthにUI入力が必要+ヘッドレス。理由はTask 20節 device-pending表) |
+| R5 | 画像失敗時の非公開・再編集統合・下書き保持・項目別競合解決・文字数境界 (140) | 7, 16, 17 | `--suite profile-publication` + pgTAP `profile-publication.test.sql` (アップロード前/他人画像で全項目不変・版二重増加なし)、deno `profile-commands.test.ts`、`src/media/avatar.test.ts`・`AvatarPicker.test.tsx`・`src/media/images.test.ts`、`__tests__/profile-editor.test.tsx`・`src/profiles/edit.test.ts` (下書き・競合・文字数) | Task 16 実機プローブ (EXIF補正 240×320・白合成4隅(254,254,254)・1024×1024・再起動復元 — Task 16節) | **実施済み** (実機はプローブ範囲) / OSピッカー・カメラUI操作 **未実施** (タップ入力なし・許可UI到達不可)、Android実機 **未実施** (端末/AVDなし) |
+| R6 | 招待再発行による失効・登録中の失効・最初の招待の保持・復元不能/不正リンク時の案内 (141) | 6, 14, 15 | pgTAP `invitations.test.sql`、deno `invitations.test.ts`、`--suite invitations` (再発行で旧リンク失効・同時再発行)、`__tests__/invitation-flow.test.tsx` (keep-first・復元不能でも登録を止めない・失効表示)、`node --test scripts/invite-web.test.mjs` (referrer=`invitation=<32hex>`一致・コピー成功時のみApp Store遷移・失敗時再試行) | なし (カメラ/貼り付け/実referrerは device-pending — Task 14節) | 自動 **実施済み** / **ストア経由のE2E 未実施** (下記「ストア引き継ぎの試行」参照 — 外部入力待ち) |
+| R7 | 複数端末通知・ログアウト後の停止・表示中の案内・古い通知からの移動・重複配信抑止 (142) | 18, 19, 20 | pgTAP `notifications.test.sql`、deno `notifications.test.ts`、`--suite notifications` (2端末登録・無効トークン・再処理冪等・配信キューの無権限読取拒否・batch claim 1回配信)、`__tests__/notification-entry.test.tsx` (権限拒否・前景案内・背景タップ・cold応答・古い通知・重複callback・招待/OAuth非混同)、`sync-lifecycle`/`logout-entry` (失効順序=配信停止) | `screenshots/task-19/01-launch-login-guard.png` (実dev buildで起動時に許可プロンプトが出ない) | **実施済み** / **実プッシュ (2端末・前景・背景・終了・ログアウト) 未実施** (下記「実プッシュの試行」参照) |
+| R8 | ライト/ダーク・時間帯変更・同時刻拒否・文字拡大・1列/2列切替の入力保持・タブ再選択 (143) | 11, 1 | `__tests__/theme-layout.test.tsx` (899/900・fontScale 1.353・同時刻拒否・日跨ぎ・復帰再評価・切替時の選択/下書き保持・テーマ永続)、`__tests__/navigation-shell.test.tsx` (4タブ構成) | `screenshots/task-11/` 4点 (明暗・最大文字)、`screenshots/task-21/` 01-03 (iPhone明暗・XXXL)・04 (iPad起動) | **実施済み (タブ再選択を除く)** / テーマ設定画面・900境界2列の実機表示 **未実施** (ログイン後のみ到達 — OAuth未提供+タップなし)、VoiceOver **未実施** (simctlに切替手段なし)、**タブ再選択 (仕様32行) は自動テスト・実機とも未実施** — リポジトリ内にタブ再選択の実装・テストを確認できず、§14の未充足要件として記録 |
+| R9 | 自動テスト = 境界値・状態遷移・サーバー権限・再送の整合性 + 結合経路 (144) | 1〜21 全体 (Task 1 の `navigation-shell`/`scaffold` も本行に計上) | 最終回帰実測: jest **37 suites / 629 tests**、pgTAP **621 / Files=7**、deno **128**、local-backend **191**、invite-web **25** (下記「最終コマンド」)。結合経路 = `__tests__/app-journey.test.tsx` 7件 (実ローカルSupabase・実Auth・実 `app-command`/`app-query`・実SQLite outbox で 登録→検索→申請→承認→成立→更新→オフライン復帰) | journey はNode上の実後端結合 (端末ではない) | **実施済み** — 画面レンダー系はモックワイヤ、journey が実後端の結合経路 (両者を区別して記録) |
+| R10 | 実機でカメラ・画像・QR・プッシュ・バックグラウンド処理、AndroidはGoogle Play経由インストール、iOSはインストールを挟む明示的貼り付けと拒否・消失時の復帰 (145) | 14, 15, 16, 18, 19, 20, 21 | (代替の自動検証は R5・R6・R7 に記載) | なし | **大半 未実施** — 個別理由: カメラ/QR = ヘッドレスでタップ入力なし・許可UI到達不可 / 画像 = プローブは実機済み・OSピッカーUIは未 / プッシュ = 資格なし (下記) / バックグラウンド = iOSシミュレータはBGTaskScheduler非対応 (実OS回答 `unavailable`・Task 20実測)、実機実行未 / Google Playインストール = `adb devices` 空・AVD 0件・ストアアカウントなし / iOS貼り付け = ストアインストール不能 (App Store ID・配布権限なし) + ヘッドレス |
+| R11 | Expo 57/RN 0.86.3実プロジェクトでビルド・型検査・関連テストを実行し、**ストア経由の検証結果を記録して初めて完成条件** (146) | 1〜21 全体 | ビルド: `npx expo run:ios` **Build Succeeded** (Task 8/20/21 実測、`enableSceneSupport` で起動まで到達)、型検査: `typecheck` **0 errors**、関連テスト: 上記全コマンド緑 | `screenshots/task-11,19,20,21/` | ビルド・型検査・テスト **実施済み** / **ストア経由の検証結果: 未記録** → §14 の完成条件は**未達** → **本番完成を宣言しない** |
+
+### device-pending / 未実施 集約表 (該当箇所の正確なブロック理由)
+
+| 項目 | 確切なブロック理由 |
+| --- | --- |
+| 実OAuth (Apple/Google) の成功・取消・callback中断 | Apple Team ID / Google OAuth Client ID・Secret / SupabaseプロジェクトのOAuth設定が**未提供の外部入力** (ops doc「未提供の外部入力」)。実Authも `Unsupported provider: provider is not enabled` |
+| 登録・検索・申請・プロフィール等のログイン後UIの実機操作 | 上記OAuth未提供でログイン後ルートへ到達不可 + ヘッドレスシミュレータに**タップ入力なし** (Simulator.app がXcode 27に同梱されておらず `idb` も未導入) |
+| 幅900の2列表示・テーマ設定画面の実機表示 | ログイン後のみ到達 (同理由)。iPad **起動**自体は task-21/04 で成功済みだが2列表示は未確認 |
+| VoiceOver操作 | `simctl ui` にVoiceOver切替コマンドが存在せず (appearance/content_size のみ)、設定.app のタップも不可 |
+| 実カメラQR・保存画像読取・`ClipboardPasteButton` 実貼り付け | タップ入力なし・カメラ/写真の許可UIに到達不可 (Task 14節 device-pending表) |
+| 実プッシュ (2端末・前景・背景・終了・ログアウト) | `app/app.json` に `extra.eas.projectId`/`expo-notifications` プラグイン**未設定** (`expo config --type public` に projectId なし)、APNs `.p8`/`GoogleService-Info.plist`/`google-services.json` **リポジトリ内に存在しない** (scan 0件)、`eas whoami` → **`Not logged in`** (project idを発行できない)、iOSシミュレータはAPNs受信不可、物理端末なし |
+| BGTaskScheduler によるバックグラウンド実行 | **iOSシミュレータは Background Tasks API 非対応** (SDK57ドキュメント明記・実OS回答 `unavailable` をTask 20で実測)。物理端末が必要 |
+| Android 全項目 (ビルド・起動・Play配布) | `adb devices` → **デバイス0台**、`emulator -list-avds` → **AVD 0件** (system image は存在するが未作成)、物理端末なし。実エラー `CommandError: No Android connected device found…` (Task 21節) |
+| Google Play 検証配布からのインストール→referrer→登録→最初の招待先 | (1) 上記のAndroid実行対象なし、(2) Google Play開発者アカウント/検証配布の**外部入力なし**、(3) `INVITE_ORIGIN` ほか6つの配布入力が全て unset |
+| iOS HTTPS招待ページ→コピー→App Storeインストール→標準貼り付け→登録→確認 (コピー消失・失効・別招待・復帰・中断を含む) | `IOS_BUNDLE_ID`/`APPLE_TEAM_ID`/`APP_STORE_ID`/`INVITE_ORIGIN` が**全て unset**、**ストアアカウント・配布権限なし** (提供されていない外部入力)、ヘッドレスで貼り付けUI操作不可。**TestFlightは未使用** (EAS未ログイン・App Store IDなし) であり、仮に使用しても App Store 経由の成立は証明しない |
+| EASビルド (`eas build`) | EASアカウント・署名資格なし (`eas whoami` = Not logged in) |
+
+### ストア引き継ぎの試行 — ローカルで可能な範囲の実測と残るブロッカー (要件2)
+
+実測した確認 (すべて本日・リポジトリルート):
+
+1. 配布6入力の実在確認 → `INVITE_ORIGIN / IOS_BUNDLE_ID / APPLE_TEAM_ID / APP_STORE_ID / ANDROID_PACKAGE / ANDROID_CERT_SHA256` は**すべて unset** (既定値・偽値は作らない)。
+2. `node scripts/check-native-config.mjs` → **exit 2**、`missing external inputs: <上記6つ>` — 配布準備モードは構造的に通過不可 (外部入力不足でありリグレッションではない)。
+3. Android側: `adb devices` → 空、`emulator -list-avds` → 空 → Playインストールを試みる**実行対象が存在しない**。
+4. iOS側: `xcrun devicectl list devices` → physical iPhone 15 (`00008120-…`) は paired available だが未署名ビルド導入・ロック解除入力が必要で操作不可 (Task 20節記録)。ストア配布ビルドのインストールはストアアカウント必須 (未提供)。
+5. EAS: `eas --version` = 18.11.0 / `eas whoami` → **`Not logged in`** → ビルド・TestFlight・ストア送信すべて不可。
+6. 実施可能な代替 (ローカルのみ): `node --test scripts/invite-web.test.mjs` → **25 passed** — Play referrer のURLエンコード値と `invitation=<32hex>` の一致、iOSはコピー**成功後にのみ**App Storeへ遷移・失敗時は遷移せず再試行、を**ローカルのvm実行**で検証 (TEST-ONLY fixture・公開値ではない)。`node scripts/build-invite-web.mjs` は値なしなら失敗 (実測済み)。
+
+**実施できなかったもの (外部入力・ストア権限待ち):**
+- Google Play 検証配布からの実インストール → referrer取得 → 登録 → 最初の招待先の確認。
+- iOS: HTTPS招待ページ → コピー → App Storeからインストール → 標準貼り付け → 登録 → 確認。およびコピー消失・失効・別招待・復帰・中断の確認。
+- → **該当するストア条件が未検証のため、本番完成を宣言しない** (TestFlightで App Store 経由の成立を証明することもしない)。
+
+### 実プッシュの試行 (要件3)
+
+試行と実測:
+
+- `npx expo config --type public` に `projectId` / `notifications` 設定が**存在しない** (grep 0件) → SDK 57 が project id を推定できず、トークン取得は構造的に失敗する。
+- リポジトリ内に APNs (`*.p8`) / FCM (`google-services.json`, `GoogleService-Info.plist`) の**資格ファイルなし** (scan 0件)。
+- `eas whoami` → **`Not logged in`** → EAS project id を発行できない。
+- → **構成済み開発ビルドでの実プッシュ試行は「資格が存在しないため実施できず」、2端末・前景・背景・終了・ログアウトの確認は未実施** (モック成功での代替はしない)。
+
+記録として残す (実機未検証の項目として扱う):
+
+- **バックグラウンドのOS制約**: iOSシミュレータは BGTaskScheduler 非対応 (実OS回答 `unavailable`・Task 20実測)。実機での実スケジュール実行は**未検証**。
+- **配信済み通知の扱い**: OS通知センターの通知は取り消せない (アプリの制御外)。ログアウト後の停止は将来の配信について成立する (Task 20 ruling・仕様107行)。**実配信がないため実機での目視確認は未検証**。
+
+### 最終コマンド実測 (2026-09-27 JST、すべてリポジトリルートから実行)
+
+| コマンド | 実結果 |
+| --- | --- |
+| `npm --prefix app test -- --runInBand` | **Test Suites: 37 passed, 37 total / Tests: 629 passed, 629 total** (14.3s) |
+| `npm --prefix app run typecheck` | **exit 0** (`tsc --noEmit` 0 errors) |
+| `npx supabase test db` | **Files=7, Tests=621, Result: PASS** (All tests successful) |
+| `npx deno test --allow-env --allow-net --config supabase/functions/deno.json supabase/functions/tests` | **ok \| 128 passed \| 0 failed** |
+| `node scripts/test-local-backend.mjs --suite all` | **all: 191 passed, 0 failed** (local Auth users 55人削除) |
+| `node --test scripts/invite-web.test.mjs` | **tests 25 / pass 25 / fail 0** (exit 0) |
+| `git diff --check` | **exit 0** (出力なし = 空白エラーなし) |
+| `node scripts/check-native-config.mjs --dev` | **exit 0** (all checks passed — ローカル設定のみ) |
+| `node scripts/check-native-config.mjs` | **exit 2** — 6つの外部入力未提供。**既知の記録状態でありリグレッションではない** (捏造しない) |
+
+失敗したコマンドは無し。新しい失敗による該当Taskの完了見直しは発生していない。
+
+### 今回範囲の完了状態と宣言
+
+計画の完了条項「**全自動検証と必要な実機証拠が揃った時点で今回範囲を完了とする**」に対し:
+
+- **揃ったもの (完了)**: 上記の全自動検証 (jest/pgTAP/deno/local-backend/invite-web/typecheck/diff-check)、実ローカル後端の結合経路 (journey 7件)、この環境で到達可能な実機証拠 (実dev build起動・実SQLite/実画像プローブ・明暗/文字拡大/iPadの実スクリーンショット)。
+- **揃わないもの (外部入力待ち)**: ストア経由の検証 (仕様146行が求める「ストア経由の検証結果の記録」)、実OAuth、実プッシュ (2端末含む)、BGTaskSchedulerの実機実行、Android端末一式、VoiceOver、ログイン後UIの実機操作 (900二列・テーマ設定画面・タブ再選択を含む)。
+
+→ **本番完成を宣言しない。** 残る検証は上記「device-pending / 未実施 集約表」と
+「ストア引き継ぎの試行」「実プッシュの試行」にブロック理由付きで列挙したとおりで、
+いずれもこのリポジトリで解消できない外部入力 (ストアアカウント・配布権限・OAuth資格・
+通知資格・EASログイン・実機端末) が原因である。
+
+---
+
 ## Task 21: 実データ通し操作とネイティブ配布設定 (2026-09-27 JST)
 
 ### 環境
