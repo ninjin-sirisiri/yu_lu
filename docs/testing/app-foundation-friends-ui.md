@@ -6,6 +6,66 @@
 
 ---
 
+## Task 15: 招待Web入口とドメイン関連付け (2026-09-26 JST)
+
+**すべてローカル検証・未公開。** 実HTTPSドメイン・実bundle id・実署名・実ストアIDは
+未提供のため、配信・関連付け・ストア遷移の実測は行っていない (手順のみ
+docs/operations/app-foundation-friends-ui.md Task 15 節に記載)。
+以下に現れた `example`/`example.test` 値は**テスト専用fixture**であり、公開値ではない。
+
+### 検証コマンドと実測
+
+```
+$ node --test scripts/invite-web.test.mjs
+ℹ tests 25  ℹ pass 25  ℹ fail 0   (exit 0)
+
+$ node scripts/build-invite-web.mjs            # 値なし → 失敗 (期待どおり)
+error: missing required invite web inputs: INVITE_ORIGIN, IOS_BUNDLE_ID,
+APPLE_TEAM_ID, APP_STORE_ID, ANDROID_PACKAGE, ANDROID_CERT_SHA256. …   (exit 1)
+
+$ node scripts/build-invite-web.mjs --test-config --out <tmp>
+invite web build OK [TEST-ONLY (do not publish)]                      (exit 0)
+
+$ npm --prefix app run typecheck   → 0 errors (app/app.config.ts を含む)
+$ npm --prefix app test            → 29 suites / 494 tests 全通過 (増分なし)
+$ cd app && npx expo config --type public  (INVITE_ORIGIN なし) → exit 0・追加なし+
+  stderr「INVITE_ORIGIN not set — skipping …(no domain was invented)」
+$ INVITE_ORIGIN=https://invite.invite-web.test npx expo config --type public → exit 0・
+  ios.associatedDomains=['applinks:invite.invite-web.test'] +
+  android.intentFilters(autoVerify, https, host同値, pathPrefix=/invitation, BROWSABLE/DEFAULT)
+$ INVITE_ORIGIN=http://insecure.example npx expo config --type public → exit 1 (明確なエラー)
+```
+
+### `scripts/invite-web.test.mjs` の主な内容 (25件)
+
+- **入力検証**: 6変数すべて欠落→一括列挙で失敗 / 部分欠落→残りのみ名指し /
+  不正値 (http・path付きorigin・port・非bundle id・10桁以外のteam id・非数値store id・
+  不正package・64桁でないSHA) で失敗。 originは正規化 (末尾スラッシュ除去)、
+  SHAはコロン除去+小文字化。既定値・偽値の自動補完は一切なし。
+- **出力検証**: `--test-config` で7ファイル生成 (TEST-ONLY-OUTPUT.txt 含む・
+  DO NOT PUBLISH バナー)、実値相当envでの生成はマーカーなし。静的3ファイルは
+  `invite-web/` の原文コピー。AASA `appID`/`paths: ['/invitation/*']`、assetlinks の
+  `package_name` + `sha256_cert_fingerprints` が検証済み入力と一致 (JSON・末尾改行)。
+- **app.js 安全性**: `.innerHTML` / `.outerHTML` / `insertAdjacentHTML(` /
+  `document.write(` の使用ゼロ・`textContent` のみ (トークンをHTML挿入しない)。
+- **実ページ (生成済み runtime-config + app.js を vm 実行)**:
+  - Android: Play URL の `referrer` デコード値が `invitation=<urlencoded 32hex>` と
+    完全一致 (Task 14 の `parseInstallReferrer` が読む形)。タップで遷移。
+  - iOS: 読み込み時はコピーなし → タップ内で書込み → 成功後にのみ App Store へ遷移、
+    失敗時は遷移せず再試行ボタン+URLの再開案内を表示、clipboard非対応も説明のみ。
+  - runtime-config 欠落・不正トークン → 説明文を表示 (パネル非表示・トークン露出なし)。
+  - テスト専用出力には日本語バッジ表示。
+- **expo config 両状態**: 値なし→成功・domain追加なし (既存 app.json 値と
+  `enableSceneSupport: true` 維持) / INVITE_ORIGINあり→両OSに同値反映 /
+  不正値→非0で失敗。
+
+### 未検証 (外部入力待ち・BLOCKEDではなく外部依存)
+
+- 実HTTPS配信・associationファイルのリダイレクトなし・署名一致・実ストアURL・
+  実Play referrer/実iOS貼り付けのE2E → 手順は運用手順書。**公開済みとは記録しない。**
+
+---
+
 ## Task 14: 招待保存・QR・iOS貼り付け・Android取得 (2026-09-26 JST)
 
 ### JS層 (モック層 — MOCKED-LAYER)

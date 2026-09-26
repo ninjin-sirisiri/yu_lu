@@ -1,3 +1,5 @@
 .sdd/
 .worktrees/
 .env
+invite-web/dist/
+invite-web/dist-test/
