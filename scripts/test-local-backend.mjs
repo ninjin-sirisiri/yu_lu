@@ -77,25 +77,32 @@
 // (clients cannot read the queue; direct device writes are refused)
 // (notifications).
 
-import { spawn, spawnSync } from 'node:child_process';
-import { createHmac, randomUUID } from 'node:crypto';
-import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import process from 'node:process';
-import { fileURLToPath } from 'node:url';
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+import localBackend from './lib/local-backend.cjs';
 
-// ---------------------------------------------------------------------------
-// Output: redact anything that could be a secret before it reaches stdout.
-// ---------------------------------------------------------------------------
-
-function redact(text) {
-  return String(text)
-    .replaceAll(/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, '[redacted-jwt]')
-    .replaceAll(/sb_(?:publishable|secret)_[A-Za-z0-9_-]+/g, '[redacted-key]')
-    .replaceAll(/Bearer\s+\S{16,}/gi, 'Bearer [redacted]')
-    .replaceAll(/(postgresql:\/\/)[^@\s]*@/g, '$1[redacted]@');
-}
+// Task 21: the connection/Auth/gateway/HTTP helpers moved to
+// scripts/lib/local-backend.cjs, shared with the real-data journey test
+// (app/__tests__/app-journey.test.tsx) so both verifiers use the SAME auth
+// pattern (admin-created local Auth users + locally minted JWTs verified
+// against the real `GET /auth/v1/user`) instead of duplicating it. The
+// helper is CommonJS because jest requires the same file without an ESM
+// transform. Redaction still wraps every line this script prints.
+const {
+  redact,
+  readSupabaseStatus,
+  adminCreateUser,
+  adminDeleteUser,
+  mintUserToken,
+  startFunctionsServe,
+  waitForGateway,
+  stopFunctionsServe,
+  expectJson,
+  expect,
+  postFunction,
+  postRest,
+} = localBackend;
 
 function log(message) {
   console.log(redact(message));
@@ -104,246 +111,6 @@ function log(message) {
 function fail(message) {
   console.error(redact(message));
   process.exit(2);
-}
-
-// ---------------------------------------------------------------------------
-// Connection info from the CLI's machine-readable status output.
-// ---------------------------------------------------------------------------
-
-function readSupabaseStatus() {
-  const res = spawnSync('npx', ['supabase', 'status', '--output', 'json'], {
-    cwd: REPO_ROOT,
-    encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  if (res.error) fail(`could not run supabase status: ${res.error.message}`);
-  const out = res.stdout ?? '';
-  const start = out.indexOf('{');
-  const end = out.lastIndexOf('}');
-  if (res.status !== 0 || start < 0 || end < start) {
-    fail(`supabase status failed (exit ${res.status}): ${redact(res.stderr ?? '').slice(0, 400)}`);
-  }
-  let status;
-  try {
-    status = JSON.parse(out.slice(start, end + 1));
-  } catch {
-    fail('supabase status returned unparseable JSON');
-  }
-  for (const key of ['API_URL', 'ANON_KEY', 'SERVICE_ROLE_KEY', 'JWT_SECRET']) {
-    if (typeof status[key] !== 'string' || status[key].length === 0) {
-      fail(`supabase status is missing ${key} (keys seen: ${Object.keys(status).join(', ')})`);
-    }
-  }
-  return status;
-}
-
-// ---------------------------------------------------------------------------
-// Real local Auth users: create (admin API), sign in, delete at the end.
-//
-// "Sign in" mints a locally signed user JWT instead of using the password
-// grant, because the product config disables the email provider entirely
-// (supabase/config.toml: [auth.email] enable_signup = false → GoTrue refuses
-// email logins with `email_provider_disabled`) — the exact behavior shipped
-// for an Apple/Google-only app. The minted token has the same claims GoTrue
-// issues and is verified against the real `GET /auth/v1/user` before use, so
-// a wrong claim shape fails loudly here instead of surfacing as misleading
-// downstream 401s. The users themselves are still real admin-created Auth
-// users, and every command still runs through the real Edge Functions.
-// ---------------------------------------------------------------------------
-
-async function adminCreateUser(status, email, password) {
-  // The local stack accepts the service role key; the secret key is the
-  // equivalent modern credential, tried as a fallback. Values stay in memory.
-  const variants = [status.SERVICE_ROLE_KEY, status.SECRET_KEY].filter(
-    (v) => typeof v === 'string' && v.length > 0,
-  );
-  let last = 'no credential available';
-  for (const credential of variants) {
-    const res = await fetch(`${status.API_URL}/auth/v1/admin/users`, {
-      method: 'POST',
-      headers: {
-        apikey: credential,
-        Authorization: `Bearer ${credential}`,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({ email, password, email_confirm: true }),
-    });
-    if (res.ok) {
-      const body = await res.json();
-      if (typeof body.id === 'string') return body.id;
-      last = 'response had no user id';
-    } else {
-      last = `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`;
-    }
-  }
-  throw new Error(`auth admin user creation failed: ${last}`);
-}
-
-async function adminDeleteUser(status, userId) {
-  const variants = [status.SERVICE_ROLE_KEY, status.SECRET_KEY].filter(
-    (v) => typeof v === 'string' && v.length > 0,
-  );
-  for (const credential of variants) {
-    const res = await fetch(`${status.API_URL}/auth/v1/admin/users/${userId}`, {
-      method: 'DELETE',
-      headers: { apikey: credential, Authorization: `Bearer ${credential}` },
-    });
-    if (res.ok || res.status === 404) return;
-  }
-  throw new Error(`could not delete auth user ${userId}`);
-}
-
-async function mintUserToken(status, userId) {
-  const secret = status.JWT_SECRET;
-  if (typeof secret !== 'string' || secret.length < 32) {
-    throw new Error('supabase status is missing JWT_SECRET (needed to mint a local user token)');
-  }
-  const api = String(status.API_URL).replace(/\/+$/, '');
-  const now = Math.floor(Date.now() / 1000);
-  const b64 = (value) => Buffer.from(value).toString('base64url');
-  const header = b64(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  // Same claims shape GoTrue issues for a local access token (iss/aud/role/sub/
-  // exp), deliberately WITHOUT a session_id claim: a fabricated session id has
-  // no sessions row and real Auth rejects it (`session_not_found`), while the
-  // claim-less token is accepted exactly like a live session.
-  const payload = b64(
-    JSON.stringify({
-      iss: `${api}/auth/v1`,
-      sub: userId,
-      aud: 'authenticated',
-      exp: now + 3600,
-      iat: now,
-      role: 'authenticated',
-    }),
-  );
-  const signature = createHmac('sha256', secret)
-    .update(`${header}.${payload}`)
-    .digest('base64url');
-  const token = `${header}.${payload}.${signature}`;
-
-  // Verify against the real local Auth server before handing the token to any
-  // suite: a wrong claim shape must fail HERE, not as a misleading 401 later.
-  const res = await fetch(`${api}/auth/v1/user`, {
-    headers: { apikey: status.ANON_KEY, Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) {
-    throw new Error(
-      `minted user token rejected by local Auth: HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`,
-    );
-  }
-  const body = await res.json();
-  if (body?.id !== userId) {
-    throw new Error(`minted user token resolved to ${body?.id} instead of ${userId}`);
-  }
-  return token;
-}
-
-// ---------------------------------------------------------------------------
-// functions serve: a separate process, readiness-polled, always stopped.
-// ---------------------------------------------------------------------------
-
-function startFunctionsServe() {
-  const child = spawn('npx', ['supabase', 'functions', 'serve'], {
-    cwd: REPO_ROOT,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  const output = [];
-  const capture = (chunk) => output.push(chunk.toString());
-  child.stdout.on('data', capture);
-  child.stderr.on('data', capture);
-  child.exited = new Promise((resolve) => child.once('exit', (code) => resolve(code)));
-  return { child, output };
-}
-
-async function waitForGateway(status, serve, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (serve.child.exitCode !== null) {
-      throw new Error(
-        `functions serve exited early with code ${serve.child.exitCode}: ` +
-          redact(serve.output.join('').slice(-800)),
-      );
-    }
-    try {
-      const res = await fetch(`${status.API_URL}/functions/v1/app-command`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: '{}',
-        signal: AbortSignal.timeout(3000),
-      });
-      // Healthy gateway + registered function = 401 for the missing token
-      // (platform verify_jwt, or the handler's own fail-closed check).
-      // 503 "name resolution failed" means function registration is not
-      // ready (or a stale serve process is fighting over the runtime).
-      if (res.status === 401) return;
-    } catch {
-      // Not listening yet — retry.
-    }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  throw new Error(
-    `functions serve did not become ready: ${redact(serve.output.join('').slice(-800))}`,
-  );
-}
-
-async function stopFunctionsServe(serve) {
-  if (serve.child.exitCode !== null) return;
-  serve.child.kill('SIGTERM');
-  const timedOut = await Promise.race([
-    serve.child.exited.then(() => false),
-    new Promise((r) => setTimeout(() => r(true), 5000)),
-  ]);
-  if (timedOut) serve.child.kill('SIGKILL');
-}
-
-// ---------------------------------------------------------------------------
-// Assertions. Each test throws on failure with a redacted detail message.
-// ---------------------------------------------------------------------------
-
-async function expectJson(res, wantStatus, detail) {
-  const text = await res.text();
-  let body;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    body = text.slice(0, 300);
-  }
-  if (res.status !== wantStatus) {
-    throw new Error(
-      `${detail}: expected HTTP ${wantStatus}, got ${res.status}: ` +
-        JSON.stringify(body).slice(0, 300),
-    );
-  }
-  return body;
-}
-
-function expect(cond, detail) {
-  if (!cond) throw new Error(detail);
-}
-
-async function postFunction(status, name, { token, body, method = 'POST' }) {
-  const headers = { 'content-type': 'application/json' };
-  if (token) headers['authorization'] = `Bearer ${token}`;
-  return await fetch(`${status.API_URL}/functions/v1/${name}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
-    signal: AbortSignal.timeout(10000),
-  });
-}
-
-async function postRest(status, pathName, { token, body, method = 'POST', apikey }) {
-  const headers = {
-    apikey: apikey ?? status.ANON_KEY,
-    'content-type': 'application/json',
-  };
-  if (token) headers['authorization'] = `Bearer ${token}`;
-  return await fetch(`${status.API_URL}/rest/v1/${pathName}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(10000),
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -5031,7 +4798,12 @@ async function main() {
   const { suite } = parseArgs(process.argv.slice(2));
 
   log('reading local Supabase connection info (secrets stay in memory)...');
-  const status = readSupabaseStatus();
+  let status;
+  try {
+    status = readSupabaseStatus();
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
   log(`  api: ${status.API_URL}`);
 
   const runId = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`;

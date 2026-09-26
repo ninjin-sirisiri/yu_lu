@@ -57,10 +57,12 @@ export const TEST_ONLY_ENV = Object.freeze({
   ].join(':'),
 });
 
-const BUNDLE_ID_RE = /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
+// Format validators. Exported so `scripts/check-native-config.mjs` checks
+// the SAME shapes instead of re-declaring what "valid" means.
+export const BUNDLE_ID_RE = /^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 const TEAM_ID_RE = /^[A-Za-z0-9]{10}$/;
 const APP_STORE_ID_RE = /^[0-9]{6,12}$/;
-const ANDROID_PACKAGE_RE = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/;
+export const ANDROID_PACKAGE_RE = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/;
 
 function trimmed(env, name) {
   const raw = env?.[name];

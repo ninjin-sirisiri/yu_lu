@@ -6,6 +6,159 @@
 
 ---
 
+## Task 21: 実データ通し操作とネイティブ配布設定 (2026-09-27 JST)
+
+### 環境
+
+| 項目 | 値 |
+| --- | --- |
+| ローカル後端 | Supabase (Docker) 起動済み `http://127.0.0.1:54321`、`app/.env` の URL/anon key は `npx supabase status` と**完全一致** (journeyが不一致なら起動時に拒否) |
+| iOS dev build | `npx expo run:ios --device 7072095A-…` → **Build Succeeded / 0 errors, 1 warning** (Expo Dev Launcherの Strip Local Network Keys = dev向け既知warning)、`com.anonymous.app` を iPhone 18 Pro へインストール・起動、`iOS Bundled … index.ts (1533 modules)` |
+| シミュレータ | iPhone 18 Pro / iOS 27.0 (ヘッドレス) + iPad Pro 13-inch (M5) / iOS 27.0 |
+| Android | **ブロッカー** (下記「端末マトリクス」に実エラー全文) |
+| Metro | `npx expo run:ios` が同梱起動 (タスク20のIPv6問題なし) |
+
+### 実データ通し操作 (A/B journey — OAuth検証とは別系統の証拠)
+
+```
+$ npm --prefix app test -- --runInBand __tests__/app-journey.test.tsx
+Test Suites: 1 passed, 1 total
+Tests:       7 passed, 7 total
+```
+
+**実物**: 本物のローカル Supabase (実Authユーザー・実 `app-command`/`app-query` Edge
+Functions・実SQLite outbox・本番クライアント層 `backend/queries` / `sync/api` /
+`sync/queue`+`worker` / `sync/lifecycle`)。**模擬**: node:sqlite ドライバと、
+送信ポートに1つのオフライン窓 (接続不能を `transient` として報告 — transport層の代役のみ)。
+
+| # | ステップ | 実測内容 |
+| --- | --- | --- |
+| 1 | 未登録ガード | 登録前の `search_profiles`/`list_friends` が `Confirm the User ID before using the app.` で拒否 |
+| 2 | A/B登録 | `assertRegistrationInput` → `createCommandApi.send(kind:'register')` で両者登録、友達0の初期状態 |
+| 3 | 部分一致検索 | 完全一致 [B]、**前方でない・大文字にした部分一致** [B] のみ、`relationship:none`、**Streakキー自体なし** (友達前非表示)、プロフィール閲覧 |
+| 4 | 申請 | **本番outboxキュー経由**で送信 (`succeeded`)、Bの受信一覧に `pending` + **有効期限 約7日**、Aの送信一覧に `pending\|<B>` |
+| 5 | 承認・成立 | Bの直接 `approve` (画面decide pathと同じ経路) → 両方向 `list_friends` に相互あり `relationship:friend` + **streak数値** |
+| 6 | プロフィール更新 | キュー経由で `update_profile` (base_version CAS) → 自分 `getOwnPublication` が新しい表示名・自己紹介 (改行入り)・version+1、Bからの閲覧も一致 |
+| 7 | オフライン→再起動→復帰 | オフライン窓で enqueue → 送信 `transient` で **`pending` のまま**・サーバー不変・Bからも不変 → **storage閉じ→同一ファイル再オープン (新handle=プロセス再起動相当)** → 行は同一 operation id で生存 → 時計を進めて (初回再試行 ≈5s バックオフ) **本番 `createSyncLifecycle().drain('resume')`** が同一 id を送信 `ok` → 公開反映・`succeeded` |
+
+- **Authパターンは流用 (重複実装しない)**: `scripts/lib/local-backend.cjs` —
+  `test-local-backend.mjs` と journey の**共通モジュール** (adminユーザー作成・
+  ローカルJWTminting+実 `GET /auth/v1/user` 検証・functions serve寿命管理)。
+  `.cjs` は jestが `.mjs`を変換しないため (runnerはESMのdefault importで利用)。
+- OAuth自体の実機検証 (Apple/Google成功・取消・中断) は従来どおり device-pending
+  (外部OAuth資格)。**この journey はそれとは独立した実データ証拠**。
+
+### マイページのログアウト入口 (Task 20からの引継ぎ要件)
+
+`mypage/index.tsx` に `performLogout` 配線を追加 (未送信/送信中の**確認表示→実行**、
+`stopWorker`/`resumeWorker` は `getSharedSyncLifecycle()` に注入 — Task 20レポート指定どおり)。
+
+```
+$ npm --prefix app test -- --runInBand __tests__/logout-entry.test.tsx
+Tests:       4 passed, 4 total
+```
+
+実測: ①入口の描画 (仕様28) ②**未送信1件と送信中1件を別々に説明**しキャンセル→
+worker停止・マーカー・port一切なし ③実行→`stop → (マーカー存在下で)invalidate →
+discard → purge → resume` の順を実測、マーカー消去・アカウントデータ消去・
+provider refresh ④オフライン失効→`pending`: マーカー保持・データ保持・
+`resume` 呼び出し・案内表示。**モックはtransport/discardのみ (実performLogout・
+実countUnsent・実SQLite・実deleteAccountData)**。
+
+### ネイティブ配布設定の検証
+
+```
+$ node scripts/check-native-config.mjs --dev     # ローカル設定 → exit 0 (all checks passed)
+$ node scripts/check-native-config.mjs           # 配布準備 → exit 2 (正しく失敗)
+  FAIL  missing external inputs: INVITE_ORIGIN, IOS_BUNDLE_ID, APPLE_TEAM_ID,
+        APP_STORE_ID, ANDROID_PACKAGE, ANDROID_CERT_SHA256 …
+```
+
+- 2モードの区別・検証項目は `docs/operations/app-foundation-friends-ui.md`
+  「ネイティブビルド・配布設定の検証 (Task 21)」に記載。
+- `app/eas.json`: development (`developmentClient` + internal) / preview (internal + apk)。
+  **識別子はeas.jsonに複製しない** (正本 = app.json / expo config)。checkerが一致を検証。
+- `app/app.json`: `android.package: "com.anonymous.app"` を追加 (iOS bundleIdentifierと同一の
+  開発用識別子。未入力だと prebuild が対話プロンプトで停止)。**ストア申請時は実所有idへ
+  差し替えが必要** (配布済みと呼ばない)。
+- TEST-ONLY fixture値 (`--test-config` 用) は配布準備モードで**必ずFAIL** (checker実測)。
+
+### 実機スクリーンショット (docs/testing/screenshots/task-21/)
+
+| ファイル | 端末・OS・ビルド | 手順 | 期待 | 実結果 |
+| --- | --- | --- | --- | --- |
+| 01-iphone-login-light.png | iPhone 18 Pro / iOS 27.0 / dev build `com.anonymous.app` (Build Succeeded・実Metroバンドル) | `simctl ui appearance light` → SpringBoard再起動 (`simctl spawn booted launchctl kickstart -k system/com.apple.SpringBoard`) → `simctl terminate` → `simctl launch` → screenshot | ログイン画面がライトで表示 | **一致** (実アプリ・実iOSのフレーム) |
+| 02-iphone-login-dark.png | 同上 | 同手順で `appearance dark` | ダークに追従 (端末に合わせる) | **一致** (surface暗転・可読) |
+| 03-iphone-login-dark-text-XXXL.png | 同上 | `content_size extra-extra-extra-large` → SpringBoard再起動 → 冷起動 → screenshot | 文字拡大 (標準サイズ最大) で可読 | **一致** (見出し・ボタン・本文が拡大、破綻なし) |
+| 04-ipad-login.png | iPad Pro 13-inch (M5) / iOS 27.0 / 同ビルド | `simctl install` → `simctl launch` → screenshot | タブレットで起動・表示 | **一致** (Metroへ自動接続しログイン画面到達。タスク11でブロックされていたiPad起動が今回成功) |
+
+- 見た目検証用HTMLは**一切使っていない** (全て実アプリ・実OSのスクリーンショット)。
+
+### 端末マトリクス (iPhone / Android / タブレット)
+
+| 項目 | 端末・OS・ビルド | 手順 | 期待 | 実結果 |
+| --- | --- | --- | --- | --- |
+| 明暗 (iPhone) | iPhone 18 Pro / iOS 27.0 / dev build | 上表 01/02 の手順 | 両テーマで可読 | **実測OK** (01・02) |
+| 文字拡大 (iPhone) | 同上 | 上表 03 の手順 (`content_size extra-extra-extra-large`) | 拡大後もレイアウト破綻なし | **実測OK** (03)。注: `accessibility-*` 系カテゴリは `simctl ui` では設定されるが**RNアプリへ伝わらず通常サイズのまま** (ネイティブ設定.appでは拡大表示を確認 — 環境観測として下記に記録) |
+| 起動 (タブレット) | iPad Pro 13-inch (M5) / iOS 27.0 / 同ビルド | `simctl install`+`launch` | 起動・表示 | **実測OK** (04) |
+| 登録 (iPhone/Android/タブレット) | 全端末 | ログイン→登録画面へ | User ID・表示名の登録UI動作 | **device-pending**: 実Apple/Google OAuth資格が未提供 (Apple Team ID / Google Client ID — ops doc「未提供の外部入力」) + ヘッドレスシミュレータは**タップ入力なし** (Xcode 27制約)。サーバー側の登録は journey#1-2 で実後端実測、UI規則は jest (registration-flow 等) |
+| 画像 (プロフィール画像) | 同上 | 登録後→マイページ→編集→画像選択 | 選択・切り抜き・円形表示 | **device-pending**: 上記に加え画像ピッカー/カメラ/写真アクセスの**許可ダイアログもタップ不可**。処理パイプラインは jest (Task 16) + 実SQLite/FS実測 (Task 16) |
+| QR (招待QR・読み取り) | 同上 | 友達追加→QR表示/スキャン | QR表示・カメラ読取 | **device-pending**: 同上 (カメラ許可UI到達不可)。生成・パースは jest (Task 14) |
+| 幅変更 (900境界・2列) | 同上 (幅≥900は iPad/横長) | ログイン→タブシェル→幅/文字拡大変更 | 900以上で左ナビ2列、狭い/拡大で4タブ1列、選択・下書き保持 | **device-pending**: タブシェル自体がログイン後のみ到達 (OAuth未提供+タップなし)。境界ロジックは jest 実測 (theme-layout 889/900/fontScale) |
+| 音声読み上げ (VoiceOver) | iPhone/iPad / iOS 27.0 | 設定→アクセシビリティ→VoiceOver → 画面操作 | ラベル・読み上げ順で操作可能 | **device-pending**: `simctl` にVoiceOver切替コマンドがなく (appearance/content_sizeのみ提供)、設定.app内のタップも不可。ラベル付与はjestで検証済み (accessibilityLabel/role assertions) |
+| Android 全項目 | (端末なし) | `npx expo run:android --device` | ビルド・インストール・起動 | **ブロッカー (実エラー)**: `CommandError: No Android connected device found, and no emulators could be started automatically.` — `adb devices` は空、**AVDなし** (system image `android-37.0` は存在するがAVD未作成)、物理端末なし。`prebuild`自体は成功 (`android.package` 追加により対話プロンプトなし) |
+
+### 検証コマンドと結果 (一覧)
+
+| コマンド | 結果 |
+| --- | --- |
+| `npm --prefix app test -- --runInBand __tests__/app-journey.test.tsx` | **7 passed** |
+| `npm --prefix app test -- --runInBand __tests__/logout-entry.test.tsx` | **4 passed** |
+| `npm --prefix app test -- --runInBand` | **36 suites / 623 tests 全通過** (タスク20比: 34/612 → +2/+11) |
+| `npm --prefix app run typecheck` | **0 errors** |
+| `node scripts/test-local-backend.mjs --suite all` | **191 passed** (helper共通化後の回帰) |
+| `node --test scripts/invite-web.test.mjs` | **25 passed** (app.json・invite-web-config変更後も `expo config` 両状態green) |
+| `node scripts/check-native-config.mjs --dev` | **exit 0** (all checks passed) |
+| `node scripts/check-native-config.mjs` | **exit 2** — 6つの外部入力未提供を明示 (配布準備は未達。**捏造しない**) |
+| `npx expo run:ios --device <UDID>` | **Build Succeeded** / 0 errors, 1 warning / install + launch 実測 |
+| `npx expo run:android --device` | **exit 1 (blocker)** — 上記エラー全文 |
+| `npx supabase test db` | **621 passed / Files=7** (サーバー無変更の回帰) |
+| `npx deno test --allow-env --allow-net --config supabase/functions/deno.json supabase/functions/tests` | **128 passed** (同上) |
+
+### 検証中に判明した環境問題と対処 (再発時に再利用可)
+
+1. **jest-expoは `expo/fetch` をグローバル `fetch` に差し替え、そのnative module
+   (`ExpoFetchModule`) はテスト用スタブ** → `res.status === undefined` で実HTTPが死ぬ。
+   → `app/testSupport/nodeFetch.ts` がNode realmに残る**本物のundici fetch**を
+   捕まえて (`process.nextTick.constructor('return globalThis')()` 経由) ジョーニーのimport時
+   に復元。**journey以外のテストは注入wireのまま** (影響なし)。
+2. **外観・文字サイズの変更はSpringBoard再起動を挟むまでアプリへ届かない** (タスク11と同一)。
+   `simctl ui …` → `simctl spawn booted launchctl kickstart -k system/com.apple.SpringBoard`
+   → `terminate` → `launch` → screenshot。**1サイクル-staleになることがあった** (設定と
+   表示がずれる) ので、撮影後は画像を必ず目視確認してから確定 (不一致は撮り直し)。
+3. `accessibility-*` 系の文字サイズはネイティブ設定.appでは効くが**RNアプリに伝達されず**
+   (冷起動後も通常サイズ)。標準最大 `extra-extra-extra-large` は伝達された (03を確認)。
+4. **`"app" で開きますか?` の起動確認ダイアログ** (タスク11と同じ) はタップ不可。
+   → SpringBoard再起動で消える (有効な回避策)。
+5. `simctl launch` は**既存プロセスを前面化しない** (同一PIDで何も起きない)。
+   前面化には `terminate` → `launch` の順が必要 (別アプリ比較の時も同じ)。
+6. `logout-entry.test.tsx` の**テスト順は意図的** (render → pending → cancel → completed):
+   「cancel→completed の直後に別のレンダー」の組み合わせで state更新が落ちる
+   (renderRouterのfake timer下の act多重化)。組合せは特定済み・順序固定で安定。
+
+### device-pending まとめ (今回の打切り条件)
+
+| 項目 | 理由 (具体) |
+| --- | --- |
+| 実OAuth (Apple/Google) を含む 登録/ログインUI実機操作 | Apple Team ID・Google OAuth Client ID/Secret 未提供 (ops doc) + ヘッドレスでタップ入力なし |
+| 画像・QR・許可ダイアログ操作 | 同上 (ログイン未了 + タップ不可) |
+| 900境界の2列表示・タブ内詳細保持 | ログイン後のタブシェル到達不可 |
+| VoiceOver操作 | simctl に切替手段なし・設定.appのタップ不可 |
+| Android全項目 | 接続端末/AVDなし (AVD作成は未実施の追加作業、system imageは有り) |
+| EASビルド (`eas build`) | EASアカウント・署名資格なし (外部入力) |
+
+---
+
 ## Task 20: バックグラウンド再送とログアウト境界 (2026-09-27 JST)
 
 ### 環境

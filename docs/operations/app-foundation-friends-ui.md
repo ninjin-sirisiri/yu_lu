@@ -260,6 +260,59 @@ curl -sS -o /dev/null -w '%{http_code}\n' -X POST \
 
 ---
 
+## ネイティブビルド・配布設定の検証 (Task 21) — check-native-config / eas.json
+
+開発・検証用ビルド設定を**実際のアプリ識別子**に結び付けて検証する。
+識別子の正本は `app/app.json` (`ios.bundleIdentifier` /
+`android.package`) と、`app/app.config.ts` が評価した `npx expo config`
+の出力。`app/eas.json` は**識別子を複製しない** (EAS は app config を
+読むため)。このリポジトリの約束: 値は発明しない、公開済みであると主張しない。
+
+### `app/eas.json` (開発・検証プロファイルの足場)
+
+| プロファイル | 内容 | 用途 |
+| --- | --- | --- |
+| `development` | `developmentClient: true` + `distribution: internal` | 実dev client (appは expo-dev-client 依存を確認済み) |
+| `preview` | `distribution: internal` + Android `buildType: apk` | 検証配布 (内部配布)。ストア提出は行わない |
+
+- `eas build --profile development` / `--profile preview` は **EAS
+  アカウント・署名資格が無いためこの環境では未実行** (外部依存。ブロッカー
+  として記録)。ローカルの検証経路は `npx expo run:ios` / `run:android`。
+- `android.package = com.anonymous.app` を `app.json` に追加 (iOS の
+  bundleIdentifier と同一の開発用識別子。prebuild/`expo run:android` は
+  未入力だと対話プロンプトで止まるため必須)。**ストア申請時は
+  実所有の application id へ差し替えること** (現状を配布済みと呼ばない)。
+
+### `scripts/check-native-config.mjs` — 2モードの区別
+
+```sh
+node scripts/check-native-config.mjs          # 配布準備モード (default)
+node scripts/check-native-config.mjs --dev    # ローカル設定モード
+```
+
+| | default (配布準備) | `--dev` (ローカル) |
+| --- | --- | --- |
+| app.json 識別子・アイコン・expo config の一致・eas.json 配線 | 検証 (両モード) | 検証 |
+| 6つの外部入力 (INVITE_ORIGIN / IOS_BUNDLE_ID / APPLE_TEAM_ID / APP_STORE_ID / ANDROID_PACKAGE / ANDROID_CERT_SHA256) | **全件必須**。不足・不正・TEST-ONLYfixture値 → **exit 2** (不足分を列挙) | 未設定は INFO のみ。**設定されている値は検証** (不正なら fail) |
+| 外部入力と app.json の一致 (IOS_BUNDLE_ID / ANDROID_PACKAGE) | 必須検証 | 6入力が揃ったときのみ検証 |
+
+- **この環境での実測**: default は6入力未提供のため `exit 2`
+  (正しく失敗 = 配布準備未達の明示)。`--dev` は `exit 0`。
+  6入力は Task 15 の招待Webビルドと**同じ変数・同じ検証**
+  (`scripts/invite-web-config.mjs`) を使う。
+- TEST-ONLY fixture (`--test-config` 用の `.test` 値) は default では
+  **配布準備として必ず失敗**する。fixture を配布実績として扱わない。
+
+### 検証コマンド
+
+```sh
+node scripts/check-native-config.mjs --dev    # ローカル: exit 0 が正常
+node scripts/check-native-config.mjs          # 配布準備: 6入力提供まで exit 2 (正常な失敗)
+npx expo config --type public --json          # 識別子の正本 (app.config.ts 評価結果)
+```
+
+---
+
 ## 未提供の外部入力 (このリポジトリでは設定できないもの)
 
 | 入力 | 用途 | 提供待ちの影響 |
@@ -269,6 +322,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' -X POST \
 | 本番 Supabase URL / publishable key | アプリ接続 | 本番ビルド起動不可 (明確なエラーで停止) |
 | 実運用 scheme / HTTPS招待ドメイン / 署名 | リンク・関連付け (Task 15) | ストア配布前の検証不可 (手順は上記「招待Web・ドメイン関連付け」節) |
 | `EXPO_ACCESS_TOKEN` (EASアクセストークン) | notification-dispatch のExpo実送信 (Task 18) | 未設定でも配送行の生成のみで安全動作 (送信バッチはクレームしない)。設定後は実プッシュ送信が可能 |
+| check-native-config の6入力 (INVITE_ORIGIN / IOS_BUNDLE_ID / APPLE_TEAM_ID / APP_STORE_ID / ANDROID_PACKAGE / ANDROID_CERT_SHA256) と EASアカウント・署名資格 | 配布準備の検証・`eas build` (Task 21) | `node scripts/check-native-config.mjs` は6入力提供まで exit 2 (意図した失敗)。`--dev` はローカル検証のみで exit 0。EASビルドは資格待ちで未実行 |
 
 提供されたら: 上記の秘密値を環境変数に投入 → プロバイダを `enabled = true` に →
 コールバックURLをallow-listへ → docs/testing の手順で実OAuth成功・取消・callback中断を実施する。
