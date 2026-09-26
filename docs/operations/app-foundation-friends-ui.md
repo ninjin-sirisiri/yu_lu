@@ -195,6 +195,71 @@ diff <(curl -sS https://<domain>/.well-known/assetlinks.json) invite-web/dist/.w
 
 ---
 
+## 定期処理の認証済み定期呼び出し (Task 18) — request-expiry / notification-dispatch
+
+`request-expiry` (申請・招待の期限切れ処理) と `notification-dispatch`
+(通知イベント → 端末への配信ワーカー) は **サービス専用** の Edge Function。
+プラットフォームの verify_jwt がプロジェクト署名の Authorization を要求し、
+関数内の `requireServiceCall` がさらに `Bearer <service key>` を要求する
+(資格が未設定ならフェイルクローズ)。エンドユーザー JWT・匿名呼び出しは 401。
+資格は必ず環境変数から供給し、リポジトリに書かないこと。
+
+### 設定手順
+
+1. **スケジューラ登録** (pg_cron / Supabase Scheduler / 外部 cron):
+   - `request-expiry`: 1日1回以上 (期限判定はサーバー時刻なので遅れても挙動は不変)。
+   - `notification-dispatch`: 5〜15分間隔。**二重起動はDBのclaim行が吸収する**
+     (先にclaimした実行だけが処理し、負けた実行は `dispatch busy` と応じて
+     何も生成しない)。オーバーラップ呼び出しは安全。
+   - `functions deploy` とスケジュール設定はこのworktreeの外 (CI/実環境) で行う。
+2. **実送信の資格**: `notification-dispatch` が Expo へ実際に送るのは
+   `EXPO_ACCESS_TOKEN` (EASアクセストークン) が設定されているときだけ。
+   **未設定でも安全に動作する**: イベントの配送行は生成 (キューため) されるが、
+   送信バッチはクレームせず、ネットワーク呼び出しはゼロ。
+   トークンは環境変数で供給しコミットしない。
+3. **端末登録** (`device-session`) はユーザー JWT で呼ぶ通常のエンドポイント
+   (Task 19 のクライアントが担当)。スケジューラ設定は不要。
+
+### 検証コマンド
+
+```sh
+# DB層: スキーマ・権利・二重起動claim・生成冪等・失効トークン・再処理 (pgTAP)
+npx supabase test db
+
+# 関数層 (オフライン): ペイロードgate・本文がpublicフィールドのみ・Expoアダプタ分類
+npx deno test --allow-env --allow-net --config supabase/functions/deno.json \
+  supabase/functions/tests/notifications.test.ts
+
+# 実HTTP統合: 端末登録 (複数端末/失効/無権限)・dispatchのclaim・配送生成
+node scripts/test-local-backend.mjs --suite notifications
+node scripts/test-local-backend.mjs --suite all        # 全スイート
+
+# 認証された定期呼び出しの手動確認 (資格は npx supabase status --output json から
+# シェル環境へ読み込む。値はログに表示しない)
+curl -sS -X POST "$SUPABASE_URL/functions/v1/request-expiry" \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY"
+# → 200 "expiry ok"
+
+curl -sS -X POST "$SUPABASE_URL/functions/v1/notification-dispatch" \
+  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY"
+# → 200 "dispatch ok" (claim保持中は 200 "dispatch busy")
+
+curl -sS -o /dev/null -w '%{http_code}\n' -X POST \
+  "$SUPABASE_URL/functions/v1/notification-dispatch"
+# → 401 (Bearerなし)
+
+curl -sS -o /dev/null -w '%{http_code}\n' -X POST \
+  "$SUPABASE_URL/functions/v1/notification-dispatch" \
+  -H "Authorization: Bearer $ANON_KEY"
+# → 401 (エンドユーザー資格は不可)
+```
+
+通知の内容は event_type・相手の表示名・種別ごとの定型文のみ (private な
+進捗・連続記録は送らない)。拒否と招待リンク自体の期限切れはイベント自体を
+記録しないため配送行が生成されない。
+
+---
+
 ## 未提供の外部入力 (このリポジトリでは設定できないもの)
 
 | 入力 | 用途 | 提供待ちの影響 |
@@ -203,6 +268,7 @@ diff <(curl -sS https://<domain>/.well-known/assetlinks.json) invite-web/dist/.w
 | Google OAuth Client ID/Secret | Google ログイン | Google実ログイン不可 |
 | 本番 Supabase URL / publishable key | アプリ接続 | 本番ビルド起動不可 (明確なエラーで停止) |
 | 実運用 scheme / HTTPS招待ドメイン / 署名 | リンク・関連付け (Task 15) | ストア配布前の検証不可 (手順は上記「招待Web・ドメイン関連付け」節) |
+| `EXPO_ACCESS_TOKEN` (EASアクセストークン) | notification-dispatch のExpo実送信 (Task 18) | 未設定でも配送行の生成のみで安全動作 (送信バッチはクレームしない)。設定後は実プッシュ送信が可能 |
 
 提供されたら: 上記の秘密値を環境変数に投入 → プロバイダを `enabled = true` に →
 コールバックURLをallow-listへ → docs/testing の手順で実OAuth成功・取消・callback中断を実施する。

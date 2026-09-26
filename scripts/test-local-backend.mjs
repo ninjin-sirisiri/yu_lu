@@ -7,6 +7,7 @@
 //        node scripts/test-local-backend.mjs --suite discovery
 //        node scripts/test-local-backend.mjs --suite invitations
 //        node scripts/test-local-backend.mjs --suite profile-publication
+//        node scripts/test-local-backend.mjs --suite notifications
 //        node scripts/test-local-backend.mjs --suite all
 //
 // Ownership: real-stack verification of the authenticated command boundary.
@@ -60,7 +61,21 @@
 // leave every field unchanged, same-version concurrent updates settle
 // exactly one winner, others can read only objects a published profile
 // references (clearing the image revokes that read), anon has no access,
-// and the direct profile write path stays closed (profile-publication).
+// and the direct profile write path stays closed (profile-publication);
+// and notifications - the device-session contract (401 for a missing /
+// forged / anon-key session, the shared payload-gate messages,
+// multi-device registration, idempotent re-registration of the same
+// token, actor-scoped idempotent unregister, a foreign unregister
+// changing nothing, and a token revived after unregister), the
+// notification-dispatch service gate, the dispatch claim held in the DB
+// (a held claim answers "dispatch busy" and generates NOTHING; release
+// then run), delivery generation per event x valid device (arrival to the
+// recipient, establishment to the sender's two devices as separate rows,
+// the invalidated token generating nothing, and a second dispatch run
+// over the same events creating zero new rows), the row-level batch claim
+// handing each row to exactly one run, and the closure of the new tables
+// (clients cannot read the queue; direct device writes are refused)
+// (notifications).
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createHmac, randomUUID } from 'node:crypto';
@@ -4374,6 +4389,546 @@ function profilePublicationSuite(status, users) {
   ];
 }
 
+// ---------------------------------------------------------------------------
+// Suite: notifications (Task 18 device registration + delivery worker)
+// ---------------------------------------------------------------------------
+
+// Clearly marked fake push tokens - never values shaped like real Expo
+// tokens. The Expo Push API is never called from here: no EXPO_ACCESS_TOKEN
+// exists in this environment, so notification-dispatch generates delivery
+// rows and performs zero network sends (the adapter's classification is
+// covered offline by supabase/functions/tests/notifications.test.ts).
+const FAKE_PUSH_A1 = 'FAKE-PUSH-TOKEN-TEST-ONLY-A1';
+const FAKE_PUSH_A2 = 'FAKE-PUSH-TOKEN-TEST-ONLY-A2';
+const FAKE_PUSH_B1 = 'FAKE-PUSH-TOKEN-TEST-ONLY-B1';
+const FAKE_PUSH_C1 = 'FAKE-PUSH-TOKEN-TEST-ONLY-C1';
+
+const DEVICE_MESSAGES_HTTP = {
+  tokenRequired: 'push_token is required',
+  tokenType: 'push_token must be a string',
+  deviceIdUuid: 'device_id must be a UUID',
+};
+
+function notificationsSuite(status, users) {
+  const { nA, nB, nC } = users;
+  const envelope = (kind, payload, id = randomUUID()) => ({
+    operation_id: id,
+    kind,
+    payload,
+  });
+  const cmd = (user, kind, payload) =>
+    postFunction(status, 'app-command', {
+      token: user.token,
+      body: envelope(kind, payload),
+    });
+  const session = (body, opts = {}) =>
+    postFunction(status, 'device-session', { body, ...opts });
+  const service = (path, opts = {}) =>
+    postRest(status, path, {
+      method: 'GET',
+      apikey: status.SERVICE_ROLE_KEY,
+      token: status.SERVICE_ROLE_KEY,
+      ...opts,
+    });
+  const serviceWrite = (path, opts = {}) =>
+    postRest(status, path, {
+      apikey: status.SERVICE_ROLE_KEY,
+      token: status.SERVICE_ROLE_KEY,
+      ...opts,
+    });
+  const rpc = (name, body) =>
+    postRest(status, `rpc/${name}`, {
+      method: 'POST',
+      apikey: status.SERVICE_ROLE_KEY,
+      token: status.SERVICE_ROLE_KEY,
+      body,
+    });
+  const dispatch = (token) =>
+    postFunction(status, 'notification-dispatch', { token, body: '{}' });
+  // `query` may come in as `?col=eq.x`; it must continue the existing
+  // query string with `&` or PostgREST silently drops the filter.
+  const withFilter = (path, query) => {
+    if (!query) return path;
+    const continuation = query.startsWith('?') || query.startsWith('&')
+      ? query.slice(1)
+      : query;
+    return `${path}&${continuation}`;
+  };
+  const devices = async (query = '') =>
+    await expectJson(
+      await service(withFilter('user_devices?select=*', query)),
+      200,
+      'device read',
+    );
+  const deliveries = async (query = '') =>
+    await expectJson(
+      await service(withFilter('notification_deliveries?select=*', query)),
+      200,
+      'delivery read',
+    );
+  const registerDevice = async (user, pushToken) => {
+    const res = await session(
+      { action: 'register', push_token: pushToken },
+      { token: user.token },
+    );
+    const body = await expectJson(res, 200, 'device register');
+    expect(
+      body.status === 'registered',
+      `expected registered, got ${JSON.stringify(body)}`,
+    );
+    expect(
+      UUID_PATTERN.test(body.device_id),
+      `device id ${JSON.stringify(body.device_id)}`,
+    );
+    return body.device_id;
+  };
+  const unregisterDevice = async (user, deviceId) => {
+    const res = await session(
+      { action: 'unregister', device_id: deviceId },
+      { token: user.token },
+    );
+    const body = await expectJson(res, 200, 'device unregister');
+    expect(
+      body.status === 'unregistered',
+      `expected unregistered, got ${JSON.stringify(body)}`,
+    );
+  };
+
+  return [
+    {
+      name: 'device-session rejects requests without a token',
+      run: async () => {
+        const res = await session({
+          action: 'register',
+          push_token: FAKE_PUSH_A1,
+        });
+        await expectJson(res, 401, 'unauthenticated device-session');
+      },
+    },
+    {
+      name: 'device-session rejects malformed bearer tokens',
+      run: async () => {
+        const res = await session(
+          { action: 'register', push_token: FAKE_PUSH_A1 },
+          { token: 'not-a-jwt' },
+        );
+        // The platform verify_jwt check already refuses the format; the
+        // handler's own fail-closed 401 covers well-formed but invalid
+        // tokens (exercised by the anon-key test below).
+        await expectJson(res, 401, 'garbage bearer');
+      },
+    },
+    {
+      name: 'device-session refuses the anon key as a session',
+      run: async () => {
+        const res = await session(
+          { action: 'register', push_token: FAKE_PUSH_A1 },
+          { token: status.ANON_KEY },
+        );
+        const body = await expectJson(res, 401, 'anon key as bearer');
+        expect(
+          body.error === 'invalid or expired session',
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'the register gate refuses a missing push_token',
+      run: async () => {
+        const res = await session({ action: 'register' }, { token: nA.token });
+        const body = await expectJson(res, 400, 'missing push_token');
+        expect(
+          body.error === DEVICE_MESSAGES_HTTP.tokenRequired,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'the register gate refuses a non-string push_token',
+      run: async () => {
+        const res = await session(
+          { action: 'register', push_token: 42 },
+          { token: nA.token },
+        );
+        const body = await expectJson(res, 400, 'non-string push_token');
+        expect(
+          body.error === DEVICE_MESSAGES_HTTP.tokenType,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'the unregister gate refuses a malformed device_id',
+      run: async () => {
+        const res = await session(
+          { action: 'unregister', device_id: 'nope' },
+          { token: nA.token },
+        );
+        const body = await expectJson(res, 400, 'malformed device_id');
+        expect(
+          body.error === DEVICE_MESSAGES_HTTP.deviceIdUuid,
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'A registers its first device',
+      run: async (ctx) => {
+        ctx.devA1 = await registerDevice(nA, FAKE_PUSH_A1);
+      },
+    },
+    {
+      name: 'A registers a second device',
+      run: async (ctx) => {
+        ctx.devA2 = await registerDevice(nA, FAKE_PUSH_A2);
+        expect(ctx.devA2 !== ctx.devA1, 'distinct device ids');
+        const rows = await devices(`?user_id=eq.${nA.id}`);
+        expect(rows.length === 2, `expected 2 devices, got ${rows.length}`);
+      },
+    },
+    {
+      name: 're-registering the same token is idempotent',
+      run: async (ctx) => {
+        const again = await registerDevice(nA, FAKE_PUSH_A1);
+        expect(again === ctx.devA1, 'the device id is stable');
+        const rows = await devices(`?user_id=eq.${nA.id}`);
+        expect(rows.length === 2, `no duplicate, got ${rows.length}`);
+      },
+    },
+    {
+      name: 'the owner unregisters a device',
+      run: async (ctx) => {
+        await unregisterDevice(nA, ctx.devA2);
+        const rows = await devices(`?user_id=eq.${nA.id}`);
+        expect(rows.length === 1, `expected 1 device, got ${rows.length}`);
+      },
+    },
+    {
+      name: 'repeating the unregister is idempotent',
+      run: async (ctx) => {
+        await unregisterDevice(nA, ctx.devA2);
+        const rows = await devices(`?user_id=eq.${nA.id}`);
+        expect(rows.length === 1, `expected 1 device, got ${rows.length}`);
+      },
+    },
+    {
+      name: 'another account cannot unregister a foreign device',
+      run: async (ctx) => {
+        await unregisterDevice(nB, ctx.devA1);
+        const rows = await devices(`?device_id=eq.${ctx.devA1}`);
+        expect(rows.length === 1, 'the foreign device still exists');
+      },
+    },
+    {
+      name: 'A registers the second token again (multi-device restored)',
+      run: async (ctx) => {
+        ctx.devA2 = await registerDevice(nA, FAKE_PUSH_A2);
+        const rows = await devices(`?user_id=eq.${nA.id}`);
+        expect(rows.length === 2, `expected 2 devices, got ${rows.length}`);
+      },
+    },
+    {
+      name: 'B and C register their devices',
+      run: async (ctx) => {
+        ctx.devB1 = await registerDevice(nB, FAKE_PUSH_B1);
+        ctx.devC1 = await registerDevice(nC, FAKE_PUSH_C1);
+        const rows = await devices();
+        expect(rows.length === 4, `expected 4 devices, got ${rows.length}`);
+      },
+    },
+    {
+      name: "C's token is invalidated as the provider would report it",
+      run: async (ctx) => {
+        const res = await serviceWrite(
+          `user_devices?device_id=eq.${ctx.devC1}`,
+          {
+            method: 'PATCH',
+            body: { invalidated_at: new Date().toISOString() },
+          },
+        );
+        await expectJson(res, 204, 'device invalidation');
+        const rows = await devices(`?device_id=eq.${ctx.devC1}`);
+        expect(
+          rows.length === 1 &&
+            typeof rows[0].invalidated_at === 'string' &&
+            rows[0].invalidated_at !== null,
+          `invalidation not stored: ${JSON.stringify(rows)}`,
+        );
+      },
+    },
+    {
+      name: 'the three accounts register their profiles',
+      run: async () => {
+        const results = await Promise.all([
+          cmd(nA, 'register', { user_id_text: 'Notif_A', display_name: 'Notify A' }),
+          cmd(nB, 'register', { user_id_text: 'Notif_B', display_name: 'Notify B' }),
+          cmd(nC, 'register', { user_id_text: 'Notif_C', display_name: 'Notify C' }),
+        ]);
+        for (const res of results) {
+          const body = await expectJson(res, 200, 'profile register');
+          expect(
+            body.status === 'executed',
+            `expected executed, got ${JSON.stringify(body)}`,
+          );
+        }
+      },
+    },
+    {
+      name: 'A sends a request to C (whose device is invalidated)',
+      run: async () => {
+        const res = await cmd(nA, 'request', { target_user_id: nC.id });
+        const body = await expectJson(res, 200, 'A -> C request');
+        expect(
+          body.result.result === 'requested',
+          `unexpected result ${JSON.stringify(body.result)}`,
+        );
+      },
+    },
+    {
+      name: 'A sends a request to B',
+      run: async (ctx) => {
+        const res = await cmd(nA, 'request', { target_user_id: nB.id });
+        const body = await expectJson(res, 200, 'A -> B request');
+        expect(
+          body.result.result === 'requested',
+          `unexpected result ${JSON.stringify(body.result)}`,
+        );
+        ctx.reqAB = body.result.request_id;
+      },
+    },
+    {
+      name: 'B approves the request from the inbox',
+      run: async (ctx) => {
+        const inbox = await expectJson(
+          await postRest(status, 'friend_request_inbox?select=request_id,status', {
+            token: nB.token,
+            method: 'GET',
+          }),
+          200,
+          'inbox read',
+        );
+        const pending = inbox.find((r) => r.request_id === ctx.reqAB);
+        expect(
+          pending !== undefined && pending.status === 'pending',
+          `inbox missing the pending request: ${JSON.stringify(inbox)}`,
+        );
+        const res = await cmd(nB, 'approve', { request_id: ctx.reqAB });
+        const body = await expectJson(res, 200, 'approve');
+        expect(
+          body.result.result === 'approved',
+          `unexpected result ${JSON.stringify(body.result)}`,
+        );
+      },
+    },
+    {
+      name: 'the dispatch claim is taken in the database',
+      run: async (ctx) => {
+        const first = await expectJson(
+          await rpc('claim_notification_dispatch', { p_claimed_by: 'runner' }),
+          200,
+          'first claim',
+        );
+        expect(
+          typeof first === 'string' && UUID_PATTERN.test(first),
+          `claim id ${JSON.stringify(first)}`,
+        );
+        ctx.claimId = first;
+        const second = await expectJson(
+          await rpc('claim_notification_dispatch', { p_claimed_by: 'runner' }),
+          200,
+          'second claim',
+        );
+        expect(
+          second === null,
+          `a held claim must refuse the second start, got ${JSON.stringify(second)}`,
+        );
+      },
+    },
+    {
+      name: 'notification-dispatch reports busy while the claim is held',
+      run: async () => {
+        const res = await dispatch(status.SERVICE_ROLE_KEY);
+        const body = await res.text();
+        expect(
+          res.status === 200 && body === 'dispatch busy',
+          `expected busy, got ${res.status}: ${body.slice(0, 200)}`,
+        );
+        const rows = await deliveries();
+        expect(rows.length === 0, `a busy run generates nothing, got ${rows.length}`);
+      },
+    },
+    {
+      name: 'notification-dispatch rejects requests without a token',
+      run: async () => {
+        const res = await postFunction(status, 'notification-dispatch', {
+          body: '{}',
+        });
+        await expectJson(res, 401, 'unauthenticated dispatch');
+      },
+    },
+    {
+      name: 'notification-dispatch rejects end-user sessions',
+      run: async () => {
+        const res = await dispatch(nA.token);
+        const body = await expectJson(res, 401, 'end-user dispatch');
+        expect(
+          body.error === 'service credential required',
+          `unexpected body ${JSON.stringify(body)}`,
+        );
+      },
+    },
+    {
+      name: 'the runner releases its claim',
+      run: async (ctx) => {
+        const released = await expectJson(
+          await rpc('release_notification_dispatch', { p_claim_id: ctx.claimId }),
+          200,
+          'release',
+        );
+        expect(released === true, `expected release true, got ${JSON.stringify(released)}`);
+      },
+    },
+    {
+      name: 'notification-dispatch runs with the service credential',
+      run: async () => {
+        const res = await dispatch(status.SERVICE_ROLE_KEY);
+        const body = await res.text();
+        expect(
+          res.status === 200 && body === 'dispatch ok',
+          `expected dispatch ok, got ${res.status}: ${body.slice(0, 200)}`,
+        );
+      },
+    },
+    {
+      name: 'deliveries are generated per event and valid device',
+      run: async () => {
+        const rows = await deliveries();
+        expect(
+          rows.length === 3,
+          `expected 3 deliveries, got ${rows.length}: ${
+            JSON.stringify(rows.map((r) => [r.event_type, r.recipient_user_id]))
+          }`,
+        );
+        const arrivalB = rows.filter(
+          (r) => r.event_type === 'request_received' && r.recipient_user_id === nB.id,
+        );
+        expect(
+          arrivalB.length === 1 &&
+            arrivalB[0].peer_display_name === 'Notify A',
+          `arrival to B: ${JSON.stringify(arrivalB)}`,
+        );
+        const establishmentA = rows.filter(
+          (r) =>
+            r.event_type === 'friendship_established' &&
+            r.recipient_user_id === nA.id,
+        );
+        expect(
+          establishmentA.length === 2,
+          `multi-device rows for the sender, got ${establishmentA.length}`,
+        );
+        expect(
+          establishmentA.every((r) => r.peer_display_name === 'Notify B'),
+          `peer display names: ${JSON.stringify(establishmentA)}`,
+        );
+        const forC = rows.filter((r) => r.recipient_user_id === nC.id);
+        expect(
+          forC.length === 0,
+          `the invalidated device received nothing, got ${forC.length}`,
+        );
+        expect(
+          rows.every((r) => r.status === 'pending' && r.attempts === 0),
+          `rows start pending with no attempts: ${JSON.stringify(
+            rows.map((r) => [r.status, r.attempts]),
+          )}`,
+        );
+      },
+    },
+    {
+      name: 're-running dispatch reprocesses the same events without duplicates',
+      run: async () => {
+        const res = await dispatch(status.SERVICE_ROLE_KEY);
+        const body = await res.text();
+        expect(
+          res.status === 200 && body === 'dispatch ok',
+          `expected dispatch ok, got ${res.status}: ${body.slice(0, 200)}`,
+        );
+        const rows = await deliveries();
+        expect(
+          rows.length === 3,
+          `the same events must not duplicate rows, got ${rows.length}`,
+        );
+      },
+    },
+    {
+      name: 'the batch claim hands each row to exactly one run',
+      run: async () => {
+        const first = await expectJson(
+          await rpc('claim_notification_batch', { p_limit: 100 }),
+          200,
+          'first batch',
+        );
+        expect(
+          Array.isArray(first) && first.length === 3,
+          `expected 3 claimed rows, got ${JSON.stringify(first).slice(0, 300)}`,
+        );
+        expect(
+          first.every((r) => r.status === 'sending' && r.attempts === 1),
+          `claimed rows: ${JSON.stringify(first.map((r) => [r.status, r.attempts]))}`,
+        );
+        const second = await expectJson(
+          await rpc('claim_notification_batch', { p_limit: 100 }),
+          200,
+          'second batch',
+        );
+        expect(
+          Array.isArray(second) && second.length === 0,
+          `a claimed row is never handed out twice, got ${JSON.stringify(second)}`,
+        );
+      },
+    },
+    {
+      name: 'clients cannot read the delivery queue',
+      run: async () => {
+        const res = await postRest(status, 'notification_deliveries?select=*', {
+          token: nA.token,
+          method: 'GET',
+        });
+        if (res.status === 200) {
+          const rows = await res.json();
+          expect(
+            Array.isArray(rows) && rows.length === 0,
+            `expected no rows, got ${JSON.stringify(rows).slice(0, 200)}`,
+          );
+        } else {
+          expect(
+            res.status === 404 || res.status === 403,
+            `expected refusal, got HTTP ${res.status}`,
+          );
+        }
+      },
+    },
+    {
+      name: 'direct device registration writes are refused',
+      run: async () => {
+        const res = await postRest(status, 'user_devices', {
+          token: nA.token,
+          method: 'POST',
+          body: {
+            user_id: nA.id,
+            push_token: 'FAKE-TOKEN-DIRECT-TEST-ONLY',
+          },
+        });
+        expect(
+          res.status === 403 || res.status === 404,
+          `expected refusal, got HTTP ${res.status}`,
+        );
+        const rows = await devices('?push_token=eq.FAKE-TOKEN-DIRECT-TEST-ONLY');
+        expect(rows.length === 0, 'nothing was written');
+      },
+    },
+  ];
+}
+
 const SUITES = {
   'command-boundary': {
     definitions: (runId) => [
@@ -4437,6 +4992,14 @@ const SUITES = {
       { key: 'ppU', email: `pp-${runId}-u@profile-publication.test` },
     ],
     build: profilePublicationSuite,
+  },
+  notifications: {
+    definitions: (runId) => [
+      { key: 'nA', email: `notif-${runId}-a@notifications.test` },
+      { key: 'nB', email: `notif-${runId}-b@notifications.test` },
+      { key: 'nC', email: `notif-${runId}-c@notifications.test` },
+    ],
+    build: notificationsSuite,
   },
 };
 
