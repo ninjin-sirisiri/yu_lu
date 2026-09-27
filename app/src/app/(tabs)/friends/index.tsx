@@ -18,6 +18,7 @@ import {
   type FriendsSnapshot,
 } from '../../../requests/friendsRepository';
 import { zeroFriendGuidance } from '../../../requests/zeroFriends';
+import { scrollRefToTop, subscribeTabReselect } from '../../../navigation/tabReselect';
 import { useTheme } from '../../../theme/provider';
 import { controls, radius, spacing, typography } from '../../../theme/tokens';
 import { Button } from '../../../ui/Button';
@@ -104,6 +105,15 @@ export function FriendsArea({ metrics }: FriendsAreaProps) {
   // 復帰 (app resume) と 成立 (friendship established) で更新する.
   useEffect(() => subscribeAppResume(() => void refresh()), [refresh]);
   useEffect(() => subscribeFriendsChanged(() => void refresh()), [refresh]);
+
+  // Task 22 (spec line 32): 選択中タブの再選択でこの一覧を先頭へ戻す.
+  // The rows list is the friends tab's scrollable; when it renders no
+  // ScrollView (空一覧) the ref is null and the helper simply no-ops.
+  const listScrollRef = useRef<ScrollView>(null);
+  useEffect(
+    () => subscribeTabReselect('friends', () => scrollRefToTop(listScrollRef)),
+    [listScrollRef],
+  );
 
   // --- Task 19: 通知の受信件数 (server-derived, never from a local cache) ---
 
@@ -320,7 +330,7 @@ export function FriendsArea({ metrics }: FriendsAreaProps) {
       )}
 
       {friends !== null && friends.length > 0 && (
-        <ScrollView contentContainerStyle={styles.listContent}>
+        <ScrollView ref={listScrollRef} contentContainerStyle={styles.listContent}>
           {friends.map((friend) => (
             <Pressable
               key={friend.userId}

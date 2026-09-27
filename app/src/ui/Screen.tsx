@@ -42,6 +42,12 @@ export interface ScreenProps {
   headerAccessory?: React.ReactNode;
   contentStyle?: StyleProp<ViewStyle>;
   testID?: string;
+  /**
+   * Exposes the `scroll` content area to the caller (Task 22: the tab
+   * re-select signal scrolls this ref back to the top). Ignored when
+   * `scroll` is off — there is no scrollable to reference.
+   */
+  scrollViewRef?: React.RefObject<ScrollView | null>;
 }
 
 export function Screen({
@@ -53,6 +59,7 @@ export function Screen({
   headerAccessory,
   contentStyle,
   testID,
+  scrollViewRef,
 }: ScreenProps) {
   const { tokens } = useTheme();
   const insets = useScreenInsets();
@@ -60,6 +67,7 @@ export function Screen({
 
   const content = scroll ? (
     <ScrollView
+      ref={scrollViewRef}
       style={styles.flex}
       contentContainerStyle={[styles.scrollContent, contentStyle]}
       keyboardShouldPersistTaps="handled"

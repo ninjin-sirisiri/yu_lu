@@ -15,6 +15,7 @@ import {
   useAdaptiveLayoutState,
 } from '../../../navigation/AdaptiveLayout';
 import { rejectionDisplay } from '../../../requests/inbox';
+import { scrollRefToTop, subscribeTabReselect } from '../../../navigation/tabReselect';
 import {
   RequestList,
   type QueuedRequestRow,
@@ -292,6 +293,15 @@ export function RequestsArea() {
         void refreshUnfinished();
       }),
     [refreshDirection, refreshUnfinished],
+  );
+
+  // Task 22 (spec line 32): 選択中タブの再選択でこの一覧を先頭へ戻す.
+  // The requests screen lives inside the friends tab, so it answers the
+  // same 'friends' re-select signal with its own scrollable.
+  const listScrollRef = useRef<ScrollView>(null);
+  useEffect(
+    () => subscribeTabReselect('friends', () => scrollRefToTop(listScrollRef)),
+    [listScrollRef],
   );
 
   // -- actions --------------------------------------------------------------
@@ -614,7 +624,11 @@ export function RequestsArea() {
       <AdaptiveLayout
         testID="requests-layout"
         list={
-          <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+          <ScrollView
+            ref={listScrollRef}
+            contentContainerStyle={styles.scroll}
+            keyboardShouldPersistTaps="handled"
+          >
             {listContent}
           </ScrollView>
         }

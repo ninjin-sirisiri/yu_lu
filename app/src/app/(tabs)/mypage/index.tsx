@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View, type ScrollView } from 'react-native';
 
 import { createDeviceLogoutPorts, performLogout, type UnsentSummary } from '../../../auth/logout';
 import { useAuth } from '../../../auth/provider';
@@ -8,6 +8,7 @@ import { getOwnPublication, type ProfilePublication } from '../../../backend/pro
 import { defaultIsOnline } from '../../../discovery/searchController';
 import { subscribeAppResume } from '../../../requests/friendsRepository';
 import { listOperations } from '../../../storage/outbox';
+import { scrollRefToTop, subscribeTabReselect } from '../../../navigation/tabReselect';
 import { countUnfinishedOperations } from '../../../sync/SyncStatus';
 import { getSharedSyncLifecycle } from '../../../sync/lifecycle';
 import { useTheme } from '../../../theme/provider';
@@ -118,6 +119,13 @@ export default function MypageScreen() {
 
   useEffect(() => subscribeAppResume(() => void refreshQueue()), [refreshQueue]);
 
+  // Task 22 (spec line 32): 選択中タブの再選択でこの一覧を先頭へ戻す.
+  const scrollRef = useRef<ScrollView>(null);
+  useEffect(
+    () => subscribeTabReselect('mypage', () => scrollRefToTop(scrollRef)),
+    [scrollRef],
+  );
+
   // -- ログアウト (Task 21) --------------------------------------------------
   //
   // performLogout OWNS the order (確認 → worker停止 → 失効 → 破棄 → 消去);
@@ -211,7 +219,7 @@ export default function MypageScreen() {
   }, [auth.accountId, auth.refresh, auth.storage, confirmUnsent]);
 
   return (
-    <Screen scroll testID="mypage-screen">
+    <Screen scroll testID="mypage-screen" scrollViewRef={scrollRef}>
       <View style={styles.center}>
         <Text style={[styles.title, { color: tokens.text }]}>マイページ</Text>
 

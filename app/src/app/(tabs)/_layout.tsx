@@ -1,8 +1,10 @@
+import type { ComponentProps } from 'react';
 import { Redirect, Tabs } from 'expo-router';
 import { Text, View } from 'react-native';
 
 import { useAuth } from '../../auth/provider';
 import { LeftNav, useLayoutMetrics } from '../../navigation/AdaptiveLayout';
+import { emitTabReselect } from '../../navigation/tabReselect';
 import { useTheme } from '../../theme/provider';
 
 // Smartphones get a bottom tab bar with exactly four tabs:
@@ -19,6 +21,31 @@ import { useTheme } from '../../theme/provider';
 // signed-in-but-unregistered users to register (未登録ガード — ID確定前は通常
 // 画面に入れない). While the session state is still resolving the shell waits
 // instead of flashing either destination.
+
+type TabScreenListeners = NonNullable<ComponentProps<typeof Tabs>['screenListeners']>;
+
+// Task 22 (spec line 32): tapping the ALREADY-focused tab re-selects it.
+// The default tab switch does nothing for a focused tab, so the press is
+// intercepted here: the tab's stack pops back to its root (再選択はその
+// 先頭へ戻り) and the re-select is announced so mounted lists scroll to
+// their top (すでに一覧なら先頭へスクロール). An UNFOCUSED tab falls
+// through to the normal switch, so the detail screen is still there when
+// the user comes back (別タブから戻ると詳細画面を保持する).
+const tabScreenListeners: TabScreenListeners = ({ route, navigation }) => ({
+  tabPress: (event) => {
+    if (!navigation.isFocused()) return; // switching tabs: default behaviour
+    event.preventDefault();
+    // Announce BEFORE the pop: a deeper screen (申請一覧) is still mounted
+    // here and must get its scroll response before it unmounts.
+    emitTabReselect(route.name);
+    const state = navigation.getState();
+    const active = state.routes[state.index];
+    const nested = active?.state;
+    if (nested?.type === 'stack' && typeof nested.key === 'string' && nested.routes.length > 1) {
+      navigation.dispatch({ type: 'POP_TO_TOP', target: nested.key });
+    }
+  },
+});
 
 export default function TabLayout() {
   const auth = useAuth();
@@ -81,11 +108,13 @@ export default function TabLayout() {
       <View style={{ flex: 1, flexDirection: 'row', backgroundColor: tokens.surface }}>
         <LeftNav />
         <View style={{ flex: 1 }}>
-          <Tabs screenOptions={{ tabBarStyle: { display: 'none' } }}>{screens}</Tabs>
+          <Tabs screenListeners={tabScreenListeners} screenOptions={{ tabBarStyle: { display: 'none' } }}>
+            {screens}
+          </Tabs>
         </View>
       </View>
     );
   }
 
-  return <Tabs>{screens}</Tabs>;
+  return <Tabs screenListeners={tabScreenListeners}>{screens}</Tabs>;
 }
