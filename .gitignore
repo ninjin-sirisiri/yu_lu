@@ -1,5 +1,6 @@
 .sdd/
 .worktrees/
+.ai-review/
 .env
 invite-web/dist/
 invite-web/dist-test/

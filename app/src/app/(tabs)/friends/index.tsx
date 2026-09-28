@@ -4,12 +4,6 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '../../../auth/provider';
 import { listRequests } from '../../../backend/queries';
-import { subscribeNotificationArrived } from '../../../notify/listener';
-import {
-  enableFailureMessage,
-  enablePushNotifications,
-  notificationEnableState,
-} from '../../../notify/registration';
 import {
   createFriendsRepository,
   formatLastUpdated,
@@ -42,13 +36,10 @@ import { ProfilePanel } from './[userId]';
 // comes from the existing requests/zeroFriends module with its あとで
 // action (hides the guidance for this visit; the 友達追加 entries stay).
 //
-// Task 19: this tab also OWNS
-// - the ONE permission enable action (友達タブの案内で本人が通知を有効に
-//   する操作): the OS prompt is only ever requested from this button, and a
-//   refusal keeps every entry point available (申請確認 never disappears);
-// - the server-derived 受信件数 (pending incoming rows from `list_requests`),
-//   re-read on mount, 復帰, 成立/受信 events and foreground arrivals — the
-//   count is never guessed from a local cache.
+// 未確認の申請件数はサーバー由来 (pending incoming rows from
+// `list_requests`) で、初回読込・復帰・成立イベントで読み直す —
+// ローカルキャッシュ由来ではない。プッシュ通知は一時的に無効のため
+// (Apple Developer Program 未加入)、到着イベントからの更新は行わない。
 
 export interface FriendsAreaProps {
   /** Window metrics override (tests); defaults to the real window. */
@@ -115,7 +106,7 @@ export function FriendsArea({ metrics }: FriendsAreaProps) {
     [listScrollRef],
   );
 
-  // --- Task 19: 通知の受信件数 (server-derived, never from a local cache) ---
+  // 未確認の申請件数 (server-derived, never from a local cache)
 
   const [unreadCount, setUnreadCount] = useState<number | null>(null);
 
@@ -127,79 +118,16 @@ export function FriendsArea({ metrics }: FriendsAreaProps) {
       setUnreadCount(items.filter((row) => row.status === 'pending').length);
     } catch {
       // Offline/failed: keep the last known count rather than showing a
-      // wrong 0 — the next 復帰/受信 event re-reads the server.
+      // wrong 0 — the next 復帰/成立 event re-reads the server.
     }
   }, [auth.accountId]);
 
-  // 初回読込・復帰・成立/受信イベントのいずれでもサーバーを読み直す.
+  // 初回読込・復帰・成立イベントのいずれでもサーバーを読み直す.
   useEffect(() => {
     void refreshUnread();
   }, [refreshUnread]);
   useEffect(() => subscribeAppResume(() => void refreshUnread()), [refreshUnread]);
   useEffect(() => subscribeFriendsChanged(() => void refreshUnread()), [refreshUnread]);
-  useEffect(() => subscribeNotificationArrived(() => void refreshUnread()), [refreshUnread]);
-
-  // --- Task 19: 通知の有効化 (the ONE place the OS prompt is requested) ---
-
-  type NotifyState = 'checking' | 'off' | 'enabled' | 'denied' | 'failed';
-  const [notifyState, setNotifyState] = useState<NotifyState>('checking');
-  const [notifyMessage, setNotifyMessage] = useState<string | null>(null);
-  const [notifyBusy, setNotifyBusy] = useState(false);
-  const enablingRef = useRef(false);
-
-  // Read-only status probe: never prompts (notificationEnableState only
-  // calls the non-prompting permission check). It applies its result only
-  // while still 'checking', so a slower probe can never overwrite the
-  // outcome of an enable press the user already made.
-  useEffect(() => {
-    if (auth.accountId === null) return;
-    let alive = true;
-    void notificationEnableState({ storage: auth.storage, accountId: auth.accountId })
-      .then((state) => {
-        if (!alive) return;
-        setNotifyState((prev) => {
-          if (prev !== 'checking') return prev;
-          if (state.registered) return 'enabled';
-          if (state.permission === 'denied') return 'denied';
-          return 'off';
-        });
-      })
-      .catch(() => {
-        setNotifyState((prev) => (prev === 'checking' ? 'off' : prev));
-      });
-    return () => {
-      alive = false;
-    };
-  }, [auth.accountId, auth.storage]);
-
-  const handleEnable = useCallback(async (): Promise<void> => {
-    if (auth.accountId === null || enablingRef.current) return;
-    enablingRef.current = true;
-    setNotifyBusy(true);
-    try {
-      const result = await enablePushNotifications({
-        storage: auth.storage,
-        accountId: auth.accountId,
-      });
-      switch (result.status) {
-        case 'enabled':
-          setNotifyState('enabled');
-          setNotifyMessage(null);
-          break;
-        case 'denied':
-          setNotifyState('denied');
-          setNotifyMessage(null);
-          break;
-        case 'failed':
-          setNotifyState('failed');
-          setNotifyMessage(enableFailureMessage(result.reason));
-          break;
-      }
-    } finally {
-      enablingRef.current = false;
-      setNotifyBusy(false);
-    }
-  }, [auth.accountId, auth.storage]);
 
   const onLoadMore = useCallback(async (): Promise<void> => {
     if (repository === null) return;
@@ -244,40 +172,6 @@ export function FriendsArea({ metrics }: FriendsAreaProps) {
           >
             {`未確認の申請 ${unreadCount}件`}
           </Text>
-        )}
-        {notifyState === 'enabled' ? (
-          <Text
-            style={[styles.notifyEnabled, { color: tokens.muted }]}
-            testID="friends-notify-enabled"
-            allowFontScaling
-          >
-            通知は有効です
-          </Text>
-        ) : (
-          <Button
-            label="通知を受け取る"
-            variant="secondary"
-            testID="friends-notify-enable"
-            busy={notifyBusy}
-            accessibilityHint="友達からの申請などの通知を受け取ります"
-            onPress={() => void handleEnable()}
-          />
-        )}
-        {notifyState === 'denied' && (
-          <StatusNotice
-            tone="warning"
-            title="通知が許可されていません"
-            message="端末の設定で通知を許可すると、申請などの通知を受け取れます。申請の確認は今もこの画面からできます。"
-            testID="friends-notify-denied"
-          />
-        )}
-        {notifyState === 'failed' && (
-          <StatusNotice
-            tone="error"
-            title="通知を有効にできませんでした"
-            message={notifyMessage ?? undefined}
-            testID="friends-notify-failed"
-          />
         )}
         {snapshot !== null && snapshot.fetchedAt !== null && (
           <Text
@@ -443,10 +337,6 @@ const styles = StyleSheet.create({
   unread: {
     fontSize: typography.sizes.small,
     fontWeight: typography.weights.semibold,
-    lineHeight: typography.sizes.small * typography.lineHeightRatio,
-  },
-  notifyEnabled: {
-    fontSize: typography.sizes.small,
     lineHeight: typography.sizes.small * typography.lineHeightRatio,
   },
   subtitle: {

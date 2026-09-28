@@ -162,7 +162,11 @@ site_url = "http://127.0.0.1:3000"
 # Task 10: the app's PKCE callback (expo-auth-session makeRedirectUri path
 # `auth/callback` on the `app` scheme) must be allow-listed or GoTrue refuses
 # the redirect after the provider round trip.
-additional_redirect_urls = ["https://127.0.0.1:3000", "app://auth/callback", "exp://*/--/auth/callback"]
+additional_redirect_urls = [
+  "https://127.0.0.1:3000",
+  "app://auth/callback",
+  "exp://*/--/auth/callback",
+]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to auth.external_url.
@@ -341,6 +345,12 @@ url = ""
 skip_nonce_check = false
 # If enabled, it will allow the user to successfully authenticate when the provider does not return an email address.
 email_optional = false
+
+[auth.external.google]
+enabled = true
+client_id = "292589751423-ljrmm7rq610puncnt5in8gb6orodb8o0.apps.googleusercontent.com"
+secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_SECRET)"
+skip_nonce_check = false
 
 # Allow Solana wallet holders to sign in to your project via the Sign in with Solana (SIWS, EIP-4361) standard.
 # You can configure "web3" rate limit in the [auth.rate_limit] section and set up [auth.captcha] if self-hosting.

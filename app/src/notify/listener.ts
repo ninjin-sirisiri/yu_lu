@@ -1,35 +1,25 @@
-// Task 19: notification receipt — foreground suppression, the shared
-// response-handling path, and the arrival event bus.
+// プッシュ通知は一時的に無効 (Apple Developer Program 未加入のため)。
 //
-// Ownership:
-// - **Foreground suppression**: `setupForegroundSuppression` installs the
-//   SDK 57 notification handler that shows NO OS banner / list / sound /
-//   badge while the app is in the foreground (spec「表示中の端末はOSバナー・
-//   音を出さず、短いアプリ内案内と件数更新を使う」). Background presentation
-//   stays with the OS; the in-app notice + server-derived unread count are
-//   driven by the arrival bus below.
-// - **One handling path**: `handleNotificationResponse` serves the initial
-//   (terminated/cold) response from `getLastNotificationResponse()` AND
-//   every while-running response from `addNotificationResponseReceivedListener`
-//   identically (spec: 初回通知初回通知応答と実行中の応答を共通化).
-// - **Dedupe**: a seen-notification-id store persisted per notification id
-//   in account-scoped storage (`notify.seen_ids`), so the same notification
-//   is never re-processed on every cold start; an in-memory set guards
-//   duplicate callbacks within one process tick.
-// - **Auth/registration gate**: responses are DEFERRED (entry preserved,
-//   not marked seen) until the user is signed in AND registered — spec
-//   「通知・招待による起動は認証と登録状態を確認してから目的の画面へ進む」
-//   「未登録なら入口を保持し、登録後に最新request_idを確認して受信一覧へ
-//   進む」.
-// - **Verification**: an arrival notification is checked against the
-//   server's incoming list BEFORE navigation (navigation/externalEntry
-//   turns the result into focus / ended / stale destinations).
+// expo-notifications に依存せず、OS 許可要求・トークン取得・
+// device-session 登録は一切行わない。到着バス (arrival bus) と
+// 応答ハンドリング (response handling) は公開契約だけ温存する:
+// 将来 Apple Developer Program 加入後に実配信を復活させるとき、
+// 呼び出し側を直さずにこのファイルの中身だけを実配信実装へ
+// 差し替えればよい。
 //
-// All expo-notifications access is try/catch'd and structurally injectable:
-// the module must load and degrade safely where the native module is
-// unavailable (jest, headless environments).
+// - subscribeNotificationArrived / emitNotificationArrival:
+//   到着バス。プッシュ無効中は emit されることがない (到着自体が無い)。
+//   友達タブの未読件数更新はこのバスではなく復帰/成立イベントで行う。
+// - handleNotificationResponse / verifyArrivalRequest /
+//   isNotificationSeen / markNotificationSeen: 通知タップ遷移の共有経路。
+//   通知自体は届かないが、遷移ロジック (focus/notice) は残す。
+// - setupForegroundSuppression / attachArrivalListener /
+//   attachResponseListener / readInitialResponse / setNotificationsPort:
+//   実通知ハンドラへの接続点。プッシュ無効中は no-op / null を返す。
+// - setInitialUrlSource / readInitialUrl / externalUrlOwnsLaunch /
+//   blocksNotificationEntry: 招待・OAuth との入口分離。通知とは無関係に
+//   残す (NotificationHost の URL 所有判定が使う)。
 
-import * as Notifications from 'expo-notifications';
 import * as Linking from 'expo-linking';
 
 import { listRequests, type QueryPage, type RequestEntry } from '../backend/queries';
@@ -44,7 +34,7 @@ import type { Storage } from '../storage/database';
 import { readAccountSetting, writeAccountSetting } from '../storage/settings';
 
 // ---------------------------------------------------------------------------
-// Structural ports over expo-notifications (injectable for tests)
+// Structural ports (injectable for tests; プッシュ無効中は注入 port のみ)
 // ---------------------------------------------------------------------------
 
 export interface NotificationsPort {
@@ -58,13 +48,13 @@ export interface NotificationsPort {
 
 let notificationsOverride: NotificationsPort | null = null;
 
-/** Replaces the expo-notifications port (tests); null restores the real module. */
+/** Replaces the notifications port (tests); null で未設定に戻る. */
 export function setNotificationsPort(port: NotificationsPort | null): void {
   notificationsOverride = port;
 }
 
-function notifications(): NotificationsPort {
-  return notificationsOverride ?? (Notifications as unknown as NotificationsPort);
+function notifications(): NotificationsPort | null {
+  return notificationsOverride;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,11 +77,11 @@ export const FOREGROUND_SUPPRESSED: ForegroundBehavior = {
 };
 
 /**
- * Installs the foreground handler. Called once from the root layout; never
- * prompts, never schedules — purely presentation policy. Failures are
- * swallowed (a missing native module must not break app start).
+ * Installs the foreground handler. プッシュ無効中は no-op
+ * (ハンドラを付けても通知自体が届かない)。
  */
-export function setupForegroundSuppression(port: NotificationsPort = notifications()): void {
+export function setupForegroundSuppression(port: NotificationsPort | null = notifications()): void {
+  if (port === null) return;
   try {
     port.setNotificationHandler({
       handleNotification: async (): Promise<ForegroundBehavior> => FOREGROUND_SUPPRESSED,
@@ -173,9 +163,14 @@ function arrivalFrom(notification: unknown): NotificationArrival {
 
 /**
  * Attaches the foreground receipt listener (notification ARRIVED, not
- * tapped) → arrival bus. Returns a detach function; safe everywhere.
+ * tapped) → arrival bus. プッシュ無効中は port 未設定なら no-op を返す。
  */
-export function attachArrivalListener(port: NotificationsPort = notifications()): () => void {
+export function attachArrivalListener(port: NotificationsPort | null = notifications()): () => void {
+  if (port === null) {
+    return () => {
+      // Push disabled: no receiver in this build.
+    };
+  }
   try {
     const subscription = port.addNotificationReceivedListener((notification) => {
       emitNotificationArrival(arrivalFrom(notification));
@@ -194,11 +189,20 @@ export function attachArrivalListener(port: NotificationsPort = notifications())
   }
 }
 
-/** Attaches the response (TAP) listener → the shared handling path. */
+/**
+ * Attaches the response (TAP) listener → the shared handling path.
+ * プッシュ無効中は port 未設定なら no-op を返す。
+ */
 export function attachResponseListener(
   onResponse: (response: unknown) => void,
-  port: NotificationsPort = notifications(),
+  port: NotificationsPort | null = notifications(),
 ): () => void {
+  if (port === null) {
+    void onResponse;
+    return () => {
+      // Push disabled: no receiver in this build.
+    };
+  }
   try {
     const subscription = port.addNotificationResponseReceivedListener((response) =>
       onResponse(response),
@@ -219,9 +223,10 @@ export function attachResponseListener(
 
 /**
  * The last (possibly previous-process) response for cold-start handling.
- * Throws are converted to null (the native module can be unavailable).
+ * プッシュ無効中は port 未設定なら null (cold-start 応答なし)。
  */
-export function readInitialResponse(port: NotificationsPort = notifications()): unknown | null {
+export function readInitialResponse(port: NotificationsPort | null = notifications()): unknown | null {
+  if (port === null) return null;
   try {
     return port.getLastNotificationResponse() ?? null;
   } catch {

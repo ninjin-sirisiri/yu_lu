@@ -25,6 +25,7 @@ import {
 } from '../src/navigation/externalEntry';
 import {
   blocksNotificationEntry,
+  emitNotificationArrival,
   externalUrlOwnsLaunch,
   handleNotificationResponse,
   isNotificationSeen,
@@ -33,10 +34,13 @@ import {
   setInitialUrlSource,
   verifyArrivalRequest,
   type HandleResponseDeps,
+  type NotificationArrival,
 } from '../src/notify/listener';
 import {
   enablePushNotifications,
+  notificationEnableState,
   readRegistrationRecord,
+  setNotificationsPort,
   type DeviceSessionTransport,
   type PermissionPort,
   type TokenPort,
@@ -46,19 +50,21 @@ import { PROFILE_DRAFT_KEY } from '../src/profiles/editor';
 import { readDraft } from '../src/storage/drafts';
 import { NodeSqliteDriver } from '../src/storage/testSupport/nodePorts';
 
-// Task 19: 通知受信・画面更新・外部入口の統合.
+// プッシュ通知は一時的に無効 (Apple Developer Program 未加入のため)。
+// Task 19 由来の通知受信・画面更新・外部入口の統合テストを、プッシュ無効
+// 構成向けに更新したもの。
 //
-// MOCKED-LAYER: `expo-notifications` (controllable handler/listeners/last
-// response/permission+token results) and the transport boundary
+// MOCKED-LAYER: 通知 port への注入 (`notify/listener` の setNotificationsPort
+// で handler/listeners/last-response を制御) and the transport boundary
 // (`backend/client` → device-session, `backend/queries` → list_requests);
 // the device storage is REAL SQLite, so the persisted seen-id store and the
 // profile draft rows are the production SQL. The full router renders the
-// real route tree, so the NotificationHost gate, the friends-tab enable
-// action and the requests entry params are covered through actual startup.
+// real route tree, so the NotificationHost gate and the requests entry
+// params are covered through actual startup.
 //
-// 権限は「友達タブの有効化操作」からのみ要求する (起動・読込では prompt を
-// 呼ばない); 実機の OS プロンプトと実配信は docs/testing/app-foundation-
-// friends-ui.md の device-pending に記録され、このファイルでは主張しない。
+// OS 許可・トークン取得・device-session 登録は行わない (友達タブの有効化
+// UI は削除済み)。将来 Apple Developer Program 加入後に実配信を復活
+// させるときは、B セクションを実配信の期待へ戻す。
 //
 // Timers: renderRouter enables jest FAKE timers for the rest of the file —
 // the headless suites therefore run FIRST, and every router wait goes
@@ -95,28 +101,18 @@ let scenario: { incoming: RequestEntry[]; outgoing: RequestEntry[] } = {
 };
 
 jest.mock('expo-notifications', () => ({
-  setNotificationHandler: (handler: unknown) => {
-    mockNotificationsState.handler = handler as NotificationsMockState['handler'];
+  setNotificationHandler: () => {
+    throw new Error('notification-entry test: expo-notifications must not be imported');
   },
-  addNotificationReceivedListener: (listener: (notification: unknown) => void) => {
-    mockNotificationsState.receive.push(listener);
-    return {
-      remove: () => {
-        const index = mockNotificationsState.receive.indexOf(listener);
-        if (index >= 0) mockNotificationsState.receive.splice(index, 1);
-      },
-    };
+  addNotificationReceivedListener: () => {
+    throw new Error('notification-entry test: expo-notifications must not be imported');
   },
-  addNotificationResponseReceivedListener: (listener: (response: unknown) => void) => {
-    mockNotificationsState.responses.push(listener);
-    return {
-      remove: () => {
-        const index = mockNotificationsState.responses.indexOf(listener);
-        if (index >= 0) mockNotificationsState.responses.splice(index, 1);
-      },
-    };
+  addNotificationResponseReceivedListener: () => {
+    throw new Error('notification-entry test: expo-notifications must not be imported');
   },
-  getLastNotificationResponse: () => mockNotificationsState.lastResponse,
+  getLastNotificationResponse: () => {
+    throw new Error('notification-entry test: expo-notifications must not be imported');
+  },
   getPermissionsAsync: () => mockGetPermissions(),
   requestPermissionsAsync: () => mockRequestPermissions(),
   getExpoPushTokenAsync: () => mockGetPushToken(),
@@ -372,6 +368,32 @@ beforeEach(async () => {
   resetSeenNotificationMemory();
   resetInFlightNotifications();
   setInitialUrlSource(null);
+  // プッシュ無効中: NotificationHost のリスナ接続は注入 port 経由。
+  // テストでは expo-notifications モックの状態へ配線する。
+  setNotificationsPort({
+    setNotificationHandler: (handler: unknown) => {
+      mockNotificationsState.handler = handler as NotificationsMockState['handler'];
+    },
+    addNotificationReceivedListener: (listener: (notification: unknown) => void) => {
+      mockNotificationsState.receive.push(listener);
+      return {
+        remove: () => {
+          const index = mockNotificationsState.receive.indexOf(listener);
+          if (index >= 0) mockNotificationsState.receive.splice(index, 1);
+        },
+      };
+    },
+    addNotificationResponseReceivedListener: (listener: (response: unknown) => void) => {
+      mockNotificationsState.responses.push(listener);
+      return {
+        remove: () => {
+          const index = mockNotificationsState.responses.indexOf(listener);
+          if (index >= 0) mockNotificationsState.responses.splice(index, 1);
+        },
+      };
+    },
+    getLastNotificationResponse: () => mockNotificationsState.lastResponse,
+  });
   authMock.__setAuth({
     status: 'ready',
     accountId: ACCOUNT,
@@ -399,6 +421,7 @@ afterEach(async () => {
       // Already unmounted by the test itself / auto-cleanup.
     }
   }
+  setNotificationsPort(null);
   const storage = mockStorage;
   mockStorage = null;
   if (storage !== null) {
@@ -512,13 +535,14 @@ describe('入口の分離 (pure)', () => {
 // B. 権限と端末登録 (headless)
 // ---------------------------------------------------------------------------
 
-describe('通知の有効化 (headless)', () => {
-  const grantedPermission: PermissionPort = {
-    get: async () => 'granted',
-    request: async () => 'granted',
-  };
+// ---------------------------------------------------------------------------
+// B. 有効化は無効 (headless) — プッシュ通知は一時的に無効のため、
+// enablePushNotifications は常に token-unavailable を返し、OS 許可・
+// トークン取得・device-session 登録のいずれも行わない。
+// ---------------------------------------------------------------------------
 
-  it('権限拒否ではトークン取得も device-session 登録もしない', async () => {
+describe('通知の有効化 (headless)', () => {
+  it('プッシュ無効中は token-unavailable で失敗し、サーバー登録は行わない', async () => {
     const order: string[] = [];
     const token: TokenPort = {
       getToken: async () => {
@@ -553,120 +577,18 @@ describe('通知の有効化 (headless)', () => {
       },
     });
 
-    expect(result).toEqual({ status: 'denied' });
-    // チャネル → 非プロンプト確認 → プロンプトのみ: トークンも登録も呼ばない.
-    expect(order).toEqual(['channel', 'get', 'request']);
-  });
-
-  it('2端末: 各インストールが device-session に登録され、同一トークンの再有効化は冪等', async () => {
-    const order: string[] = [];
-    const transport: DeviceSessionTransport = {
-      register: jest.fn(async (token: string) => {
-        order.push('register');
-        return { deviceId: `device-of-${token}`, status: 'active' };
-      }),
-    };
-    const permission: PermissionPort = {
-      get: async () => {
-        order.push('get');
-        return 'undetermined';
-      },
-      request: async () => {
-        order.push('request');
-        return 'granted';
-      },
-    };
-    const token: TokenPort = {
-      getToken: async () => {
-        order.push('token');
-        return 'ExponentPushToken[A]';
-      },
-    };
-
-    const first = await enablePushNotifications({
-      storage: mockStorage,
-      accountId: ACCOUNT,
-      permission,
-      token,
-      transport,
-      ensureChannel: async () => {
-        order.push('channel');
-      },
-      now: () => 1_000,
-    });
-    expect(first).toEqual({
-      status: 'enabled',
-      deviceId: 'device-of-ExponentPushToken[A]',
-      alreadyRegistered: false,
-    });
-    expect(order).toEqual(['channel', 'get', 'request', 'token', 'register']);
-
-    // 同一インストールの再実行: サーバを二度叩かない (idempotent per install).
-    order.length = 0;
-    const repeatPermission: PermissionPort = {
-      get: async () => {
-        order.push('get');
-        return 'granted';
-      },
-      request: async () => {
-        order.push('request');
-        return 'granted';
-      },
-    };
-    const repeat = await enablePushNotifications({
-      storage: mockStorage,
-      accountId: ACCOUNT,
-      permission: repeatPermission,
-      token,
-      transport,
-      ensureChannel: async () => {
-        order.push('channel');
-      },
-    });
-    expect(repeat).toEqual({
-      status: 'enabled',
-      deviceId: 'device-of-ExponentPushToken[A]',
-      alreadyRegistered: true,
+    // プッシュ無効中: 許可状態の確認までは行うが、トークン取得も
+    // device-session 登録も行わず token-unavailable で失敗する。
+    expect(result).toEqual({
+      status: 'failed',
+      reason: 'token-unavailable',
+      message: 'Push notifications are disabled in this build',
     });
     expect(order).toEqual(['channel', 'get', 'token']);
-    expect(transport.register).toHaveBeenCalledTimes(1);
-
-    // 2台目の端末 (同じアカウント・別インストール・別トークン).
-    const otherRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'app-notify-device-b-'));
-    try {
-      const storageB = await openAppDatabase({
-        driver: new NodeSqliteDriver(path.join(otherRoot, 'app.db')),
-      });
-      try {
-        const second = await enablePushNotifications({
-          storage: storageB,
-          accountId: ACCOUNT,
-          permission: grantedPermission,
-          token: { getToken: async () => 'ExponentPushToken[B]' },
-          transport,
-          ensureChannel: async () => {},
-        });
-        expect(second).toEqual({
-          status: 'enabled',
-          deviceId: 'device-of-ExponentPushToken[B]',
-          alreadyRegistered: false,
-        });
-        expect(transport.register).toHaveBeenCalledTimes(2);
-
-        const recordA = await readRegistrationRecord(mockStorage, ACCOUNT);
-        const recordB = await readRegistrationRecord(storageB, ACCOUNT);
-        expect(recordA?.deviceId).toBe('device-of-ExponentPushToken[A]');
-        expect(recordB?.deviceId).toBe('device-of-ExponentPushToken[B]');
-        expect(recordB?.pushToken).toBe('ExponentPushToken[B]');
-      } finally {
-        await storageB.close();
-      }
-    } finally {
-      fs.rmSync(otherRoot, { recursive: true, force: true });
-    }
+    expect(transport.register).not.toHaveBeenCalled();
   });
 
-  it('許可済みならプロンプトを挟まない (get のみで進む)', async () => {
+  it('許可済みでもプッシュ無効中は登録せず token-unavailable', async () => {
     const order: string[] = [];
     const result = await enablePushNotifications({
       storage: mockStorage,
@@ -688,21 +610,40 @@ describe('通知の有効化 (headless)', () => {
         },
       },
       transport: {
-        register: async () => {
+        register: jest.fn(async () => {
           order.push('register');
           return { deviceId: 'device-g', status: 'active' };
-        },
+        }),
       },
       ensureChannel: async () => {
         order.push('channel');
       },
     });
     expect(result).toEqual({
-      status: 'enabled',
-      deviceId: 'device-g',
-      alreadyRegistered: false,
+      status: 'failed',
+      reason: 'token-unavailable',
+      message: 'Push notifications are disabled in this build',
     });
-    expect(order).toEqual(['channel', 'get', 'token', 'register']);
+    expect(order).toEqual(['channel', 'get', 'token']);
+  });
+
+  it('未サインインでは no-account で失敗する', async () => {
+    const result = await enablePushNotifications({
+      storage: mockStorage,
+      accountId: null,
+      ensureChannel: async () => {},
+    });
+    expect(result).toEqual({
+      status: 'failed',
+      reason: 'no-account',
+      message: 'No signed-in account to register this device for.',
+    });
+  });
+
+  it('notificationEnableState は常に未登録を返す (prompt なし)', async () => {
+    await expect(
+      notificationEnableState({ storage: mockStorage, accountId: ACCOUNT }),
+    ).resolves.toEqual({ permission: 'unavailable', registered: false });
   });
 });
 
@@ -837,7 +778,7 @@ describe('応答の共通処理パス (headless)', () => {
 // ---------------------------------------------------------------------------
 
 describe('通知受信のルーター統合', () => {
-  it('前景: OS バナー・音を抑止し、アプリ内案内とサーバ件数で更新する', async () => {
+  it('前景: OS バナー・音を抑止し、到着イベントでアプリ内案内を出す', async () => {
     const app = await renderApp('/friends');
     await waitFor(() => expect(screen.getByTestId('friends-last-updated')).toBeTruthy());
 
@@ -855,13 +796,9 @@ describe('通知受信のルーター統合', () => {
     // 初回は受信0件 → 件数表示なし.
     expect(screen.queryByTestId('friends-unread-count')).toBeNull();
 
-    // サーバに1件 → 到着イベントで件数を読み直す (キャッシュ由来ではない).
-    scenario.incoming = [requestEntry(REQ_ID, 'pending')];
+    // 到着イベントでアプリ内案内が出る (画面は移動しない:
+    // 移動するのはタップ時だけ)。
     await emitArrival(arrivalNotification('notif-fg', pendingArrivalData));
-    expect(await screen.findByTestId('friends-unread-count')).toBeTruthy();
-    expect(screen.getByText('未確認の申請 1件')).toBeTruthy();
-
-    // 到着 (=前景受信) では画面は移動しない: 移動するのはタップ時だけ.
     expect(screen.getByTestId('notify-in-app-notice')).toBeTruthy();
     expect(screen.getByText('友達から申請が届きました')).toBeTruthy();
     expect(app.getPathname()).toBe('/friends');
@@ -879,36 +816,39 @@ describe('通知受信のルーター統合', () => {
     expect(screen.queryByTestId('notify-in-app-notice')).toBeNull();
   });
 
-  it('有効化操作: OS 許可を求めるのは本人の操作だけ、拒否しても申請確認は残る', async () => {
-    mockGetPermissions.mockResolvedValue({ status: 'undetermined' });
+  it('未読件数はサーバー由来: 復帰イベントで読み直す', async () => {
     const app = await renderApp('/friends');
-    await waitFor(() => expect(screen.getByTestId('friends-notify-enable')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId('friends-last-updated')).toBeTruthy());
+    expect(app.getPathname()).toBe('/friends');
 
-    // 起動・読込では prompt もトークン取得も登録も呼ばない.
+    // 初回は受信0件 → 件数表示なし.
+    expect(screen.queryByTestId('friends-unread-count')).toBeNull();
+
+    // サーバに1件 → 到着イベント (将来のプッシュ復活時の経路) で
+    // 件数を読み直す (キャッシュ由来ではない).
+    scenario.incoming = [requestEntry(REQ_ID, 'pending')];
+    await emitArrival(arrivalNotification('notif-fg-count', pendingArrivalData));
+    expect(await screen.findByTestId('friends-unread-count')).toBeTruthy();
+    expect(screen.getByText('未確認の申請 1件')).toBeTruthy();
+  });
+
+  it('プッシュ無効中: 通知の有効化 UI は表示されない', async () => {
+    const app = await renderApp('/friends');
+    await waitFor(() => expect(screen.getByTestId('friends-last-updated')).toBeTruthy());
+
+    // 通知を受け取るボタン・有効/拒否/失敗の案内は出さない。
+    // 申請確認の入口は残る。
+    expect(screen.queryByTestId('friends-notify-enable')).toBeNull();
+    expect(screen.queryByTestId('friends-notify-enabled')).toBeNull();
+    expect(screen.queryByTestId('friends-notify-denied')).toBeNull();
+    expect(screen.queryByTestId('friends-notify-failed')).toBeNull();
+    expect(screen.getByTestId('friends-requests-entry')).toBeTruthy();
+    expect(app.getPathname()).toBe('/friends');
+
+    // OS 許可・トークン取得・device-session 登録は呼ばれない。
     expect(mockRequestPermissions).not.toHaveBeenCalled();
     expect(mockGetPushToken).not.toHaveBeenCalled();
     expect(mockInvoke).not.toHaveBeenCalled();
-
-    // 拒否 → 案内を出し、申請確認の入口は残したまま.
-    await fireEvent.press(screen.getByTestId('friends-notify-enable'));
-    expect(await screen.findByTestId('friends-notify-denied')).toBeTruthy();
-    expect(screen.getByTestId('friends-requests-entry')).toBeTruthy();
-    expect(app.getPathname()).toBe('/friends');
-    expect(mockRequestPermissions).toHaveBeenCalledTimes(1);
-    expect(mockGetPushToken).not.toHaveBeenCalled();
-    expect(mockInvoke).not.toHaveBeenCalled();
-
-    // 許可に切り替えて再操作 → チャネル→確認→トークン→device-session 登録.
-    mockGetPermissions.mockResolvedValue({ status: 'granted' });
-    await fireEvent.press(screen.getByTestId('friends-notify-enable'));
-    expect(await screen.findByTestId('friends-notify-enabled')).toBeTruthy();
-    expect(screen.queryByTestId('friends-notify-denied')).toBeNull();
-    expect(mockGetPushToken).toHaveBeenCalledTimes(1);
-    expect(mockInvoke).toHaveBeenCalledWith('device-session', {
-      body: { action: 'register', push_token: 'ExponentPushToken[notify-one]' },
-    });
-    // 許可済みなら二度目にプロンプトは出さない.
-    expect(mockRequestPermissions).toHaveBeenCalledTimes(1);
   });
 
   it('背景タップ: 受信した申請の位置を開ける', async () => {

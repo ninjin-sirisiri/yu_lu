@@ -4,7 +4,7 @@ import { getAppClient } from '../backend/client';
 import { deleteAccountData, type Storage } from '../storage/database';
 import { createImageStore, expoFileSystemPort, type ImageStore } from '../storage/files';
 import { listOperations } from '../storage/outbox';
-import { readRegistrationRecord, DeviceSessionError } from '../notify/registration';
+import { readRegistrationRecord, DeviceSessionError } from '../notify/deviceRecord';
 import {
   readDeviceSetting,
   writeDeviceSetting,

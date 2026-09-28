@@ -6,6 +6,16 @@
 
 ---
 
+## DeviceHub での Google OAuth 再確認 (2026-09-28)
+
+- Xcode 27 / DeviceHub / iPhone 18 Pro (iOS 27.0)、開発ビルド `com.anonymous.app`。ローカル Supabase と Metro (`8081`) に接続。起動直後の古い開発サーバー URL による接続失敗・白画面は、当該シミュレータの通常の shutdown/boot と `--initialUrl` での再起動後に解消した。
+- Auth `/auth/v1/settings`: Google `true`、Apple `false`。Auth コンテナ内で Google Client ID / Secret が設定済みであり、Secret は未解決の `env(...)` ではないことを値を表示せず確認した。
+- DeviceHub で「Googleでログイン」→ iOS のサインイン確認で「続ける」→ **`accounts.google.com` の Google ログイン画面に到達**。前回の `Unsupported provider: provider is not enabled` はこの経路では再発しない。証拠: `screenshots/task-22-devicehub/03-google-signin-reached.png` (資格情報未入力)。
+- Google アカウントのメール・パスワード入力、同意、アプリへの callback、登録画面への遷移は **未実施・未検証**。本人の入力が必要であり、Google ログイン成功とは記録しない。Apple は未設定のまま。
+- `npm --prefix app run typecheck` は exit 0。今回、アプリコード・Auth の設定値は変更していない。
+
+---
+
 ## Task 22: 仕様14節対応表・ストア/プッシュ試行・全体回帰 (2026-09-27 JST)
 
 ### 仕様14節「テストと完了条件」と Task 1〜21 の対応表
