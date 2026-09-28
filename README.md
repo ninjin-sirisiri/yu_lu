@@ -40,11 +40,13 @@ npx supabase db reset --local --no-seed
 
 ローカルポート (既定): API `54321` / DB `54322` / Studio `54323` / Mailpit `54324`。
 
-Edge Functions の手動起動 (統合テストランナーが自動で起動・停止するので通常は不要):
+アプリで友達一覧・マイページなどを操作するときは、ローカルの Edge Functions も起動したままにする。`supabase start` で Auth が応答していても、`/functions/v1/app-query` が HTTP 503 (`name resolution failed`) の場合は関数ランタイムが停止している。
 
 ```sh
 npx supabase functions serve
 ```
+
+このコマンドは別のターミナルで起動し、アプリを使う間は終了しない。統合テストランナーは独自に関数を起動・停止するため、テスト後にアプリで 503 が出た場合は上記コマンドを再起動する。
 
 ## 2. アプリ (Expo) の起動
 

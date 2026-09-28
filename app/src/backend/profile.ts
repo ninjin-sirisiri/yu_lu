@@ -1,5 +1,7 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
+
 import { validImageSize } from '../media/images';
+import { getAppClient } from './client';
 
 // Task 7: client adapter for profile publication (write side) and the
 // dedicated profile-image upload flow.
@@ -22,14 +24,10 @@ import { validImageSize } from '../media/images';
 // the latest published fields, the current version and the differing
 // fields - exactly what the 409 body carries.
 //
-// `defaultClient()` follows the existing module convention
-// (EXPO_PUBLIC_SUPABASE_URL / ANON_KEY); tests inject a fake client.
-
-const url = process.env.EXPO_PUBLIC_SUPABASE_URL as string;
-const anon = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY as string;
+// `defaultClient()` shares AuthProvider's persisted session; tests inject a fake client.
 
 function defaultClient(): SupabaseClient {
-  return createClient(url, anon);
+  return getAppClient();
 }
 
 export const PROFILE_IMAGE_BUCKET = 'profile-images';

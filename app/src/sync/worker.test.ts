@@ -6,6 +6,7 @@ import { openAppDatabase, type AppStorage } from '../storage/database';
 import { getOperation, listOperations } from '../storage/outbox';
 import { NodeSqliteDriver } from '../storage/testSupport/nodePorts';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import * as appClient from '../backend/client';
 import {
   PENDING_DEADLINE_MS,
   SEND_LEASE_MS,
@@ -488,6 +489,18 @@ describe('createCommandApi (default network port)', () => {
       kind: envelope.kind,
       payload: envelope.payload,
     });
+  });
+
+  it('uses the signed-in app client for queued commands by default', async () => {
+    const fake = fakeSupabase({});
+    const shared = jest.spyOn(appClient, 'getAppClient').mockReturnValue(fake.client);
+    try {
+      const outcome = await createCommandApi().send(envelope);
+      expect(outcome.status).toBe('ok');
+      expect(fake.calls).toHaveLength(1);
+    } finally {
+      shared.mockRestore();
+    }
   });
 
   it('maps the structured 409 body to a conflict outcome', async () => {

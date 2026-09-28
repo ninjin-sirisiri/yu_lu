@@ -5,6 +5,7 @@ import {
   QueryError,
   searchProfiles,
 } from './queries';
+import * as appClient from './client';
 
 // Task 5: the client adapter only maps and transports - these tests pin
 // the wire contract (snake_case page envelope, opaque cursors, the streak
@@ -110,6 +111,21 @@ describe('getProfile', () => {
 });
 
 describe('listFriends', () => {
+  it('uses the signed-in app client when no client is injected', async () => {
+    const f = fakeClient({
+      data: { op: 'list_friends', result: { items: [wireProfile], next_cursor: null } },
+      error: null,
+    });
+    const shared = jest.spyOn(appClient, 'getAppClient').mockReturnValue(f.client);
+    try {
+      const page = await listFriends();
+      expect(page.items[0]?.displayName).toBe('Alice');
+      expect(f.calls[0]?.name).toBe('app-query');
+    } finally {
+      shared.mockRestore();
+    }
+  });
+
   it('passes the opaque cursor through untouched', async () => {
     const f = fakeClient({
       data: { op: 'list_friends', result: { items: [], next_cursor: null } },

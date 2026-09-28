@@ -1,4 +1,6 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+import { getAppClient } from './client';
 
 // Task 5: client adapter for the app-query read boundary.
 //
@@ -9,15 +11,11 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 // (self/block exclusion, streak visibility, rejection masking) are the
 // server's, and this file only preserves them - notably it copies the
 // `streak` key through only when the server sent one, so a DTO without a
-// streak can never grow one locally. `defaultClient()` follows the
-// existing module convention (EXPO_PUBLIC_SUPABASE_URL / ANON_KEY); tests
-// inject a fake client.
-
-const url = process.env.EXPO_PUBLIC_SUPABASE_URL as string;
-const anon = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY as string;
+// streak can never grow one locally. The default client shares
+// AuthProvider's persisted session; tests inject a fake client.
 
 function defaultClient(): SupabaseClient {
-  return createClient(url, anon);
+  return getAppClient();
 }
 
 export type QueryOp =

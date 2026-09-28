@@ -8,6 +8,7 @@ import {
   updateProfile,
   uploadProfileImage,
 } from './profile';
+import * as appClient from './client';
 
 // Task 7: the client adapter only maps and transports - these tests pin
 // the wire contract (snake_case payload with base_version, the 409
@@ -337,6 +338,26 @@ describe('updateProfile', () => {
 });
 
 describe('getOwnPublication', () => {
+  it('reads the signed-in owner profile through the app client by default', async () => {
+    const f = fakeClient({
+      row: {
+        data: {
+          display_name: 'Alice', introduction: null, avatar_path: null,
+          profile_version: 1, user_id_text: 'alice',
+        },
+        error: null,
+      },
+    });
+    const shared = jest.spyOn(appClient, 'getAppClient').mockReturnValue(f.client);
+    try {
+      const publication = await getOwnPublication();
+      expect(publication.displayName).toBe('Alice');
+      expect(f.calls.eq).toEqual(['user_id', UUID_A]);
+    } finally {
+      shared.mockRestore();
+    }
+  });
+
   it('maps the own row to camelCase publication state', async () => {
     const f = fakeClient({
       row: {

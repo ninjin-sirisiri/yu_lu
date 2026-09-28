@@ -1,4 +1,6 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+import { getAppClient } from '../backend/client';
 
 // Task 9: the injectable network port of the send queue.
 //
@@ -36,11 +38,8 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 //                arrives but its body cannot be interpreted; tests inject
 //                the acceptance-then-lost-response case directly.
 
-const url = process.env.EXPO_PUBLIC_SUPABASE_URL as string;
-const anon = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY as string;
-
 function defaultClient(): SupabaseClient {
-  return createClient(url, anon);
+  return getAppClient();
 }
 
 /** Name of the single command boundary function. */
