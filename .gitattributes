@@ -1,0 +1,2 @@
+# Keep official Unicode downloads byte-identical, including upstream comments.
+scripts/data/unicode/17.0.0/*.txt -text whitespace=-blank-at-eol
