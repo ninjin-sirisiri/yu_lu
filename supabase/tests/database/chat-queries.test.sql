@@ -131,7 +131,8 @@ select throws_ok($$select public.app_query('list_chats',jsonb_build_object('curs
 select set_config('request.jwt.claim.sub','88000000-0000-4000-8000-000000000059',true);
 select throws_ok($$select pg_temp.q(2)$$,'42501','Conversation unavailable.','third party cannot obtain participant history');
 select is(public.app_query('get_home','{}')->'result'->>'participation','no_friends','zero friends distinct from next-cycle waiting');
-select is(public.app_query('get_chat_unread','{}')->'result','{"items":[],"unread_peer_count":0}'::jsonb,'unrelated actor gets no private unread');
+-- Task 9 adds the actor's revision token; the unread privacy contract is unchanged.
+select is((public.app_query('get_chat_unread','{}')->'result')-'revision','{"items":[],"unread_peer_count":0}'::jsonb,'unrelated actor gets no private unread');
 select set_config('request.jwt.claim.sub','88000000-0000-4000-8000-000000000052',true);
 select is(public.app_query('get_home','{}')->'result'->>'participation','waiting_next_cycle','current friend without assignment waits for next draw');
 select set_config('request.jwt.claim.sub','88000000-0000-4000-8000-000000000060',true);

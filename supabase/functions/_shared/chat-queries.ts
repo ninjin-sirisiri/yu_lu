@@ -39,7 +39,9 @@ export interface ChatSummary extends ChatPeer {
   reply_state: 'reply_needed' | 'waiting' | 'achieved' | null;
   status: 'reply_needed' | 'send_needed' | 'waiting' | 'achieved' | null;
 }
-export interface HomeResult {
+/** Actor-only invalidation token captured with the response's database snapshot. */
+export interface ChatRevision { revision: number }
+export interface HomeResult extends ChatRevision {
   server_now: string;
   daily_key: string;
   deadline: string;
@@ -56,7 +58,7 @@ export interface HomeResult {
   targets: ChatSummary[];
   unread_peer_count: number;
 }
-export interface ChatListResult {
+export interface ChatListResult extends ChatRevision {
   server_now: string;
   daily_key: string;
   targets: ChatSummary[];
@@ -64,14 +66,14 @@ export interface ChatListResult {
   next_cursor: string | null;
   unread_peer_count: number;
 }
-export interface ChatMessagesResult extends ChatPeer {
+export interface ChatMessagesResult extends ChatPeer, ChatRevision {
   items: ChatMessage[];
   before_cursor: string | null;
   after_cursor: string | null;
   first_unread_sequence: number | null;
   latest_sequence: number;
 }
-export interface ChatUnreadResult { items: ChatUnread[]; unread_peer_count: number }
+export interface ChatUnreadResult extends ChatRevision { items: ChatUnread[]; unread_peer_count: number }
 export interface ChatQueryResults {
   get_home: HomeResult;
   list_chats: ChatListResult;
