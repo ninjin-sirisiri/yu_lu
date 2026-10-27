@@ -49,6 +49,10 @@ Deno.test('the query ops are the registered set', () => {
       'list_requests',
       'resolve_invitation',
       'get_invitation_status',
+      'get_home',
+      'list_chats',
+      'get_chat_messages',
+      'get_chat_unread',
     ],
     'op list',
   );
