@@ -33,9 +33,13 @@ insert into public.daily_cycles(daily_key, draw_failed, created_at) values
 insert into public.assignments(daily_key, user_id, partner_id, direction) values
   ('2029-12-29', '62000000-0000-4000-8000-000000000001', '62000000-0000-4000-8000-000000000002', 'send'),
   ('2029-12-29', '62000000-0000-4000-8000-000000000002', '62000000-0000-4000-8000-000000000001', 'send');
-insert into public.messages(sender_id, recipient_id, body, accepted_at, client_key) values
-  ('62000000-0000-4000-8000-000000000001', '62000000-0000-4000-8000-000000000002',
-   'legacy achieved', '2029-12-29 12:00+09', '62000000-0000-4000-8000-000000000099');
+-- Owner fixture supplies the durable mapping; API roles no longer write messages.
+insert into public.messages(conversation_id, sequence, sender_id, recipient_id, body, accepted_at, client_key) values
+  (command_boundary.ensure_conversation('62000000-0000-4000-8000-000000000001','62000000-0000-4000-8000-000000000002'), 1,
+   '62000000-0000-4000-8000-000000000001', '62000000-0000-4000-8000-000000000002',
+    'legacy achieved', '2029-12-29 12:00+09', '62000000-0000-4000-8000-000000000099');
+update public.conversations set next_sequence=2
+where user_a='62000000-0000-4000-8000-000000000001' and user_b='62000000-0000-4000-8000-000000000002';
 alter table public.friendships disable trigger user;
 insert into public.friendships(user_a, user_b, created_at) values
   ('62000000-0000-4000-8000-000000000001', '62000000-0000-4000-8000-000000000002', '2029-12-01 10:00+09');

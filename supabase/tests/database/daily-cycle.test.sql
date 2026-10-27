@@ -55,9 +55,15 @@ insert into public.friendships(user_a,user_b) values
 ('63000000-0000-4000-8000-000000000003','63000000-0000-4000-8000-000000000005');
 -- Already accepted messages must be evaluated when the delayed draw succeeds.
 -- B speaks first, A replies; B has not replied after receiving A's message.
-insert into public.messages(sender_id,recipient_id,body,accepted_at,client_key) values
-('63000000-0000-4000-8000-000000000002','63000000-0000-4000-8000-000000000001','first','2030-01-01 04:01+09','63000000-0000-4000-8000-000000000101'),
-('63000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000002','reply','2030-01-01 04:02+09','63000000-0000-4000-8000-000000000102');
+-- Owner fixtures retain real accepted-message evaluation after direct API writes
+-- are revoked and durable conversation/sequence mappings become mandatory.
+insert into public.messages(conversation_id,sequence,sender_id,recipient_id,body,accepted_at,client_key) values
+(command_boundary.ensure_conversation('63000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000002'),1,
+ '63000000-0000-4000-8000-000000000002','63000000-0000-4000-8000-000000000001','first','2030-01-01 04:01+09','63000000-0000-4000-8000-000000000101'),
+(command_boundary.ensure_conversation('63000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000002'),2,
+ '63000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000002','reply','2030-01-01 04:02+09','63000000-0000-4000-8000-000000000102');
+update public.conversations set next_sequence=3
+where user_a='63000000-0000-4000-8000-000000000001' and user_b='63000000-0000-4000-8000-000000000002';
 update draw_fault set enabled=false;
 update cycle_clock set at='2030-01-01 04:04:59+09';
 select is(command_boundary.advance_chat_day_at('2030-01-01 04:04:59+09')->>'retry_required','false','retry before deadline succeeds');
