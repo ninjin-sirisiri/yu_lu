@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none';">
+  <meta name="sdd-source-digest" content="sha256:ecc0ff84010b8f75c7b4feea361ee02bf1f33bf72005a667bdfe9643d8e86f64">
+  <title>Home and Chat Implementation Plan</title>
+  <link rel="stylesheet" href="../assets/sdd.css">
+</head>
+<body>
+  <a class="skip-link" href="#content">本文へ</a>
+  <header class="document-header"><p class="document-kind">Plan</p><a href="2026-10-27-home-chat.md">Markdown正本</a></header>
+  <div class="document-layout">
+    <aside class="document-outline" aria-label="計画の目次">
+      <details open><summary>目次</summary><nav aria-label="目次"><ol>
+        <li><a href="#global-constraints">Global Constraints</a></li>
+        <li><a href="#file-structure">File structure</a></li>
+        <li><a href="#execution-and-verification-contract">Execution and verification contract</a></li>
+        <li><a href="#task-1-チャット本文の版固定検証">Task 1: チャット本文の版固定検証</a></li>
+        <li><a href="#task-2-境界時点の関係履歴と日次台帳">Task 2: 境界時点の関係履歴と日次台帳</a></li>
+        <li><a href="#task-3-日次処理と連続日数の確定">Task 3: 日次処理と連続日数の確定</a></li>
+        <li><a href="#task-4-永続会話と履歴移行">Task 4: 永続会話と履歴移行</a></li>
+        <li><a href="#task-5-非公開画像の準備と検証記録">Task 5: 非公開画像の準備と検証記録</a></li>
+        <li><a href="#task-6-メッセージ受付と達成の原子接続">Task 6: メッセージ受付と達成の原子接続</a></li>
+        <li><a href="#task-7-本人専用の閲覧結果">Task 7: 本人専用の閲覧結果</a></li>
+        <li><a href="#task-8-ホームと会話の参照api">Task 8: ホームと会話の参照API</a></li>
+        <li><a href="#task-9-本人向け更新通知の権限">Task 9: 本人向け更新通知の権限</a></li>
+        <li><a href="#task-10-専用スタックでサーバー結合検証">Task 10: 専用スタックでサーバー結合検証</a></li>
+        <li><a href="#task-11-端末内の会話保存と移行">Task 11: 端末内の会話保存と移行</a></li>
+        <li><a href="#task-12-会話別fifoと取りやめ">Task 12: 会話別FIFOと取りやめ</a></li>
+        <li><a href="#task-13-ライブラリ画像と端末キャッシュ">Task 13: ライブラリ画像と端末キャッシュ</a></li>
+        <li><a href="#task-14-画像準備から送信までの共通ワーカー">Task 14: 画像準備から送信までの共通ワーカー</a></li>
+        <li><a href="#task-15-型付き取得と相手別リポジトリ">Task 15: 型付き取得と相手別リポジトリ</a></li>
+        <li><a href="#task-16-リアルタイム再取得と会話状態の共有">Task 16: リアルタイム再取得と会話状態の共有</a></li>
+        <li><a href="#task-17-共通会話画面と元画面への復帰">Task 17: 共通会話画面と元画面への復帰</a></li>
+        <li><a href="#task-18-チャット一覧と友達からの開始">Task 18: チャット一覧と友達からの開始</a></li>
+        <li><a href="#task-19-今日のつながりホーム">Task 19: 今日のつながりホーム</a></li>
+        <li><a href="#task-20-バッジとバナーと送信状況">Task 20: バッジとバナーと送信状況</a></li>
+        <li><a href="#task-21-画面から実バックエンドへの通し検証">Task 21: 画面から実バックエンドへの通し検証</a></li>
+        <li><a href="#task-22-全体回帰と実機運用記録">Task 22: 全体回帰と実機・運用記録</a></li>
+      </ol></nav></details>
+    </aside>
+    <main id="content" tabindex="-1">
+      <h1 id="home-and-chat-implementation-plan">Home and Chat Implementation Plan</h1>
+      <p class="metadata"><strong>Goal:</strong> 承認済み仕様に従い、ホームの今日の行動・達成表示と、友達とのテキスト・画像送受信を実データで完結させる。</p>
+      <p class="metadata"><strong>Architecture:</strong> 既存のapp-query／app-command、アカウント別SQLite、共通送信キューを拡張する。会話を友達関係から分離し、日次台帳、受付の重複防止、会話別FIFO、本人専用の閲覧状態で整合性を守る。リアルタイムは本人向けの更新通知に限定し、再取得で回復する。</p>
+      <p class="metadata"><strong>Tech Stack:</strong> Expo SDK 57、React Native 0.86.3、React 19.2.3、TypeScript、Expo Router、expo-sqlite、expo-file-system、expo-image-picker、expo-image-manipulator、Supabase Auth/Postgres 17/Storage/Edge Functions/Realtime、Jest、React Native Testing Library、pgTAP、Deno tests。</p>
+      <p class="metadata"><strong>Spec:</strong> docs/sdd/specs/2026-10-27-home-chat-design.md</p>
+      <section aria-labelledby="global-constraints">
+        <h2 id="global-constraints">Global Constraints</h2>
+        <ul>
+          <li>全ての現在の友達と自由に会話できる。今日の割り当ては達成条件であり、会話できる相手を限定するものではない。友達成立後、次回抽選を待つ間も会話できる。</li>
+          <li>メッセージの編集・編集履歴操作・送信済みメッセージの取消、音声・動画・通話、ランキング、会話内容の採点、自動画像審査、会話検索は対象外。</li>
+          <li>友達解除、ブロック・予約、ミュート、非表示、通報の操作画面は別の設計単位。今回も既存の関係保護を維持し、関係変更後の履歴アクセス・送信停止を扱う。</li>
+          <li>プッシュ配信・OS通知許可要求・日次通知・メッセージ通知からの起動は対象外。Apple Developer Program加入後に別途実装する。アプリ表示中の新着反映とバナーは今回扱う。</li>
+          <li>日次境界: 04:00 JST。抽選確定期限: 04:05 JST到達前。達成対象は当日04:00以上、翌日04:00未満のサーバー受付分。</li>
+          <li>本文: 10,000拡張書記素クラスタ。判定版: Unicode 17.0.0、UAX #29 Revision 47。改行はLFで1文字。</li>
+          <li>添付: 最大4枚、元画像と変換後の各画像は10MiB以下、元形式はJPEG・PNG・HEIC、送信形式はJPEG・PNG。縮小後の長辺は最大2048px、JPEG品質80%。</li>
+          <li>追加取得: その他の会話20件、メッセージ50件。今日の対象者はこの会話件数制限とは別に全員表示する。</li>
+          <li>閲覧画像キャッシュ: 100MiB。自動送信期限: 予約から24時間。再試行: 5秒から倍増、最大15分間隔、既存のばらつき付き方式。</li>
+          <li>適応表示: 論理幅900以上かつ文字倍率1.3以下で2列、それ以外は1列。画面内の選択・下書きを維持する。</li>
+          <li>日次処理は締め、関係変更、抽選の順。送信は端末・アカウント・相手ごとにFIFO。表示する確定履歴は会話内のサーバー受付順。返信は受信より厳密に後、受付時刻同値は不成立。</li>
+          <li>通常の閲覧は表示した受信メッセージだけ未読を解消する。最新へを明示的に押した場合に限り、移動先として取得した最新位置まで途中も含めて解消する。その取得後に届いたメッセージまで巻き込まない。</li>
+          <li>関係終了を確認した端末は送信待ちを停止する。再び友達になった場合は同じ履歴を引き継ぎ、本人が確認した新しい送信だけを受け付ける。停止中のものを自動復活させない。</li>
+          <li>本文と受付済み画像は会話の当事者だけが取得できる。友達解除・ブロックの適用後も過去分の閲覧を許可するが、新規送受信は許可しない。ブロックされた事実は明示せず、現在この相手には送信できませんと表示する。既存の取消済み行は本文・画像を隠し、受付事実だけ維持する。</li>
+          <li>ログアウト時は未送信件数と結果不明の可能性を説明し、確認後にそのアカウントの自動処理を停止してSQLite・永続ファイル・画像キャッシュを削除する。別アカウントの資格で送信・画像取得・イベント購読を再開しない。</li>
+        </ul>
+      </section>
+      <section aria-labelledby="file-structure">
+        <h2 id="file-structure">File structure</h2>
+        <ul>
+          <li><code>supabase/migrations/0014_chat_text.sql</code>〜<code>0022_chat_realtime.sql</code>: 文字数、日次台帳、会話、画像検証、受付、閲覧、取得、本人用イベントの順に追加する。0001〜0013は変更しない。</li>
+          <li><code>supabase/functions/_shared/chat-text.ts</code>、<code>chat-unicode.generated.ts</code>、<code>chat-media.ts</code>、<code>chat-commands.ts</code>、<code>chat-queries.ts</code>、<code>daily-cycle.ts</code>: Edgeの検証・画像準備・日次ワーカー。既存の認証・操作境界を再利用する。</li>
+          <li><code>app/src/messages/</code>: <code>text.ts</code>、<code>unicode.generated.ts</code>、<code>types.ts</code>、<code>repository.ts</code>、<code>readState.ts</code>、<code>realtime.ts</code>、<code>provider.tsx</code>、<code>ConversationPanel.tsx</code>、<code>Composer.tsx</code>、<code>ChatList.tsx</code>、<code>ImageViewer.tsx</code>。</li>
+          <li><code>app/src/daily/homeRepository.ts</code>、<code>HomeDashboard.tsx</code>、<code>app/src/backend/chat.ts</code>: 日次表示と型付きAPI。既存の<code>progress.ts</code>と<code>send.ts</code>は互換性を確認して接続し、別Supabaseクライアントの直接挿入は本番経路にしない。</li>
+          <li><code>app/src/media/chatImages.ts</code>、<code>ChatImagePicker.tsx</code>、<code>app/src/storage/chat.ts</code>、<code>chatCache.ts</code>、<code>app/src/sync/chatPipeline.ts</code>: 画像処理、永続参照、画像キャッシュ、アップロードと送信。</li>
+          <li><code>app/src/app/conversations/[peerId].tsx</code>、<code>app/src/app/(tabs)/chat/_layout.tsx</code>、<code>index.tsx</code>、<code>new.tsx</code>、<code>app/src/navigation/conversationEntry.ts</code>: 共通会話ルートと相手選択。既存ホーム、友達プロフィール、ルート・タブレイアウトを接続する。</li>
+          <li><code>scripts/data/unicode/17.0.0/</code>、<code>scripts/generate-chat-unicode.mjs</code>、<code>scripts/test-chat-backend.mjs</code>、<code>scripts/lib/chat-test-stack.cjs</code>、<code>scripts/lib/chat-fixtures.cjs</code>: 版固定データ、再生成、専用ローカル検証環境。</li>
+          <li><code>supabase/tests/database/chat-*.test.sql</code>、<code>daily-*.test.sql</code>、<code>supabase/functions/tests/chat-*.test.ts</code>、<code>daily-cycle.test.ts</code>、<code>app/__tests__/home-chat-*.test.tsx</code>: 各Taskで追加する具体的なテスト。ルート配下にテストを置かない。</li>
+          <li><code>docs/testing/home-chat.md</code>、<code>docs/operations/home-chat.md</code>、<code>README.md</code>: 検証結果、日次ジョブ設定、起動と制約。既存の基盤検証記録を成功扱いで上書きしない。</li>
+        </ul>
+      </section>
+      <section aria-labelledby="execution-and-verification-contract">
+        <h2 id="execution-and-verification-contract">Execution and verification contract</h2>
+        <ul>
+          <li>Taskは番号順に実行し、一つずつ完了判定する。各Taskのテストを実装前に失敗させ、同じコマンドを実装後に再実行する。記載のファイル・関数名は作成する実体であり、雛形や成功を返す仮実装で完了にしない。</li>
+          <li>コマンドはリポジトリルートで実行する。DBの前提確認は<code>npx supabase start</code>、追加変更の適用は<code>npx supabase migration up --local</code>。既存データを消すreset、remote／linkedへの変更は実行しない。DBテストはトランザクションで巻き戻す。</li>
+          <li>アプリコードを書く前に<code>app/AGENTS.md</code>とExpo SDK 57の該当APIを読む。依存は既存package.jsonを優先し、SDK整合性は作業ディレクトリapp/で<code>npx expo install --check</code>を実行して確認する。Context7はlibraryで解決してからdocsを取得する。</li>
+          <li>SQLの時刻注入は非公開ヘルパーとDB所有者のテストだけで使う。公開RPC・HTTPは必ずサーバー時刻を採用し、テスト用の日付指定・認証迂回エンドポイントを出荷しない。新しいSECURITY DEFINER関数は空のsearch_pathと明示的なEXECUTE権限を持つ。</li>
+          <li>Task 10以降の新しいHTTP／画面通しテストは専用スタックを使う。通常の<code>daily-chat</code>プロジェクト、54321系ポート、<code>app/.env</code>を変更しない。既存の基盤テストは元の環境で別に回帰確認する。</li>
+          <li>各Taskの完了前に<code>npm --prefix app run typecheck</code>と<code>git diff --check</code>を実行する。DB変更Taskは追加適用後に全pgTAPも実行し、既存の登録・申請・プロフィール権限を壊していないことを確認する。</li>
+          <li>コミットはそのTaskのファイルだけを明示的にstageし、無関係なユーザー変更を含めない。実装時のコミット・PR単位はTask Nであり、Task内の手順を独立PRにしない。未実行・機材不足は成功やskip済み完了に置き換えない。</li>
+        </ul>
+      </section>
+      <article class="plan-task" data-task-number="1" aria-labelledby="task-1-チャット本文の版固定検証">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">1</span></div>
+        <h2 id="task-1-チャット本文の版固定検証">Task 1: チャット本文の版固定検証</h2>
+        <p>対象: <code>scripts/generate-chat-unicode.mjs</code>、<code>scripts/data/unicode/17.0.0/</code>、<code>0014_chat_text.sql</code>、両環境の<code>chat-text.ts</code>／<code>text.ts</code>と生成データ、<code>chat-text.test.sql</code>、<code>chat-text.test.ts</code>、<code>app/src/messages/text.test.ts</code>。</p>
+        <ol>
+          <li>結合文字、Prepend、GB9c、正しいGB11、旗、LF、White_Space、10,000境界のテストを作る。RED: <code>npm --prefix app test -- --runInBand src/messages/text.test.ts</code>、<code>npx supabase test db supabase/tests/database/chat-text.test.sql</code>。</li>
+          <li><code>normalizeChatBody(text): string</code>、<code>chatVisualLength(text): number</code>、<code>validateChatBody(text, imageCount)</code>を実装する。Unicode公式のGraphemeBreakProperty、DerivedCoreProperties、emoji-data、PropList、GraphemeBreakTestとライセンスを版固定で保存し、同じデータからTSと非公開SQL関数を生成する。<code>node scripts/generate-chat-unicode.mjs --download --write</code>と<code>node scripts/generate-chat-unicode.mjs --check</code>を実装し、ネット不要の再生成一致を保証する。既存プロフィール関数は変更しない。</li>
+          <li>GREEN: REDの2コマンドと<code>npx deno test --config supabase/functions/deno.json supabase/functions/tests/chat-text.test.ts</code>を実行する。公式検証例が全環境で一致し、クライアント申告文字数を使わないこと。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="2" aria-labelledby="task-2-境界時点の関係履歴と日次台帳">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">2</span></div>
+        <h2 id="task-2-境界時点の関係履歴と日次台帳">Task 2: 境界時点の関係履歴と日次台帳</h2>
+        <p>対象: <code>0015_daily_ledger.sql</code>、<code>supabase/tests/database/daily-ledger.test.sql</code>。依存: Task 1。</p>
+        <ol>
+          <li>04:00前後の成立・解除・再成立、予約の追加・取消、移行時の既存日数保存をテストする。RED: <code>npx supabase test db supabase/tests/database/daily-ledger.test.sql</code>。</li>
+          <li>友達関係に世代UUIDを追加し、関係期間と予約状態の変更履歴をトリガーで保存する。<code>daily_cycle_runs</code>に日付、締め・関係適用の完了、抽選状態、確定時刻を、<code>daily_user_results</code>に本人・日付・対象／対象外理由・達成・適用済み結果を持たせる。移行基準日と既存達成結果を記録し、導入前の不明日を未達成と捏造しない。<code>friends_at_boundary(key)</code>は履歴から04:00時点を復元し、再成立には必ず新しい世代を割り当てる。</li>
+          <li>GREEN: 追加適用後にREDのコマンドと<code>npx supabase test db</code>。一般ユーザーは履歴・台帳・時刻注入ヘルパーを直接変更できず、04:00後に成立した友達は当日候補に入らないこと。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="3" aria-labelledby="task-3-日次処理と連続日数の確定">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">3</span></div>
+        <h2 id="task-3-日次処理と連続日数の確定">Task 3: 日次処理と連続日数の確定</h2>
+        <p>対象: <code>0016_daily_cycle_runtime.sql</code>、<code>daily-settlement/index.ts</code>、<code>daily-settlement/handler.ts</code>、<code>_shared/daily-cycle.ts</code>、<code>daily-cycle.test.sql</code>、<code>daily-cycle.test.ts</code>、<code>scripts/daily-chat-jobs.json</code>。依存: Task 2。</p>
+        <ol>
+          <li>03:59:59／04:00／04:05、失敗再試行、成功後再実行、対象外日を挟む5→6、未達成0、古い再適用をテストする。RED: <code>npx supabase test db supabase/tests/database/daily-cycle.test.sql</code>、<code>npx deno test --allow-env --allow-net --config supabase/functions/deno.json supabase/functions/tests/daily-cycle.test.ts</code>。</li>
+          <li>サービス専用<code>advance_chat_day()</code>と非公開の時刻注入可能な処理を実装する。前日確定、予約適用、抽選を別の確定段階として保存し、04:05以降の未確定日は対象外で固定する。日付順の結果で日数を適用し、成功済み抽選を再実行エラーで失敗にしない。ライフサイクル排他→正規化ペア→ユーザーID昇順のロック順を統一し、友達成立を行う既存操作も境界の排他へ参加させる。</li>
+          <li><code>requireServiceCall</code>を通し、HTTPの日付指定を拒否する。ジョブ定義は04:00 JST起動と1分ごとの未完了確認をUTCで記述し、二重起動・過去日の復旧・失敗通知用の非機密な結果を返す。GREEN: REDの2コマンドと全pgTAP。抽選の失敗で締め・予約適用を巻き戻さないこと。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="4" aria-labelledby="task-4-永続会話と履歴移行">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">4</span></div>
+        <h2 id="task-4-永続会話と履歴移行">Task 4: 永続会話と履歴移行</h2>
+        <p>対象: <code>0017_conversations.sql</code>、<code>supabase/tests/database/chat-conversations.test.sql</code>。依存: Task 3。</p>
+        <ol>
+          <li>ペアの逆順重複、自己会話、旧messages移行、関係終了後の履歴分離をテストする。RED: <code>npx supabase test db supabase/tests/database/chat-conversations.test.sql</code>。</li>
+          <li><code>conversations(conversation_id,user_a,user_b,next_sequence)</code>を正規化ペア一意で作り、messagesへconversation_id・sequenceと一意制約を追加する。既存行は受付時刻・message_id順に移し、受付時刻・client_keyを変更しない。本人用<code>chat_participant_state</code>に相手表示情報のスナップショットを保存する。会話の作成は送信等の永続操作で行い、一覧表示だけでは作らない。本文の古いコードポイント制約をTask 1のSQL検証へ置き換える。</li>
+          <li>GREEN: 追加適用後にREDのコマンドと全pgTAP。メッセージの直接書き込みと未加工の本文参照は許可せず、後続の認証付き境界からだけ利用すること。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="5" aria-labelledby="task-5-非公開画像の準備と検証記録">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">5</span></div>
+        <h2 id="task-5-非公開画像の準備と検証記録">Task 5: 非公開画像の準備と検証記録</h2>
+        <p>対象: <code>0018_chat_media.sql</code>、<code>_shared/chat-media.ts</code>、<code>_shared/commands.ts</code>、<code>app-command/command.ts</code>、<code>chat-media.test.sql</code>、<code>chat-media.test.ts</code>、画像fixture。依存: Task 4。</p>
+        <ol>
+          <li>他人の画像、形式偽装、サイズ・寸法超過、メタデータ残存、検証後差し替え、直接RPCをテストする。RED: <code>npx deno test --allow-env --allow-net --config supabase/functions/deno.json supabase/functions/tests/chat-media.test.ts</code>、<code>npx supabase test db supabase/tests/database/chat-media.test.sql</code>。</li>
+          <li><code>prepare_chat_media</code>は既存HTTP操作境界で本人を認証して扱い、通常の認証済みRPCから検証記録を作れるハンドラーとして登録しない。ステージングの実バイトを読み、JPEG・PNGの構造、2048px、10MiB、除去対象の情報を検証し、サービスだけが書けるハッシュ付き不変オブジェクトへ保存する。サービス専用RPCでactor、client_key、画像順、SHA-256、実寸法・実サイズ・最終パスを保存する。</li>
+          <li>Storageはステージング本人限定、検証後はクライアントの上書き禁止、受付後は取消済みでないメッセージの当事者のみ読めるポリシーにする。GREEN: REDの2コマンドと全pgTAP。ステージングを変更しても検証済みバイトが変わらず、アップロードだけで相手に公開されないこと。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="6" aria-labelledby="task-6-メッセージ受付と達成の原子接続">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">6</span></div>
+        <h2 id="task-6-メッセージ受付と達成の原子接続">Task 6: メッセージ受付と達成の原子接続</h2>
+        <p>対象: <code>0019_chat_send.sql</code>、<code>_shared/chat-commands.ts</code>、<code>_shared/commands.ts</code>、<code>chat-send.test.sql</code>、<code>chat-commands.test.ts</code>。依存: Task 5。</p>
+        <ol>
+          <li>二重受付、同ID異内容、相互割り当て、同時刻返信、結果保留、関係終了・再成立をテストする。RED: <code>npx supabase test db supabase/tests/database/chat-send.test.sql</code>、<code>npx deno test --config supabase/functions/deno.json supabase/functions/tests/chat-commands.test.ts</code>。</li>
+          <li><code>send_message</code>のpayloadを<code>{recipient_id,client_key,friendship_epoch,body,media_ids}</code>とし、actorをJWTから決定する。関係世代・双方向ブロック・本文・画像検証記録を検証し、会話ロック後のサーバー時刻とsequenceを採番する。メッセージ、操作結果、確定可能な本人の達成・日数を同じトランザクションへ入れ、未確定日の判定は台帳へ保留する。同じclient_keyの再受付は同一内容だけを同じ結果へ戻す。</li>
+          <li>GREEN: REDの2コマンドと全pgTAP。結果は<code>{message_id,client_key,conversation_id,sequence,accepted_at}</code>を含む。関係を失って再成立した間ずっとオフラインでも、古い世代の送信を拒否し、payloadの世代を自動更新しないこと。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="7" aria-labelledby="task-7-本人専用の閲覧結果">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">7</span></div>
+        <h2 id="task-7-本人専用の閲覧結果">Task 7: 本人専用の閲覧結果</h2>
+        <p>対象: <code>0020_chat_reads.sql</code>、<code>_shared/chat-commands.ts</code>、<code>chat-reads.test.sql</code>、<code>chat-commands.test.ts</code>。依存: Task 6。</p>
+        <ol>
+          <li>未読の穴、上限を固定した最新へ、別端末の古い同期、他人のIDをテストする。RED: <code>npx supabase test db supabase/tests/database/chat-reads.test.sql</code>。</li>
+          <li><code>mark_chat_read</code>を<code>{conversation_id,message_ids,through_sequence}</code>で追加する。通常閲覧IDは受信・会話所属を検証して集合へ追加し、明示的一括操作の上限はmaxで統合する。上限以内の集合を整理しても穴あき未読を失わない。第三者・送信者への閲覧結果公開を禁止し、同一操作IDを再実行可能にする。</li>
+          <li>GREEN: REDのコマンド、<code>npx deno test --config supabase/functions/deno.json supabase/functions/tests/chat-commands.test.ts</code>、全pgTAP。履歴を読むだけでは解消せず、後から届いたsequenceを一括操作に含めないこと。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="8" aria-labelledby="task-8-ホームと会話の参照api">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">8</span></div>
+        <h2 id="task-8-ホームと会話の参照api">Task 8: ホームと会話の参照API</h2>
+        <p>対象: <code>0021_chat_queries.sql</code>、<code>_shared/chat-queries.ts</code>、<code>_shared/queries.ts</code>、<code>chat-queries.test.sql</code>、<code>chat-queries.test.ts</code>。依存: Task 7。</p>
+        <ol>
+          <li>20件超のその他一覧、50件超の履歴、全対象者、カーソル不一致、私的進捗・取消内容の漏洩をテストする。RED: <code>npx supabase test db supabase/tests/database/chat-queries.test.sql</code>、<code>npx deno test --config supabase/functions/deno.json supabase/functions/tests/chat-queries.test.ts</code>。</li>
+          <li><code>get_home</code>、<code>list_chats</code>、<code>get_chat_messages</code>、<code>get_chat_unread</code>を閉じたapp_queryディスパッチへ追加する。履歴は相手IDと<code>anchor: first_unread|latest|before|after</code>、cursorで指定し、items、前後cursor、first_unread_sequence、latest_sequence、can_send、friendship_epochを返す。空の友達会話の表示で永続会話を作らない。</li>
+          <li>ホームはserver_now・daily_key・確定状態・締切・本人の厳密な返信達成を同じスナップショットで返す。過去の相手は最終表示情報を返し、現在プロフィールを取得しない。GREEN: REDの2コマンドと全pgTAP。既存検索・招待・申請のopも回帰確認する。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="9" aria-labelledby="task-9-本人向け更新通知の権限">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">9</span></div>
+        <h2 id="task-9-本人向け更新通知の権限">Task 9: 本人向け更新通知の権限</h2>
+        <p>対象: <code>0022_chat_realtime.sql</code>、<code>supabase/tests/database/chat-realtime.test.sql</code>。依存: Task 8。</p>
+        <ol>
+          <li>本人行だけのSELECT、他人購読用の読取拒否、一般クライアントの更新拒否をテストする。RED: <code>npx supabase test db supabase/tests/database/chat-realtime.test.sql</code>。</li>
+          <li><code>chat_updates(user_id,revision)</code>へ本人向けの単調増加版を保存する。受付は両者、閲覧結果は本人だけ、日次結果・関係変更は影響する本人の行を更新する。複数行更新のロックをユーザーID順にし、トランザクション外で通知を先行させない。この表だけをRealtime対象に追加し、メッセージ本文・相手の閲覧情報をペイロードへ入れない。</li>
+          <li>GREEN: REDのコマンドと全pgTAP。app-queryの応答へ本人のrevisionを追加し、関係終了や再成立でも本人用状態の更新を検知できること。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="10" aria-labelledby="task-10-専用スタックでサーバー結合検証">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">10</span></div>
+        <h2 id="task-10-専用スタックでサーバー結合検証">Task 10: 専用スタックでサーバー結合検証</h2>
+        <p>対象: <code>scripts/test-chat-backend.mjs</code>、<code>scripts/lib/chat-test-stack.cjs</code>、<code>chat-fixtures.cjs</code>、<code>local-backend.cjs</code>、<code>scripts/chat-test-stack.test.mjs</code>。依存: Task 9。</p>
+        <ol>
+          <li>通常プロジェクト拒否、ポート衝突、秘密値の出力抑止、失敗時後始末をテストする。RED: <code>node --test scripts/chat-test-stack.test.mjs</code>。</li>
+          <li>専用tempディレクトリへ設定・マイグレーション・関数をコピーし、project_idはdaily-chat-home-chat-test、ローカルポートは55320〜55329、seedは無効にする。既存helperへ省略可能なworkdir指定を追加し、従来の既定動作を変えない。CLIのstart／status／functions serve／stopはこのディレクトリだけを対象とし、衝突時は既存プロセスを停止せず失敗する。</li>
+          <li>実AuthのA・B・第三者を生成し、専用DB所有者のfixtureで当日開始済みの状態を作る。HTTPで画像準備、同時送信、再送、取得、閲覧同期、関係世代、直接RPCとStorageの拒否を検証する。fixture用RPCを本番へ追加しない。GREEN: <code>node --test scripts/chat-test-stack.test.mjs</code>、<code>node scripts/test-chat-backend.mjs --suite backend</code>。通常の開発DBと.envが変更されないこと。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="11" aria-labelledby="task-11-端末内の会話保存と移行">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">11</span></div>
+        <h2 id="task-11-端末内の会話保存と移行">Task 11: 端末内の会話保存と移行</h2>
+        <p>対象: <code>app/src/storage/migrations.ts</code>、<code>outbox.ts</code>、<code>database.ts</code>、<code>chat.ts</code>、<code>app/src/messages/types.ts</code>、<code>app/__tests__/home-chat-storage.test.tsx</code>。依存: Task 10。</p>
+        <ol>
+          <li>既存SQLiteからの移行、相手別下書き、再起動復元、アカウント削除をテストする。RED: <code>npm --prefix app test -- --runInBand __tests__/home-chat-storage.test.tsx</code>。</li>
+          <li>outboxへordering_key・永続的なqueue_sequence・claim世代・送信到達段階・メッセージ照合用結果を追加し、既存行の意味を変えない。<code>chat_messages</code>、<code>chat_drafts</code>、<code>chat_read_intents</code>、添付参照・キャッシュ索引をアカウント付きで保存する。<code>saveChatDraft</code>、<code>readChatDraft</code>、<code>storeAcceptedMessage</code>、<code>listLocalMessages</code>を提供し、取りやめた送信と現在の下書きを別レコードにする。</li>
+          <li>deleteAccountDataへ全新規テーブルとファイル参照を組み込み、NodeSqliteDriverで実SQLと再オープンを検証する。GREEN: REDのコマンドと<code>npm --prefix app test -- --runInBand __tests__/storage.integration.test.ts</code>。移行失敗が半適用にならないこと。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="12" aria-labelledby="task-12-会話別fifoと取りやめ">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">12</span></div>
+        <h2 id="task-12-会話別fifoと取りやめ">Task 12: 会話別FIFOと取りやめ</h2>
+        <p>対象: <code>app/src/sync/queue.ts</code>、<code>types.ts</code>、<code>worker.ts</code>、<code>queue.test.ts</code>、<code>worker.test.ts</code>、<code>app/src/messages/outbox.test.ts</code>。依存: Task 11。</p>
+        <ol>
+          <li>先頭のバックオフ・失敗・期限超過・結果不明が後続を止め、別相手は進むテストを作る。RED: <code>npm --prefix app test -- --runInBand src/messages/outbox.test.ts src/sync/queue.test.ts src/sync/worker.test.ts</code>。</li>
+          <li>send_messageのordering_keyを相手ID、queue_sequenceを単調増加の論理送信位置とし、全非終端状態を先頭ブロッカーにする。取消とclaimは同じトランザクションで競合解決する。確認後の再試行は元位置、新しい操作IDを使い、対象外へ移したものは再投入時に末尾へ置く。メッセージをプロフィールのようにcoalesceしない。</li>
+          <li>GREEN: REDのコマンド。受付結果の永続保存、30秒の既存リース回収とclaim世代による古い応答の拒否、プロフィールの既存統合・独立操作・アカウント分離が維持されること。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="13" aria-labelledby="task-13-ライブラリ画像と端末キャッシュ">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">13</span></div>
+        <h2 id="task-13-ライブラリ画像と端末キャッシュ">Task 13: ライブラリ画像と端末キャッシュ</h2>
+        <p>対象: <code>app/src/media/chatImages.ts</code>、<code>ChatImagePicker.tsx</code>、<code>chatImages.test.ts</code>、<code>app/src/storage/chatCache.ts</code>、<code>chatCache.test.ts</code>、既存<code>files.ts</code>。依存: Task 12。</p>
+        <ol>
+          <li>画像形式、4枚、10MiB、2048px、PNG透過、方向補正、処理失敗、LRU保護をテストする。RED: <code>npm --prefix app test -- --runInBand src/media/chatImages.test.ts src/storage/chatCache.test.ts</code>。</li>
+          <li><code>prepareChatImage</code>は切り抜きせず向き補正→縮小→JPEG品質0.8またはPNG→メタデータ除去→永続化を行う。ライブラリ限定の選択、プレビュー、解除を提供し、キャンセルでは既存入力を変えない。expo-image-manipulatorの保存だけで撮影情報除去を保証せず、生成バイトを検査・除去する。プロフィール用の白背景正方形処理は流用しない。</li>
+          <li>100MiBの取得画像キャッシュを実装し、下書き・未送信・結果不明の参照をpinする。GREEN: REDのコマンドと<code>npm --prefix app test -- --runInBand src/media/avatar.test.ts</code>。ファイル書込み失敗では旧下書きを保持すること。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="14" aria-labelledby="task-14-画像準備から送信までの共通ワーカー">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">14</span></div>
+        <h2 id="task-14-画像準備から送信までの共通ワーカー">Task 14: 画像準備から送信までの共通ワーカー</h2>
+        <p>対象: <code>app/src/sync/chatPipeline.ts</code>、<code>api.ts</code>、<code>worker.ts</code>、<code>lifecycle.ts</code>、<code>app/src/messages/send.ts</code>、<code>app/__tests__/home-chat-send.test.tsx</code>。依存: Task 13。</p>
+        <ol>
+          <li>画像準備失敗、受付後応答喪失、再起動、前景の再試行時刻、バックグラウンド経路をテストする。RED: <code>npm --prefix app test -- --runInBand __tests__/home-chat-send.test.tsx __tests__/sync-lifecycle.test.ts</code>。</li>
+          <li><code>createChatSendApi</code>を既存プロフィール送信decoratorと合成し、同じワーカーを前景・背景で使う。画像準備の結果をローカル保存し、変更しないsend_message payloadを作る。実送信に到達した後の通信例外は結果不明として同じIDを確認し、確実に未送信の画像準備失敗だけを通常の再試行に戻す。旧send.tsの別クライアント直接挿入をこの経路へ置き換える。</li>
+          <li>GREEN: REDのコマンドと<code>npm --prefix app test -- --runInBand src/sync/worker.test.ts __tests__/profile-editor.test.tsx</code>。成功はclient_keyで照合し、部分画像・別アカウント・期限超過の無断送信を起こさないこと。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="15" aria-labelledby="task-15-型付き取得と相手別リポジトリ">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">15</span></div>
+        <h2 id="task-15-型付き取得と相手別リポジトリ">Task 15: 型付き取得と相手別リポジトリ</h2>
+        <p>対象: <code>app/src/backend/chat.ts</code>、<code>app/src/messages/repository.ts</code>、<code>readState.ts</code>、<code>app/src/daily/homeRepository.ts</code>、対応する<code>.test.ts</code>。依存: Task 14。</p>
+        <ol>
+          <li>古い非同期応答、追加取得、端末の仮表示との重複、未読の穴と一括解消上限をテストする。RED: <code>npm --prefix app test -- --runInBand src/backend/chat.test.ts src/messages/repository.test.ts src/messages/readState.test.ts src/daily/homeRepository.test.ts</code>。</li>
+          <li>注入可能な既存認証クライアントでTask 8の4クエリを呼ぶ。<code>loadInitial</code>、<code>loadBefore</code>、<code>loadAfter</code>、<code>jumpLatest</code>、<code>enqueueMessage</code>、<code>recordVisible</code>、<code>refreshHome</code>を提供する。キャッシュとローカル送信を統合し、関係世代が変わった送信を止める。読み取り意図は和集合として永続化し、メッセージFIFOとは独立に同期する。閲覧結果を24時間で破棄しない。</li>
+          <li>GREEN: REDのコマンド。server_nowから日付境界を扱い、日付不一致キャッシュを今日として表示せず、未読件数と人数へ未同期閲覧を一貫して反映すること。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="16" aria-labelledby="task-16-リアルタイム再取得と会話状態の共有">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">16</span></div>
+        <h2 id="task-16-リアルタイム再取得と会話状態の共有">Task 16: リアルタイム再取得と会話状態の共有</h2>
+        <p>対象: <code>app/src/messages/realtime.ts</code>、<code>provider.tsx</code>、<code>app/__tests__/home-chat-realtime.test.tsx</code>。依存: Task 15。</p>
+        <ol>
+          <li>初回取得と購読の競合、重複・逆順イベント、再接続、アカウント切替をテストする。RED: <code>npm --prefix app test -- --runInBand __tests__/home-chat-realtime.test.tsx</code>。</li>
+          <li>本人のchat_updatesだけを購読し、購読確立後にも再取得する。revisionの古い結果を破棄し、開いている会話、ホーム、一覧・未読を更新する。<code>ChatProvider</code>はアカウント単位でリポジトリと選択・下書きを共有し、<code>activePeerId</code>と前景状態を公開する。切替・ログアウトで購読とタイマーを確実に解除する。</li>
+          <li>GREEN: REDのコマンド。本文付きの全体購読やOS通知リスナーを新着経路にせず、切断中の受信を再取得で回復できること。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="17" aria-labelledby="task-17-共通会話画面と元画面への復帰">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">17</span></div>
+        <h2 id="task-17-共通会話画面と元画面への復帰">Task 17: 共通会話画面と元画面への復帰</h2>
+        <p>対象: <code>ConversationPanel.tsx</code>、<code>Composer.tsx</code>、<code>ImageViewer.tsx</code>、<code>app/src/app/conversations/[peerId].tsx</code>、<code>navigation/conversationEntry.ts</code>、<code>entry.ts</code>、ルートlayout、<code>home-chat-conversation.test.tsx</code>。依存: Task 16。</p>
+        <ol>
+          <li>認証ガード、元画面への戻る、初回未読、末尾追従、画像拡大、取りやめ編集をテストする。RED: <code>npm --prefix app test -- --runInBand __tests__/home-chat-conversation.test.tsx __tests__/registration-flow.test.tsx</code>。</li>
+          <li>相手IDと許可したoriginだけを受け取る共通ルートを登録し、ログイン・登録ガードを付ける。任意URLを戻る先として受け付けず、履歴がなければ許可済みoriginへ戻す。warm復帰の許可先へconversationsを追加する。50件の前後取得、可視受信IDの報告、明示的な最新へ、本文・画像の入力と送信状態を接続する。</li>
+          <li>GREEN: REDのコマンドと<code>npm --prefix app test -- --runInBand __tests__/theme-layout.test.tsx</code>。キーボード・画像dialog・200%文字拡大で操作不能にせず、関係終了後も過去分は読めるが新規送信は止め、取消済み行の本文・画像は表示しないこと。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="18" aria-labelledby="task-18-チャット一覧と友達からの開始">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">18</span></div>
+        <h2 id="task-18-チャット一覧と友達からの開始">Task 18: チャット一覧と友達からの開始</h2>
+        <p>対象: <code>app/src/messages/ChatList.tsx</code>、<code>app/src/app/(tabs)/chat/</code>、<code>friends/[userId].tsx</code>、<code>home-chat-list.test.tsx</code>、既存ナビゲーションテスト。依存: Task 17。</p>
+        <ol>
+          <li>全対象者表示、状態順、20件追加、下書きだけの行、新規相手選択をテストする。RED: <code>npm --prefix app test -- --runInBand __tests__/home-chat-list.test.tsx __tests__/navigation-shell.test.tsx</code>。</li>
+          <li>今日とその他を分けた一覧、未読件数、新しいチャットの友達選択、プロフィールのメッセージ操作をTask 17へ接続する。開くだけで行を残さず、申請中は送信させない。2列では同じConversationPanelと相手別状態を使い、1列切替時にも復元する。</li>
+          <li>GREEN: REDのコマンドと<code>npm --prefix app test -- --runInBand __tests__/friends-discovery.test.tsx __tests__/tab-behavior.test.tsx</code>。既存のタブ再選択と友達のプロフィール操作を壊さないこと。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="19" aria-labelledby="task-19-今日のつながりホーム">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">19</span></div>
+        <h2 id="task-19-今日のつながりホーム">Task 19: 今日のつながりホーム</h2>
+        <p>対象: <code>app/src/daily/HomeDashboard.tsx</code>、<code>progress.ts</code>、<code>app/src/app/(tabs)/home/index.tsx</code>、<code>home-chat-home.test.tsx</code>。依存: Task 18。</p>
+        <ol>
+          <li>未着手、相手待ち、達成、相互対象、返信0人、友達0人、次回参加、抽選保留・失敗、古いキャッシュをテストする。RED: <code>npm --prefix app test -- --runInBand __tests__/home-chat-home.test.tsx src/daily/progress.test.ts</code>。</li>
+          <li>承認済み試作のカードと既存トークンを使い、送信・返信の条件を別表示する。自分の行動完了と全達成を区別し、送信待ちを達成に含めない。相互対象を一枚へまとめ、ホームoriginで会話を開く。午前4時・4:05の再取得では入力を消さず、サーバー確認前の新対象を捏造しない。</li>
+          <li>GREEN: REDのコマンド。前回取得時刻・対象日と今の状態を区別し、完了後も相手カードと会話への入口を残すこと。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="20" aria-labelledby="task-20-バッジとバナーと送信状況">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">20</span></div>
+        <h2 id="task-20-バッジとバナーと送信状況">Task 20: バッジとバナーと送信状況</h2>
+        <p>対象: <code>app/src/notify/ChatArrivalHost.tsx</code>、ルート・タブlayout、<code>navigation/AdaptiveLayout.tsx</code>、<code>sync/SyncStatus.tsx</code>、<code>app/src/app/(tabs)/mypage/sync.tsx</code>、<code>home-chat-notices.test.tsx</code>。依存: Task 19。</p>
+        <ol>
+          <li>相手人数と各件数、同じ会話のバナー抑止、再取得の重複案内なし、タップ先、キュー操作の整合をテストする。RED: <code>npm --prefix app test -- --runInBand __tests__/home-chat-notices.test.tsx __tests__/sync-status.test.tsx __tests__/notification-entry.test.tsx</code>。</li>
+          <li>本人用の新着差分からバナーを出し、相手名と新しいメッセージだけを表示する。既存の5秒案内時間を使い、音・本文・画像・OS通知は出さない。タブと左ナビは同じ未読人数を表示する。共通送信状況にsend_messageの日本語名・元位置での再送・取りやめを接続し、申請専用のrequest_id案内をチャットに表示しない。</li>
+          <li>GREEN: REDのコマンドと<code>npm --prefix app test -- --runInBand __tests__/logout-entry.test.tsx</code>。プッシュ無効設定を維持し、ログアウト後の購読・バナー・新規保存を止めること。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="21" aria-labelledby="task-21-画面から実バックエンドへの通し検証">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">21</span></div>
+        <h2 id="task-21-画面から実バックエンドへの通し検証">Task 21: 画面から実バックエンドへの通し検証</h2>
+        <p>対象: <code>app/__tests__/home-chat-journey.test.tsx</code>、<code>app/testSupport/chatEnv.ts</code>、<code>scripts/test-chat-backend.mjs</code>、専用fixture。依存: Task 20。</p>
+        <ol>
+          <li>専用スタックに実AuthのA・BとAの別端末を作り、NodeSqliteDriver、実API、実キュー、実リポジトリを使う画面テストを作る。AuthProviderは既存のclient注入を使い、業務処理をモックしない。RED: <code>node scripts/test-chat-backend.mjs --suite journey</code>。</li>
+          <li>ホームからテキスト・画像送信、Bの受信と返信、Aのホーム達成、未読表示と別端末同期、通信断・再オープン・復帰、受付後応答喪失、関係世代の不一致を画面操作で通す。ネイティブ選択・Router・時計等のプラットフォーム差だけを注入する。chatEnvは専用プロジェクトの実接続情報を検証し、通常のlocalEnvによるapp/.env上書きを使わない。</li>
+          <li>GREEN: <code>node scripts/test-chat-backend.mjs --suite journey</code>、<code>node scripts/test-chat-backend.mjs --suite backend</code>。未設定なら失敗し、skipや偽データで合格扱いにしない。全ての専用クライアントと関数プロセスを後始末すること。</li>
+        </ol>
+      </article>
+      <article class="plan-task" data-task-number="22" aria-labelledby="task-22-全体回帰と実機運用記録">
+        <div class="task-rail" aria-hidden="true"><span class="task-number">22</span></div>
+        <h2 id="task-22-全体回帰と実機運用記録">Task 22: 全体回帰と実機・運用記録</h2>
+        <p>対象: <code>docs/testing/home-chat.md</code>、<code>docs/operations/home-chat.md</code>、<code>README.md</code>、必要な検証補助。依存: Task 21。</p>
+        <ol>
+          <li>全体回帰として<code>npm --prefix app run typecheck</code>、<code>npm --prefix app test -- --runInBand --testPathIgnorePatterns home-chat-journey.test.tsx</code>、<code>npx supabase test db</code>、<code>npx deno test --allow-env --allow-net --config supabase/functions/deno.json supabase/functions/tests</code>、<code>node scripts/test-local-backend.mjs --suite all</code>、<code>node scripts/test-chat-backend.mjs --suite all</code>、<code>git diff --check</code>を実行する。専用環境を要する新journeyは通常Jestから分離し、最後のallでbackendとjourneyを必ず実行する。既存journeyは従来環境の接続を確認して実行する。</li>
+          <li><code>npm --prefix app run ios</code>と<code>npm --prefix app run android</code>で開発ビルドを確認する。両OSでライブラリのJPEG・PNG透過・HEIC、向き、原寸と縮小、再起動後の下書き・画像、文字200%、小画面・横向き・2列、読み上げ、権限拒否、バックグラウンド復帰を確認する。機材・資格不足は阻害条件として記録する。</li>
+          <li>日次ジョブのサービス認証、04:00／4:05、1分再確認、重複起動、失敗監視、予約適用、復旧時の手順を記載する。本番への登録は承認された環境で別途行い、ローカル結果と区別する。設計Markdown／HTMLは変更せず、変更が必要な仕様は人間へ戻す。</li>
+          <li>完了条件は関連自動テストの成功、実データの2者送受信と達成・未読回復の証拠、対象プラットフォームの確認結果と残る阻害条件の明記。プッシュ、関係管理UI、編集・取消を追加実装しない。</li>
+        </ol>
+      </article>
+    </main>
+  </div>
+</body>
+</html>
