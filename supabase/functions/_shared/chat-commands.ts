@@ -6,6 +6,24 @@ export function validateChatCommandPayload(
   kind: string,
   payload: Record<string, unknown>,
 ): string | null {
+  if (kind === 'mark_chat_read') {
+    const keys = ['conversation_id', 'message_ids', 'through_sequence'];
+    if (Object.keys(payload).length !== keys.length || keys.some((key) => !(key in payload)) ||
+      typeof payload.conversation_id !== 'string' || !UUID_RE.test(payload.conversation_id)) {
+      return 'Invalid mark_chat_read payload.';
+    }
+    if (!Array.isArray(payload.message_ids) ||
+      payload.message_ids.some((id) => typeof id !== 'string' || !UUID_RE.test(id))) {
+      return 'Invalid read messages.';
+    }
+    const bound = payload.through_sequence;
+    if (bound !== null && (typeof bound !== 'number' || !Number.isSafeInteger(bound) || bound < 0)) {
+      return 'Invalid read bound.';
+    }
+    // Preserve the exact operation payload, including duplicate IDs and the
+    // fetched destination. SQL owns membership, set union and max-bound merge.
+    return null;
+  }
   if (kind !== 'send_message') return null;
   const keys = ['recipient_id', 'client_key', 'friendship_epoch', 'body', 'media_ids'];
   if (Object.keys(payload).length !== keys.length || keys.some((key) => !(key in payload))) {
