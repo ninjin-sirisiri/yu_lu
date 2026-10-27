@@ -1,0 +1,25 @@
+{
+  "timezone": "UTC",
+  "endpoint": "/functions/v1/daily-settlement",
+  "method": "POST",
+  "body": {},
+  "authorization": "Bearer ${SUPABASE_SERVICE_ROLE_KEY}",
+  "jobs": [
+    { "name": "chat-day-boundary", "cron": "0 19 * * *", "description": "04:00 JST next calendar day" },
+    { "name": "chat-day-recovery", "cron": "* * * * *", "description": "Recheck unfinished stages every minute; duplicate starts are serialized" }
+  ],
+  "monitoring": {
+    "alert_on": "HTTP non-2xx or transport failure",
+    "safe_fields": ["daily_key", "processed_days", "failed_days", "retry_required"],
+    "retry": "Invoke the same endpoint with an empty body; never supply a date. Recovery closes old dates in order and never redraws finalized days."
+  },
+  "operations": {
+    "setup": "Register these schedules only in an approved environment. Resolve the service credential from the scheduler secret store, never from this file. No production deployment is implied.",
+    "local_verification": [
+      "npx supabase start",
+      "npx supabase migration up --local",
+      "npx supabase test db supabase/tests/database/daily-cycle.test.sql",
+      "npx deno test --allow-env --allow-net --config supabase/functions/deno.json supabase/functions/tests/daily-cycle.test.ts"
+    ]
+  }
+}
