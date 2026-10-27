@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="ja" data-theme="light" data-view="home">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>ホームとチャットの試作 — Daily Chat</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --board: #efefec; --board-text: #25272b; --board-muted: #5d6168; --board-line: #c6c8ca;
+      --surface: #fff; --text: #272a2e; --muted: #62666d; --line: #e5e6e8;
+      --soft: #f3f4f5; --accent: #30343a; --on-accent: #fff; --accent-soft: #e9ebee;
+      --avatar: #e8e9e7; --avatar-ink: #5c6260; --focus: #426ca6;
+      --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px; --s7: 48px;
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+      font-synthesis: none; line-height: 1.5;
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --board: #15171a; --board-text: #f0f1f3; --board-muted: #b1b5be; --board-line: #515660;
+      --surface: #202225; --text: #f0f1f3; --muted: #b3b7c0; --line: #3c4047;
+      --soft: #2b2e33; --accent: #e1e4e9; --on-accent: #262a30; --accent-soft: #383c43;
+      --avatar: #383e3c; --avatar-ink: #c5cfca; --focus: #9ec4fa;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--board); color: var(--board-text); }
+    button, select, textarea { font: inherit; }
+    button, select { cursor: pointer; }
+    button { color: inherit; }
+    button:active { opacity: .72; }
+    button:disabled { cursor: default; opacity: .45; }
+    :is(button, select, textarea, a):focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+    h1, h2, h3, h4, p { margin: 0; }
+    h1, h2, h3, h4 { line-height: 1.4; text-wrap: balance; }
+    a { color: inherit; }
+    [hidden] { display: none !important; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    .skip { position: absolute; left: 16px; top: -100px; padding: 12px; background: var(--surface); z-index: 5; }
+    .skip:focus { top: 12px; }
+    .board-header, main, .board-footer { max-width: 1280px; margin-inline: auto; padding-inline: var(--s5); }
+    .board-header { padding-block: var(--s6) var(--s5); }
+    .eyebrow { color: var(--board-muted); font-size: .75rem; letter-spacing: .15em; font-weight: 650; margin-bottom: var(--s3); }
+    h1 { font-size: 2rem; letter-spacing: -.04em; }
+    .intro { margin-top: var(--s2); color: var(--board-muted); font-size: .875rem; }
+    .toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: var(--s4); margin-top: var(--s5); }
+    .field { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s1); min-width: 0; max-width: 100%; }
+    .field label { font-size: .75rem; color: var(--board-muted); font-weight: 600; }
+    select { min-width: 0; min-height: 44px; padding: var(--s2) var(--s6) var(--s2) var(--s3); border: 1px solid var(--board-muted); border-radius: 8px; background: var(--surface); color: var(--text); max-width: 100%; }
+    .switch { display: flex; gap: var(--s1); border: 1px solid var(--board-line); border-radius: 10px; padding: var(--s1); }
+    .switch button { min-height: 44px; border: 0; background: transparent; padding: var(--s2) var(--s4); border-radius: 7px; font-size: .8125rem; color: var(--board-muted); }
+    .switch button[aria-pressed="true"] { background: var(--surface); color: var(--text); font-weight: 700; box-shadow: 0 1px 3px #00000012; }
+    .quiet-button { min-height: 44px; padding: var(--s2) var(--s3); border: 0; border-radius: 8px; background: transparent; text-decoration: underline; text-underline-offset: 4px; font-size: .8125rem; }
+    .mobile-nav { display: none; }
+    .comparison { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s5); }
+    .panel { min-width: 0; }
+    .panel-heading { display: flex; gap: var(--s3); align-items: baseline; margin-bottom: var(--s3); }
+    .panel-heading h2 { font-size: 1.25rem; letter-spacing: -.025em; }
+    .panel-heading span { font-size: .75rem; color: var(--board-muted); }
+    .phone { height: 820px; max-width: 390px; margin-inline: auto; background: var(--surface); color: var(--text); border: 1px solid var(--board-line); border-radius: 32px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 8px 24px #202a3409; }
+    .statusbar { display: flex; align-items: center; justify-content: space-between; padding: var(--s4) var(--s5) var(--s2); flex: 0 0 auto; font-size: .75rem; font-weight: 650; }
+    .statusbar span:last-child { display: flex; align-items: center; gap: var(--s1); }
+    .statusbar .icon { width: 16px; height: 16px; }
+    .icon { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+    .scroll { overflow-y: auto; overscroll-behavior: contain; min-height: 0; flex: 1; scrollbar-width: thin; scrollbar-color: var(--board-line) transparent; }
+    .home-body { padding: var(--s3) var(--s5) var(--s5); }
+    .screen-title { font-size: 1.5rem; letter-spacing: -.04em; font-weight: 650; }
+    .date { font-size: .75rem; color: var(--muted); margin-top: var(--s1); }
+    .progress-summary { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); padding-block: var(--s4); border-bottom: 1px solid var(--line); }
+    .continuity { display: flex; gap: var(--s2); align-items: center; }
+    .continuity .icon { width: 32px; height: 32px; }
+    .continuity strong { font-size: 1.875rem; font-weight: 600; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+    .continuity small { font-size: .75rem; color: var(--muted); display: block; margin-top: -3px; }
+    .progress-labels { display: grid; gap: var(--s1); font-size: .75rem; color: var(--muted); }
+    .progress-labels > span { display: flex; gap: var(--s3); justify-content: space-between; }
+    .progress-labels b { color: var(--text); font-weight: 600; }
+    .notice { margin-top: var(--s4); background: var(--soft); border-radius: 10px; padding: var(--s3); font-size: .8125rem; display: flex; align-items: start; gap: var(--s2); }
+    .notice .icon { width: 18px; height: 18px; margin-top: 2px; }
+    .notice strong { font-weight: 600; }
+    .notice small { display: block; color: var(--muted); font-size: .75rem; margin-top: var(--s1); }
+    .daily-card { background: var(--soft); border: 1px solid var(--line); border-radius: 12px; margin-top: var(--s5); padding: var(--s5); position: relative; }
+    .card-label { font-size: .75rem; color: var(--muted); display: flex; align-items: center; gap: var(--s2); }
+    .card-label .icon { width: 16px; height: 16px; }
+    .hero-person { display: flex; align-items: center; gap: var(--s4); margin-top: var(--s4); }
+    .hero-person h4 { font-size: 1.375rem; font-weight: 650; }
+    .hero-person p { color: var(--muted); font-size: .8125rem; margin-top: var(--s1); }
+    .avatar { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--avatar); color: var(--avatar-ink); flex-shrink: 0; overflow: hidden; }
+    .avatar svg { width: 100%; height: 100%; }
+    .avatar.large { width: 64px; height: 64px; }
+    .card-copy { font-size: .8125rem; color: var(--muted); margin-block: var(--s4); line-height: 1.7; }
+    .primary { width: 100%; display: flex; align-items: center; justify-content: center; gap: var(--s2); min-height: 48px; border: 0; border-radius: 8px; background: var(--accent); color: var(--on-accent); font-size: .875rem; font-weight: 600; padding: var(--s3); }
+    .primary .icon { width: 18px; height: 18px; }
+    .mutual-status { display: flex; flex-wrap: wrap; gap: var(--s2); font-size: .75rem; margin-top: var(--s3); }
+    .reply-section { margin-top: var(--s5); }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s2); }
+    .section-heading h4 { font-size: .875rem; font-weight: 600; }
+    .section-heading span { color: var(--muted); font-size: .75rem; }
+    ul { padding: 0; margin: 0; list-style: none; }
+    .person-row { display: flex; gap: var(--s3); width: 100%; min-height: 76px; align-items: center; border: 0; background: transparent; text-align: left; padding: var(--s3) 0; }
+    li + li .person-row { border-top: 1px solid var(--line); }
+    .person-text { flex: 1; min-width: 0; }
+    .person-text strong { font-size: .9375rem; font-weight: 600; display: block; overflow-wrap: anywhere; }
+    .person-text small { display: block; color: var(--muted); font-size: .75rem; margin-top: var(--s1); overflow-wrap: anywhere; }
+    .row-action { font-size: .75rem; display: flex; align-items: center; gap: var(--s1); color: var(--text); white-space: nowrap; }
+    .row-action .icon { width: 16px; height: 16px; }
+    .deadline { font-size: .6875rem; color: var(--muted); margin-top: var(--s4); border-top: 1px solid var(--line); padding-top: var(--s3); }
+    .tabbar { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--line); padding: var(--s2); gap: var(--s1); background: var(--surface); }
+    .tab { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--s1); min-height: 48px; background: transparent; border: 0; border-radius: 8px; color: var(--muted); font-size: .625rem; padding: var(--s1); position: relative; }
+    .tab[aria-current="page"] { color: var(--text); background: var(--soft); font-weight: 700; }
+    .tab:disabled { opacity: 1; color: var(--muted); }
+    .tab-symbol { position: relative; line-height: 0; }
+    .tab-badge { position: absolute; right: -10px; top: -3px; min-width: 16px; padding-inline: 3px; border-radius: 9px; background: var(--accent); color: var(--on-accent); font-size: .625rem; line-height: 16px; }
+    .home-indicator { width: 108px; height: 4px; background: var(--text); border-radius: 4px; margin: var(--s2) auto; flex-shrink: 0; }
+    .list-header { padding: var(--s3) var(--s5) var(--s4); display: flex; align-items: center; justify-content: space-between; }
+    .icon-button { border: 0; background: transparent; display: grid; place-items: center; min-width: 44px; min-height: 44px; border-radius: 8px; padding: var(--s2); }
+    .icon-button:hover { background: var(--soft); }
+    .list-section { padding: 0 var(--s5); }
+    .list-section + .list-section { padding-top: var(--s5); }
+    .list-section h4 { color: var(--muted); font-size: .75rem; margin-bottom: var(--s1); font-weight: 600; }
+    .chat-row { min-height: 94px; }
+    .chat-row .person-text small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .chat-row .person-text .status-text { color: var(--text); font-size: .6875rem; }
+    .row-end { display: grid; justify-items: end; gap: var(--s2); align-self: center; }
+    .row-end time { font-size: .625rem; color: var(--muted); }
+    .count { display: grid; place-items: center; min-width: 20px; height: 20px; padding-inline: 5px; border-radius: 7px; background: var(--accent); color: var(--on-accent); font-size: .6875rem; font-weight: 600; }
+    .conversation-header { display: flex; align-items: center; gap: var(--s2); padding: var(--s1) var(--s3) var(--s3); }
+    .conversation-header .avatar { width: 36px; height: 36px; }
+    .conversation-header h3 { font-size: 1.125rem; font-weight: 650; }
+    .conversation-header small { color: var(--muted); font-size: .6875rem; display: block; }
+    .daily-hint { margin: 0 var(--s4) var(--s3); padding: var(--s3); border-radius: 8px; background: var(--soft); color: var(--muted); font-size: .75rem; display: flex; align-items: center; gap: var(--s2); }
+    .daily-hint .icon { width: 16px; height: 16px; }
+    .messages { padding: var(--s2) var(--s4) var(--s5); }
+    .day-separator { font-size: .6875rem; color: var(--muted); text-align: center; margin: var(--s3) 0 var(--s5); }
+    .message { display: flex; flex-direction: column; align-items: start; margin-bottom: var(--s4); }
+    .message.mine { align-items: end; }
+    .bubble { max-width: 86%; padding: var(--s3); background: var(--soft); border-radius: 12px 12px 12px 3px; font-size: .875rem; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .mine .bubble { background: var(--accent-soft); border-radius: 12px 12px 3px 12px; }
+    .message-meta { margin-top: var(--s1); color: var(--muted); font-size: .625rem; }
+    .unread-divider { display: flex; align-items: center; gap: var(--s3); color: var(--muted); font-size: .6875rem; margin-block: var(--s5); }
+    .unread-divider::before, .unread-divider::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+    .photo-button { padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--soft); overflow: hidden; width: 210px; max-width: 100%; display: block; }
+    .sample-photo { width: 100%; display: block; color: var(--avatar-ink); background: var(--avatar); }
+    .composer { border-top: 1px solid var(--line); padding: var(--s3) var(--s3) var(--s1); }
+    .composer label { display: block; font-size: .6875rem; color: var(--muted); margin: 0 0 var(--s2) var(--s1); }
+    .composer-row { display: flex; align-items: end; gap: var(--s2); }
+    textarea { width: 100%; min-width: 0; min-height: 48px; max-height: 140px; resize: vertical; padding: var(--s3); border: 1px solid var(--muted); border-radius: 10px; color: var(--text); background: var(--surface); font-size: .875rem; }
+    textarea::placeholder { color: var(--muted); }
+    .send { min-width: 44px; width: 44px; min-height: 48px; border-radius: 9px; padding: var(--s2); }
+    .attachment { display: flex; align-items: center; gap: var(--s3); margin-bottom: var(--s3); padding-inline: var(--s1); font-size: .75rem; }
+    .attachment .sample-photo { width: 60px; border-radius: 8px; }
+    .attachment .quiet-button { margin-left: auto; }
+    .caption { max-width: 390px; margin: var(--s4) auto 0; color: var(--board-muted); font-size: .8125rem; line-height: 1.7; }
+    .empty { padding: var(--s6) 0; text-align: center; }
+    .empty > .icon { width: 48px; height: 48px; color: var(--muted); margin-bottom: var(--s4); }
+    .empty h4 { font-size: 1.125rem; }
+    .empty p { margin-block: var(--s3) var(--s5); color: var(--muted); font-size: .8125rem; line-height: 1.8; }
+    .board-footer { margin-block: var(--s6); color: var(--board-muted); font-size: .75rem; }
+    .board-footer p { padding-top: var(--s4); border-top: 1px solid var(--board-line); }
+    dialog { width: min(440px, calc(100% - 32px)); max-height: calc(100% - 48px); padding: var(--s5); border: 1px solid var(--board-line); border-radius: 16px; color: var(--text); background: var(--surface); }
+    dialog::backdrop { background: #10131899; }
+    dialog h2 { font-size: 1.25rem; margin-bottom: var(--s3); }
+    dialog p { color: var(--muted); font-size: .875rem; margin-bottom: var(--s4); }
+    dialog .primary { margin-top: var(--s4); }
+    #announcement { min-height: 1.5em; color: var(--board-muted); font-size: .75rem; margin-top: var(--s3); }
+    @media (max-width: 1099px) {
+      .comparison { display: block; }
+      .panel { display: none; }
+      [data-view="home"] .panel[data-panel="home"], [data-view="list"] .panel[data-panel="list"], [data-view="conversation"] .panel[data-panel="conversation"] { display: block; }
+      .panel-heading { max-width: 390px; margin-inline: auto; }
+      .mobile-nav { display: flex; width: fit-content; margin: 0 auto var(--s5); }
+    }
+    @media (max-width: 440px) {
+      .board-header, main, .board-footer { padding-inline: var(--s4); }
+      .board-header { padding-top: var(--s5); }
+      h1 { font-size: 1.625rem; }
+      .phone { height: 800px; border-radius: 24px; }
+      .home-body, .list-section { padding-inline: var(--s4); }
+      .daily-card { padding: var(--s4); }
+      .switch button { padding-inline: var(--s3); }
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      button { transition: background-color 120ms ease, opacity 120ms ease; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Throwaway visual spike. Fictional people/messages. In-memory interaction only; no backend or persistent storage. -->
+  <a class="skip" href="#screens">画面の試作へ移動</a>
+  <header class="board-header">
+    <p class="eyebrow">DAILY CHAT / HOME & CHAT</p>
+    <h1>毎日のきっかけを、ホームに。</h1>
+    <p class="intro">今日の相手に話しかける。その先は、いつもの会話。3画面の見た目と動線を確認する試作です。</p>
+    <div class="toolbar">
+      <div class="field">
+        <label for="scenario">今日の状態（切り替えると試作の入力はリセット）</label>
+        <select id="scenario">
+          <option value="normal">送信・返信が必要</option>
+          <option value="waiting">今できることは完了・相手待ち</option>
+          <option value="done">今日のつながりを達成</option>
+          <option value="mutual">送信相手と返信相手が同じ</option>
+          <option value="empty">友達がまだいない</option>
+          <option value="failed">今日の抽選に失敗</option>
+        </select>
+      </div>
+      <div class="switch" role="group" aria-label="試作のテーマ">
+        <button type="button" data-theme="light" aria-pressed="true">ライト</button>
+        <button type="button" data-theme="dark" aria-pressed="false">ダーク</button>
+      </div>
+      <button type="button" class="quiet-button" id="reset">試作をリセット</button>
+    </div>
+    <p id="announcement" role="status">人物・会話はサンプルです。入力や送信はこのページ内だけで動作します。</p>
+  </header>
+  <main id="screens" tabindex="-1">
+    <nav class="switch mobile-nav" aria-label="確認する画面">
+      <button type="button" data-view="home" aria-pressed="true">ホーム</button>
+      <button type="button" data-view="list" aria-pressed="false">チャット一覧</button>
+      <button type="button" data-view="conversation" aria-pressed="false">会話</button>
+    </nav>
+    <div class="comparison">
+      <section class="panel" data-panel="home">
+        <header class="panel-heading"><h2>01 ホーム</h2><span>今日のきっかけ</span></header>
+        <div class="phone" id="home-phone">
+          <div class="statusbar" aria-hidden="true"><span>9:41</span><span>●●● ▰</span></div>
+          <div class="scroll home-body" id="home-content"></div>
+          <nav class="tabbar" data-active="home" aria-label="ホーム画面のタブ"></nav>
+          <div class="home-indicator" aria-hidden="true"></div>
+        </div>
+        <p class="caption">日数は小さく、今日の相手は大きく。相手待ちと、自分が今できることを分けて伝えます。</p>
+      </section>
+      <section class="panel" data-panel="list">
+        <header class="panel-heading"><h2>02 チャット一覧</h2><span>今日の相手から</span></header>
+        <div class="phone" id="list-phone">
+          <div class="statusbar" aria-hidden="true"><span>9:41</span><span>●●● ▰</span></div>
+          <header class="list-header"><h3 class="screen-title" tabindex="-1">チャット</h3><button class="icon-button" id="new-chat" type="button" aria-label="新しいチャット"></button></header>
+          <div class="scroll" id="list-content"></div>
+          <nav class="tabbar" data-active="list" aria-label="チャット一覧画面のタブ"></nav>
+          <div class="home-indicator" aria-hidden="true"></div>
+        </div>
+        <p class="caption">今日の対象者を上部にまとめます。全ての友達との会話は、日をまたいで続きます。</p>
+      </section>
+      <section class="panel" data-panel="conversation">
+        <header class="panel-heading"><h2>03 会話</h2><span>ひとことを送る</span></header>
+        <div class="phone" id="conversation-phone">
+          <div class="statusbar" aria-hidden="true"><span>9:41</span><span>●●● ▰</span></div>
+          <header class="conversation-header" id="conversation-header"></header>
+          <p class="daily-hint" id="daily-hint"></p>
+          <div class="scroll messages" id="messages" role="region" aria-label="会話履歴" tabindex="0"></div>
+          <form class="composer" id="composer">
+            <div class="attachment" id="attachment" hidden></div>
+            <label for="message-input">メッセージ（試作・実際には送信されません）</label>
+            <div class="composer-row">
+              <button class="icon-button" type="button" id="attach" aria-label="サンプル画像を添付"></button>
+              <textarea id="message-input" rows="1" placeholder="ひとこと、話しかけよう" aria-describedby="input-error"></textarea>
+              <button class="primary send" type="submit" aria-label="試作内で送信" id="send" disabled></button>
+            </div>
+            <p id="input-error" class="date"></p>
+          </form>
+          <div class="home-indicator" aria-hidden="true"></div>
+        </div>
+        <p class="caption">今日の役割は控えめな案内に。会話を主役にし、相手への既読表示は付けません。</p>
+      </section>
+    </div>
+    <noscript>この試作の表示と操作にはJavaScriptを有効にしてください。</noscript>
+  </main>
+  <footer class="board-footer"><p>使い捨ての見た目検証用試作。状態切り替え・相手の選択・仮の送信・サンプル画像の添付と拡大を操作できます。友達・マイページのタブは見た目のみ。オフライン再送・未読同期などの本番処理は含みません。</p></footer>
+  <dialog id="dialog" aria-labelledby="dialog-title">
+    <h2 id="dialog-title"></h2><div id="dialog-body"></div>
+    <form method="dialog"><button class="primary" type="submit">閉じる</button></form>
+  </dialog>
+  <script>
+    const $ = (selector) => document.querySelector(selector);
+    const icons = {
+      home: '<path d="m3 10 9-7 9 7v10H15v-6H9v6H3Z"/>',
+      chat: '<path d="M21 11a8 8 0 0 1-8 8H9l-6 3 2-6v-5a8 8 0 0 1 16 0Z"/><path d="M8 10h8m-8 4h5"/>',
+      friends: '<circle cx="9" cy="7" r="3.5"/><path d="M2 21v-2a7 7 0 0 1 14 0v2M16 4a3.5 3.5 0 0 1 0 7m3 10v-2a7 7 0 0 0-2-5"/>',
+      person: '<circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/>',
+      chevron: '<path d="m9 5 7 7-7 7"/>', back: '<path d="m15 5-7 7 7 7"/>',
+      check: '<path d="m5 12 4 4L19 6"/>', clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+      link: '<path d="m10 14 4-4m-6 6-1 1a4 4 0 0 1-6-6l5-5a4 4 0 0 1 6 0m0 12a4 4 0 0 0 6 0l5-5a4 4 0 0 0-6-6l-1 1" transform="translate(1 0) scale(.9 1)"/>',
+      arrow: '<path d="M4 12h16m-6-6 6 6-6 6"/>', up: '<path d="M12 20V4m-7 7 7-7 7 7"/>',
+      plus: '<path d="M12 5v14M5 12h14"/>', image: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-7 5 8"/>',
+      info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/>',
+    };
+    const icon = (name) => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${icons[name]}</svg>`;
+    const people = {
+      aoi: { name: 'あおい', id: 'aoi_07', hair: 0 }, haru: { name: 'はる', id: 'haru_12', hair: 1 },
+      sakura: { name: 'さくら', id: 'sakura_24', hair: 2 }, yui: { name: 'ゆい', id: 'yui_03', hair: 0 },
+    };
+    function avatar(key, large = false) {
+      const hair = [
+        '<path d="M18 31V24a14 14 0 0 1 28 0v9l-5-14-17 5-2 9Z"/>',
+        '<path d="M19 29V22q0-13 14-13t14 13v7l-7-9-18 4Z"/>',
+        '<path d="M15 41V27q0-17 17-17t17 17v14h-8V24l-12-6-6 9v14Z"/>',
+      ];
+      return `<span class="avatar${large ? ' large' : ''}" aria-hidden="true"><svg viewBox="0 0 64 64" fill="none"><path d="M7 64c0-14 10-22 25-22s25 8 25 22" fill="currentColor" opacity=".32"/><ellipse cx="32" cy="29" rx="12" ry="15" fill="var(--surface)"/>${hair[people[key].hair].replace('<path ', '<path fill="currentColor" ')}<path d="M28 36q4 3 8 0" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="27" cy="29" r="1" fill="currentColor"/><circle cx="37" cy="29" r="1" fill="currentColor"/></svg></span>`;
+    }
+    const photo = () => '<svg class="sample-photo" viewBox="0 0 280 190" role="img" aria-label="窓辺のコーヒーカップのイラスト。サンプル画像"><rect width="280" height="190" fill="var(--avatar)"/><path d="M0 130h280M40 0v130M180 0v130M40 48h140" stroke="currentColor" opacity=".3" stroke-width="2"/><path d="M40 130 160 48h20L85 130" fill="var(--surface)" opacity=".4"/><ellipse cx="153" cy="156" rx="67" ry="14" fill="currentColor" opacity=".13"/><path d="M108 97h70v37q0 24-35 24t-35-24Z" fill="var(--surface)"/><path d="M179 106h9q22 0 15 21-5 11-24 10" fill="none" stroke="var(--surface)" stroke-width="9"/><ellipse cx="143" cy="98" rx="35" ry="8" fill="currentColor" opacity=".65"/><path d="M134 79q-10-9 0-18m17 18q-10-9 0-18" fill="none" stroke="currentColor" opacity=".45" stroke-width="2" stroke-linecap="round"/></svg>';
+    const escapeText = (text) => text.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    let scenario = 'normal';
+    let peer = 'haru';
+    let origin = 'list';
+    let sent = false;
+    let replied = new Set();
+    let drafts = {};
+    let extraMessages = {};
+    let seen = new Set();
+    const replyKeys = () => scenario === 'mutual' ? ['aoi', 'haru'] : ['haru', 'sakura'];
+    const hasTargets = () => !['empty', 'failed'].includes(scenario);
+    const received = (key) => key !== 'sakura' || scenario === 'done';
+    const achieved = () => hasTargets() && sent && replyKeys().every((key) => replied.has(key));
+    const unread = (key) => scenario === 'empty' || seen.has(key) ? 0 : ({ haru: 2, yui: 1 }[key] ?? 0);
+    function status(key) {
+      if (!hasTargets()) return '';
+      if (replyKeys().includes(key) && !replied.has(key) && received(key)) return '返信が必要';
+      if (key === 'aoi' && !sent) return '送信が必要';
+      if (replyKeys().includes(key) && !replied.has(key)) return 'メッセージ待ち';
+      return '達成済み';
+    }
+    function announce(text) { $('#announcement').textContent = text; }
+    function setView(view, focus = false) {
+      document.documentElement.dataset.view = view;
+      document.querySelectorAll('[data-view]').forEach((button) => {
+        if (button.tagName === 'BUTTON') button.setAttribute('aria-pressed', String(button.dataset.view === view));
+      });
+      if (focus) {
+        const target = $(`[data-panel="${view}"] h3`);
+        target?.focus({ preventScroll: true });
+        $(`[data-panel="${view}"]`).scrollIntoView({ block: 'nearest' });
+      }
+    }
+    function renderTabs() {
+      const badge = Object.keys(people).filter((key) => unread(key) > 0).length;
+      document.querySelectorAll('.tabbar').forEach((nav) => {
+        nav.innerHTML = [['home', 'home', 'ホーム'], ['list', 'chat', 'チャット'], ['friends', 'friends', '友達'], ['me', 'person', 'マイページ']].map(([view, symbol, label]) =>
+          `<button type="button" class="tab" ${['friends', 'me'].includes(view) ? 'disabled' : `data-view="${view}"`} ${nav.dataset.active === view ? 'aria-current="page"' : ''}><span class="tab-symbol">${icon(symbol)}${view === 'list' && badge ? `<span class="tab-badge" aria-label="未読の相手${badge}人">${badge}</span>` : ''}</span><span>${label}</span></button>`
+        ).join('');
+      });
+    }
+    function renderHome() {
+      const complete = achieved();
+      const waiting = hasTargets() && sent && replyKeys().every((key) => replied.has(key) || !received(key)) && !complete;
+      const summary = `<header><h3 class="screen-title" tabindex="-1">今日のつながり</h3><p class="date">10月5日 月曜日</p></header><div class="progress-summary"><div class="continuity">${icon('link')}<div><strong>${scenario === 'empty' ? 0 : complete ? 13 : 12}</strong> <span>日</span><small>${scenario === 'empty' ? 'ここからはじまる' : 'つづいています'}</small></div></div><div class="progress-labels">${hasTargets() ? `<span>送信 <b>${sent ? '完了' : '未完了'}</b></span><span>返信 <b>${replyKeys().filter((key) => replied.has(key)).length} / ${replyKeys().length}人</b></span>` : '<span>今日は達成判定の対象外</span>'}</div></div>`;
+      if (!hasTargets()) {
+        $('#home-content').innerHTML = summary + `<section class="empty">${icon(scenario === 'empty' ? 'friends' : 'info')}<h4>${scenario === 'empty' ? '最初の友達と、つながろう' : '今日は相手を選べませんでした'}</h4><p>${scenario === 'empty' ? '友達を追加すると、次の抽選から<br>毎日、話しかける相手が決まります。' : '連続日数はそのままです。<br>友達との会話は、いつもどおり楽しめます。'}</p><button class="primary" type="button" ${scenario === 'empty' ? 'data-info="friends"' : 'data-view="list"'}>${scenario === 'empty' ? '友達を追加' : '友達と話す'}${icon('arrow')}</button></section><p class="deadline">次の更新は翌朝4:00（日本時間）</p>`;
+        return;
+      }
+      let notice = '';
+      if (complete || waiting) notice = `<div class="notice">${icon(complete ? 'check' : 'clock')}<div><strong>${complete ? '今日のつながりを達成' : '今できることは完了'}</strong><small>${complete ? '今日も、ひとことがつながりました。' : 'さくらさんからのメッセージ待ちです。'}</small></div></div>`;
+      $('#home-content').innerHTML = summary + notice + `<section class="daily-card"><p class="card-label">${icon('chat')}今日、話しかける相手</p><div class="hero-person">${avatar('aoi', true)}<div><h4>あおいさん</h4><p>@aoi_07</p></div></div><p class="card-copy">${sent ? '今日のひとことは届きました。<br>このまま、会話の続きを。' : '最近あったこと、ふと思い出したこと。<br>今日は、あおいさんにひとこと。'}</p>${scenario === 'mutual' ? `<div class="mutual-status"><span>送信：${sent ? '完了' : '未完了'}</span><span>返信：${replied.has('aoi') ? '完了' : '必要'}</span></div><p class="card-copy">今日は返信の対象でもあります。</p>` : ''}<button type="button" class="primary" data-peer="aoi" data-origin="home">${sent ? (status('aoi') === '返信が必要' ? '返信する' : '会話を続ける') : '話しかける'}${icon('arrow')}</button></section><section class="reply-section"><div class="section-heading"><h4>あなたからの返信</h4><span>${replyKeys().filter((key) => replied.has(key)).length} / ${replyKeys().length}人 完了</span></div><ul role="list">${replyKeys().filter((key) => key !== 'aoi').map((key) => `<li><button type="button" class="person-row" data-peer="${key}" data-origin="home">${avatar(key)}<span class="person-text"><strong>${people[key].name}</strong><small>${status(key)}</small></span><span class="row-action">${replied.has(key) ? icon('check') : received(key) ? '返信する' + icon('chevron') : icon('clock')}</span></button></li>`).join('')}</ul></section><p class="deadline">次の更新・締切は翌朝4:00（日本時間）</p>`;
+    }
+    function chatRow(key, today = false) {
+      const latest = extraMessages[key]?.at(-1);
+      const draft = drafts[key];
+      const preview = draft?.text || draft?.image ? `下書き：${draft.text || '画像1枚'}` : latest ? `あなた：${latest.text || '画像を送信しました'}` : ({ aoi: 'ひとこと、話しかけてみよう', haru: 'この前話したお店、行ってきたよ', sakura: 'あなた：また話そうね', yui: 'ありがとう、楽しみにしてる！' }[key]);
+      return `<li><button type="button" class="person-row chat-row" data-peer="${key}" data-origin="list">${avatar(key)}<span class="person-text"><strong>${people[key].name}</strong>${today ? `<small class="status-text">${status(key)}${key === 'aoi' ? ' · 今日の送信相手' : ''}</small>` : ''}<small>${escapeText(preview)}</small></span><span class="row-end"><time>${latest ? '9:41' : ({ aoi: '', haru: '9:32', sakura: '昨日', yui: '8:50' }[key])}</time>${unread(key) ? `<span class="count" aria-label="未読${unread(key)}件">${unread(key)}</span>` : ''}</span></button></li>`;
+    }
+    function renderList() {
+      if (scenario === 'empty') {
+        $('#list-content').innerHTML = '<section class="list-section empty"><h4>会話はここに並びます</h4><p>友達を追加して、最初のひとことを。</p><button type="button" class="primary" data-info="friends">友達を追加</button></section>';
+        return;
+      }
+      const rank = { '返信が必要': 0, '送信が必要': 1, 'メッセージ待ち': 2, '達成済み': 3 };
+      const recent = { haru: 3, yui: 2, sakura: 1, aoi: 0 };
+      const targets = hasTargets() ? [...new Set(['aoi', ...replyKeys()])].sort((a, b) => rank[status(a)] - rank[status(b)] || (extraMessages[b]?.length ?? recent[b]) - (extraMessages[a]?.length ?? recent[a])) : [];
+      const other = Object.keys(people).filter((key) => !targets.includes(key) && (key !== 'aoi' || extraMessages[key]?.length || drafts[key]?.text || drafts[key]?.image)).sort((a, b) => recent[b] - recent[a]);
+      $('#list-content').innerHTML = (targets.length ? `<section class="list-section"><h4>今日の相手</h4><ul role="list">${targets.map((key) => chatRow(key, true)).join('')}</ul></section>` : '') + `<section class="list-section"><h4>${targets.length ? 'その他の会話' : '会話'}</h4><ul role="list">${other.map((key) => chatRow(key)).join('')}</ul></section>`;
+    }
+    function message(text, mine = false, time = '9:30', image = false) {
+      return `<div class="message${mine ? ' mine' : ''}">${image ? `<button type="button" class="photo-button" data-photo aria-label="サンプル画像を拡大">${photo()}</button>` : ''}${text ? `<p class="bubble">${escapeText(text)}</p>` : ''}<p class="message-meta">${mine ? '送信済み · ' : ''}${time}</p></div>`;
+    }
+    function renderConversation() {
+      const person = people[peer];
+      $('#conversation-header').innerHTML = `<button type="button" class="icon-button" id="back" aria-label="${origin === 'home' ? 'ホーム' : 'チャット一覧'}へ戻る">${icon('back')}</button>${avatar(peer)}<div><h3 tabindex="-1">${person.name}</h3><small>@${person.id}</small></div>`;
+      if (scenario === 'empty') $('#conversation-header').innerHTML = `<button type="button" class="icon-button" id="back" aria-label="チャット一覧へ戻る">${icon('back')}</button><h3 tabindex="-1">会話</h3>`;
+      const isTarget = hasTargets() && (peer === 'aoi' || replyKeys().includes(peer));
+      $('#daily-hint').hidden = scenario === 'empty';
+      $('#daily-hint').innerHTML = `${icon(isTarget ? (status(peer) === '達成済み' ? 'check' : 'chat') : 'info')}<span>${isTarget ? `${peer === 'aoi' ? '今日の送信相手' : '今日の返信相手'} · ${status(peer)}` : '友達との会話は、いつでも続けられます'}</span>`;
+      let history = '<p class="day-separator">10月5日 月曜日</p>';
+      if (peer === 'aoi' && scenario !== 'mutual') {
+        if (!extraMessages[peer]?.length) history += '<div class="empty"><p>気軽なひとことから、はじめよう。</p></div>';
+      }
+      else if (peer === 'sakura') history = '<p class="day-separator">10月4日 日曜日</p>' + message('また話そうね', true, '18:20') + (scenario === 'done' ? '<p class="day-separator">10月5日 月曜日</p>' + message('今日、久しぶりに散歩してきたよ。', false, '9:35') : '');
+      else if (peer === 'yui') history += message('今度また、一緒に行こう！', true, '8:42') + message('ありがとう、楽しみにしてる！', false, '8:50');
+      else history = '<p class="day-separator">10月4日 日曜日</p>' + message('駅の近くに、いいお店を見つけたよ。', false, '18:10') + message('気になる！ 行ったら教えてね。', true, '18:12') + '<p class="day-separator">10月5日 月曜日</p>' + (peer === 'aoi' && scenario === 'mutual' ? message('おはよう。今日はいい天気だね！', true, '9:20') : '') + '<div class="unread-divider">ここから今日のメッセージ</div>' + message('', false, '9:31', true) + message('この前話したお店、行ってきたよ。\n窓の席が気持ちよかった！', false, '9:32');
+      if (scenario === 'empty') history = '<div class="empty"><p>友達との会話を開くと、<br>ここにメッセージが表示されます。</p></div>';
+      $('#messages').innerHTML = history + (extraMessages[peer] ?? []).map((item) => message(item.text, true, '9:41', item.image)).join('');
+      $('#message-input').value = drafts[peer]?.text ?? '';
+      $('#message-input').disabled = scenario === 'empty';
+      $('#attach').disabled = scenario === 'empty';
+      updateComposer();
+    }
+    function updateComposer() {
+      const text = $('#message-input').value;
+      const count = [...new Intl.Segmenter('ja', { granularity: 'grapheme' }).segment(text)].length;
+      const image = drafts[peer]?.image ?? false;
+      $('#send').disabled = scenario === 'empty' || count > 10000 || (!text.trim() && !image);
+      $('#input-error').textContent = count > 10000 ? '10,000文字以内にしてください。' : '';
+      $('#attachment').hidden = !image;
+      $('#attachment').innerHTML = image ? `${photo()}<span>サンプル画像 1枚</span><button class="quiet-button" type="button" id="remove-image">外す</button>` : '';
+    }
+    function render() { renderHome(); renderList(); renderConversation(); renderTabs(); }
+    function openPeer(key, from = 'list') {
+      peer = key; origin = from;
+      renderConversation();
+      setView('conversation', true);
+      announce(`${people[key].name}さんとの会話を開きました。送信は試作内だけで動作します。`);
+    }
+    function showDialog(title, body) {
+      $('#dialog-title').textContent = title;
+      $('#dialog-body').innerHTML = body;
+      $('#dialog').showModal();
+    }
+    function reset() {
+      sent = ['waiting', 'done', 'mutual'].includes(scenario);
+      replied = new Set(scenario === 'done' ? ['haru', 'sakura'] : scenario === 'waiting' ? ['haru'] : []);
+      drafts = {}; extraMessages = {}; seen = new Set(); peer = scenario === 'mutual' ? 'aoi' : 'haru'; origin = 'list';
+      if (sent && scenario !== 'mutual') extraMessages.aoi = [{ text: 'おはよう。今日はいい天気だね！', image: false }];
+      if (replied.has('haru')) { extraMessages.haru = [{ text: '素敵なお店だね！ 今度行ってみたい。', image: false }]; seen.add('haru'); }
+      if (replied.has('sakura')) extraMessages.sakura = [{ text: '散歩、気持ちよさそう！', image: false }];
+      render();
+      $('#home-content').scrollTop = 0; $('#list-content').scrollTop = 0; $('#messages').scrollTop = 0;
+    }
+    document.addEventListener('click', (event) => {
+      const button = event.target.closest('button');
+      if (!button) return;
+      if (button.dataset.theme) {
+        document.documentElement.dataset.theme = button.dataset.theme;
+        document.querySelectorAll('button[data-theme]').forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
+      }
+      if (button.dataset.view) setView(button.dataset.view, true);
+      if (button.dataset.peer) { if ($('#dialog').open) $('#dialog').close(); openPeer(button.dataset.peer, button.dataset.origin); }
+      if (button.id === 'back') setView(origin, true);
+      if (button.hasAttribute('data-photo')) showDialog('サンプル画像', photo() + '<p>拡大表示の見本です。実際の写真ではありません。</p>');
+      if (button.dataset.info === 'friends') showDialog('友達を追加', '<p>本番では既存の「友達を追加」画面に進みます。この試作では画面遷移の入口のみ確認できます。</p>');
+      if (button.id === 'remove-image') { drafts[peer] = { ...drafts[peer], image: false }; updateComposer(); renderList(); }
+    });
+    $('#new-chat').innerHTML = icon('plus');
+    $('#attach').innerHTML = icon('image');
+    $('#send').innerHTML = icon('up');
+    $('#new-chat').addEventListener('click', () => showDialog('新しいチャット', scenario === 'empty' ? '<p>友達を追加すると、ここで相手を選べます。</p>' : `<p>話しかける友達を選んでください。</p><ul role="list">${Object.keys(people).map((key) => `<li><button class="person-row" type="button" data-peer="${key}" data-origin="list">${avatar(key)}<span class="person-text"><strong>${people[key].name}</strong><small>@${people[key].id}</small></span>${icon('chevron')}</button></li>`).join('')}</ul>`));
+    $('#attach').addEventListener('click', () => { drafts[peer] = { ...drafts[peer], image: true }; updateComposer(); renderList(); announce('試作用の画像を1枚添付しました。本番では写真ライブラリから最大4枚選べます。'); });
+    $('#message-input').addEventListener('input', () => { drafts[peer] = { ...drafts[peer], text: $('#message-input').value }; updateComposer(); renderList(); });
+    $('#composer').addEventListener('submit', (event) => {
+      event.preventDefault();
+      if ($('#send').disabled) return;
+      (extraMessages[peer] ??= []).push({ text: $('#message-input').value, image: drafts[peer]?.image ?? false });
+      drafts[peer] = {};
+      if (hasTargets()) {
+        if (peer === 'aoi') sent = true;
+        if (replyKeys().includes(peer) && received(peer)) replied.add(peer);
+      }
+      render();
+      $('#messages').scrollTop = $('#messages').scrollHeight;
+      $('#message-input').focus({ preventScroll: true });
+      announce('試作内で送信しました。実際の相手への送信や保存は行っていません。');
+    });
+    $('#scenario').addEventListener('change', () => { scenario = $('#scenario').value; reset(); announce('試作の状態を切り替えました。3画面とも同じ日のサンプルです。'); });
+    $('#reset').addEventListener('click', () => { reset(); announce('入力と仮の送信をリセットしました。'); });
+    if (matchMedia('(prefers-color-scheme: dark)').matches) $('button[data-theme="dark"]').click();
+    reset();
+  </script>
+</body>
+</html>
