@@ -153,5 +153,12 @@ export function createNodeFileSystemPort(documentRoot: string): FileSystemPort {
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, contents, encoding);
     },
+    readBytes(target) {
+      return new Uint8Array(fs.readFileSync(target));
+    },
+    writeBytes(target, contents) {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, contents);
+    },
   };
 }
