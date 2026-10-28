@@ -69,10 +69,11 @@ export function createSyncWorker(deps: SyncWorkerDeps): SyncWorker {
         payload: operation.payload as Record<string, unknown>,
       });
     } catch (error) {
-      // A port that throws reports a transport failure; the operation id is
-      // already persisted, so schedule a same-id retry instead of losing it.
+      // A chat exception alone cannot prove non-delivery. Only an explicitly
+      // classified pre-request preparation failure may return to pending.
+      // Preserve legacy kinds' existing transient classification.
       outcome = {
-        status: 'transient',
+        status: operation.kind === 'send_message' ? 'unknown' : 'transient',
         message: error instanceof Error ? error.message : String(error),
       };
     }

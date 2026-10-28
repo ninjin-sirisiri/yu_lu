@@ -147,6 +147,63 @@ async function flushUntil(condition: () => boolean, limit = 100): Promise<void> 
 const PROFILE = { kind: 'update_profile', payload: { display_name: 'A' } };
 const REQUEST = { kind: 'send_request', payload: { to: 'bob' } };
 
+describe('chat FIFO worker', () => {
+  const chat = (peer: string, body: string) => ({ kind: 'send_message', payload: {
+    recipient_id: peer, client_key: body, friendship_epoch: 'epoch', body, media_ids: [],
+  } });
+  const accepted: CommandOutcome = { status: 'ok', data: { result: {
+    message_id: 'm', conversation_id: 'c', sequence: 1, accepted_at: '2026-10-28T01:00:00.123456Z',
+  } } };
+
+  it.each(['transient', 'unknown', 'rejected'] as const)('does not overtake a %s chat head but drains another peer and profile', async status => {
+    const queue = harness.makeQueue();
+    const api = createFakeApi();
+    const worker = createSyncWorker({ queue, api: api.api, accountId: 'alice' });
+    const a = await queue.enqueue({ accountId: 'alice', ...chat('bob', 'first') });
+    const b = await queue.enqueue({ accountId: 'alice', ...chat('bob', 'second') });
+    const c = await queue.enqueue({ accountId: 'alice', ...chat('carol', 'other') });
+    const p = await queue.enqueue({ accountId: 'alice', ...PROFILE });
+    api.script(status === 'rejected' ? { status, httpStatus: 400, message: 'invalid' } : { status }, accepted, { status: 'ok' });
+    const steps = await worker.runUntilIdle();
+    expect(steps.map(step => step.operationId)).toEqual([a.operation.operationId, c.operation.operationId, p.operation.operationId]);
+    expect((await getOperation(harness.storage, 'alice', b.operation.operationId))?.attempts).toBe(0);
+  });
+
+  it('treats a throwing chat transport as unknown and forbids cancellation or a fresh-id retry', async () => {
+    const queue = harness.makeQueue();
+    const api = createFakeApi();
+    const worker = createSyncWorker({ queue, api: api.api, accountId: 'alice' });
+    const { operation } = await queue.enqueue({ accountId: 'alice', ...chat('bob', 'first') });
+    api.respond(() => Promise.reject(new Error('response lost')));
+    expect((await worker.runOnce())?.state).toBe('sent_unknown');
+    expect(await queue.cancelUnsent('alice', operation.operationId)).toBe(false);
+    await expect(queue.retryAsNew({ accountId: 'alice', operationId: operation.operationId })).rejects.toMatchObject({ code: 'not_retryable' });
+    harness.advance(PENDING_DEADLINE_MS + 1);
+    api.script(accepted);
+    expect((await worker.runOnce())?.operationId).toBe(operation.operationId);
+    expect((await getOperation(harness.storage, 'alice', operation.operationId))?.result).toMatchObject({ messageId: 'm', sequence: 1 });
+  });
+
+  it('ignores an old worker completion while its recovered claim is still sending', async () => {
+    const queue = harness.makeQueue();
+    const api = createFakeApi();
+    const worker = createSyncWorker({ queue, api: api.api, accountId: 'alice' });
+    const { operation } = await queue.enqueue({ accountId: 'alice', ...chat('bob', 'first') });
+    const releases: Array<(result: CommandOutcome) => void> = [];
+    api.respond(() => new Promise(resolve => releases.push(resolve)));
+    const first = worker.runOnce();
+    await flushUntil(() => releases.length === 1);
+    harness.advance(SEND_LEASE_MS);
+    const second = createSyncWorker({ queue: harness.makeQueue(), api: api.api, accountId: 'alice' }).runOnce();
+    await flushUntil(() => releases.length === 2);
+    releases[0]({ status: 'rejected', httpStatus: 403, message: 'stale' });
+    expect((await first)?.state).toBe('sending');
+    releases[1](accepted);
+    expect((await second)?.state).toBe('succeeded');
+    expect((await getOperation(harness.storage, 'alice', operation.operationId))?.reachStage).toBe('accepted');
+  });
+});
+
 describe('acceptance-then-lost-response', () => {
   it('confirms with the same operation id instead of condemning at 24 hours', async () => {
     const queue = harness.makeQueue();

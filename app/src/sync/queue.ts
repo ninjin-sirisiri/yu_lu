@@ -1,4 +1,5 @@
 import { randomId, requireNonEmpty, type Storage } from '../storage/database';
+import type { MessageReceipt } from '../messages/types';
 import {
   enqueueOperation,
   getOperation,
@@ -11,6 +12,7 @@ import type { CommandOutcome } from './api';
 import { nextAttemptAt } from './retry';
 import {
   isClaimableState,
+  isChatTerminalState,
   isInFlightState,
   UNSENT_STATES,
   type QueueDeps,
@@ -31,10 +33,9 @@ import {
 // additionally reads its candidate list inside that same transaction, so
 // its blocker view is consistent with its own claim.
 //
-// Ordering: rows are read in (created_at, operation_id) order. While an
-// earlier operation of the same kind (the target) is in flight or waiting
-// for confirmation (sending / sent_unknown), later operations of that kind
-// are held back; unrelated kinds keep being claimed independently.
+// Ordering: chat heads are determined by durable queueSequence per account/peer,
+// across EVERY nonterminal state. Legacy kinds keep their created-at order and
+// in-flight same-kind blockers. Neither rule stalls unrelated targets.
 //
 // Deadlines: `enqueue` stamps `expires_at = now + 24h` (refreshed when an
 // unsent profile save coalesces into the latest content). Nothing in the
@@ -133,11 +134,13 @@ export interface SyncQueue {
   enqueue(input: EnqueueInput): Promise<EnqueueResult>;
   /** Atomically take the next sendable operation, or null. */
   claim(accountId: string): Promise<ClaimedOperation | null>;
-  /** Atomically cancel an operation the server has not started receiving. */
+  /** Atomically cancel unsent work, or exclude a definitely rejected chat row.
+   * This never withdraws an accepted message. Content remains stored locally. */
   cancelUnsent(accountId: string, operationId: string): Promise<boolean>;
   /** Sweep overdue pending rows and recover dropped claims. */
   reconcile(accountId: string): Promise<ReconcileResult>;
-  /** Re-send confirmed content under a FRESH operation id. */
+  /** Re-send confirmed content under a FRESH operation id. Chat retains its
+   * logical position unless already excluded (cancelled), which joins the tail. */
   retryAsNew(input: RetryAsNewInput): Promise<OutboxRecord>;
   /** Record what the network answered; returns the resulting state. */
   applySendResult(
@@ -157,6 +160,30 @@ function isDue(row: OutboxRecord, now: number): boolean {
   return row.nextAttemptAt === null || row.nextAttemptAt <= now;
 }
 
+function messagePeer(payload: unknown): string {
+  assertPayload(payload);
+  const peer = payload['recipient_id'];
+  if (typeof peer !== 'string' || peer.length === 0) {
+    throw new QueueError('send_message requires recipient_id', 'invalid_payload');
+  }
+  return peer;
+}
+
+function readMessageReceipt(data: Record<string, unknown> | undefined): MessageReceipt | null {
+  const value = data?.['result'];
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const receipt = value as Record<string, unknown>;
+  const messageId = receipt['message_id'];
+  const conversationId = receipt['conversation_id'];
+  const sequence = receipt['sequence'];
+  const acceptedAt = receipt['accepted_at'];
+  if (typeof messageId !== 'string' || messageId.length === 0 ||
+      typeof conversationId !== 'string' || conversationId.length === 0 ||
+      typeof sequence !== 'number' || !Number.isSafeInteger(sequence) || sequence <= 0 ||
+      typeof acceptedAt !== 'string' || !Number.isFinite(Date.parse(acceptedAt))) return null;
+  return { messageId, conversationId, sequence, acceptedAt };
+}
+
 export function createSyncQueue(deps: QueueDeps): SyncQueue {
   const { store, clock, random } = deps;
   const newOperationId = deps.newOperationId ?? randomId;
@@ -165,6 +192,7 @@ export function createSyncQueue(deps: QueueDeps): SyncQueue {
     requireNonEmpty('accountId', input.accountId);
     requireNonEmpty('kind', input.kind);
     assertPayload(input.payload);
+    const orderingKey = input.kind === 'send_message' ? messagePeer(input.payload) : null;
     const now = clock.now();
     const expiresAt = now + PENDING_DEADLINE_MS;
     return store.withWriteTransaction(async (tx) => {
@@ -214,9 +242,13 @@ export function createSyncQueue(deps: QueueDeps): SyncQueue {
         state: 'pending',
         attempts: 0,
         nextAttemptAt: null,
+        orderingKey,
       });
       if (!inserted) {
         throw new QueueError('operation id already exists', 'conflict');
+      }
+      if (input.kind === 'send_message') {
+        await updateOperation(tx, input.accountId, operationId, { reachStage: 'not_started' });
       }
       const operation = await getOperation(tx, input.accountId, operationId);
       if (!operation) {
@@ -231,6 +263,15 @@ export function createSyncQueue(deps: QueueDeps): SyncQueue {
     const now = clock.now();
     return store.withWriteTransaction(async (tx) => {
       const rows = await listOperations(tx, accountId);
+      // A null legacy key has no positive peer evidence; keep such rows in a
+      // separate conservative lane. New chat enqueues always have a peer key.
+      const chatHeads = new Map<string | null, OutboxRecord>();
+      for (const row of rows) {
+        if (row.kind !== 'send_message' || isChatTerminalState(row.state)) continue;
+        const target = row.orderingKey;
+        const head = chatHeads.get(target);
+        if (!head || row.queueSequence < head.queueSequence) chatHeads.set(target, row);
+      }
       // Kinds whose earlier operation still holds an unresolved result.
       // Filled as we walk the ordered list, so only EARLIER rows count.
       const blockedKinds = new Set<string>();
@@ -251,7 +292,9 @@ export function createSyncQueue(deps: QueueDeps): SyncQueue {
         if (
           isClaimableState(row.state) &&
           due &&
-          !blockedKinds.has(row.kind)
+          (row.kind === 'send_message'
+            ? chatHeads.get(row.orderingKey)?.operationId === row.operationId
+            : !blockedKinds.has(row.kind))
         ) {
           const claimed = await updateOperation(
             tx,
@@ -260,10 +303,14 @@ export function createSyncQueue(deps: QueueDeps): SyncQueue {
             {
               state: 'sending',
               attempts: row.attempts + 1,
-              // Reuse next_attempt_at as the claim's lease marker.
+              claimGeneration: row.claimGeneration + 1,
+              claimedAt: now,
+              // Keep the legacy lease marker for existing consumers.
               nextAttemptAt: now,
+              ...(row.kind === 'send_message' && row.reachStage === 'not_started'
+                ? { reachStage: 'preparing' as const } : {}),
             },
-            { expectState: row.state },
+            { expectState: row.state, expectClaimGeneration: row.claimGeneration },
           );
           if (claimed) {
             const taken = await getOperation(tx, accountId, row.operationId);
@@ -277,7 +324,7 @@ export function createSyncQueue(deps: QueueDeps): SyncQueue {
           // row's current state (re-read below by the next caller) decide.
           continue;
         }
-        if (isInFlightState(row.state)) {
+        if (row.kind !== 'send_message' && isInFlightState(row.state)) {
           blockedKinds.add(row.kind);
         }
       }
@@ -293,21 +340,18 @@ export function createSyncQueue(deps: QueueDeps): SyncQueue {
     // and returns false; if cancel won, claim observes state=cancelled and
     // skips the row. Neither can both fire.
     return store.withWriteTransaction(async (tx) => {
-      const fromPending = await updateOperation(
-        tx,
-        accountId,
-        operationId,
-        { state: 'cancelled' },
-        { expectState: 'pending' },
-      );
-      if (fromPending) return true;
-      return updateOperation(
-        tx,
-        accountId,
-        operationId,
-        { state: 'cancelled' },
-        { expectState: 'needs_confirmation' },
-      );
+      const row = await getOperation(tx, accountId, operationId);
+      if (!row) return false;
+      const unsent = UNSENT_STATES.includes(row.state as QueueState);
+      if (row.kind === 'send_message') {
+        // A null migrated stage is not evidence of non-delivery. A definite
+        // rejection can be excluded locally, but an unknown result cannot.
+        if (!(unsent && row.reachStage === 'not_started') &&
+            !(row.state === 'failed_permanent' && row.reachStage === 'rejected')) return false;
+      } else if (!unsent) return false;
+      return updateOperation(tx, accountId, operationId, { state: 'cancelled' }, {
+        expectState: row.state, expectClaimGeneration: row.claimGeneration,
+      });
     });
   }
 
@@ -330,20 +374,21 @@ export function createSyncQueue(deps: QueueDeps): SyncQueue {
         }
       }
       for (const row of await listOperations(tx, accountId, { state: 'sending' })) {
-        // next_attempt_at doubles as the claim time; a lease older than
+        // claimedAt is the lease time; nextAttemptAt supports legacy claims.
+        // A lease older than
         // SEND_LEASE_MS means the claimant never settled (app killed,
         // send hung) - the result is unknown, so confirm it by re-sending
         // the same id on the next claim. Within the lease we keep our
         // hands off: another run may still be sending.
-        const leaseExpired =
-          row.nextAttemptAt === null || now - row.nextAttemptAt >= SEND_LEASE_MS;
+        const claimedAt = row.claimedAt ?? row.nextAttemptAt;
+        const leaseExpired = claimedAt === null || now - claimedAt >= SEND_LEASE_MS;
         if (leaseExpired) {
           const recovered = await updateOperation(
             tx,
             accountId,
             row.operationId,
-            { state: 'sent_unknown', nextAttemptAt: now },
-            { expectState: 'sending' },
+            { state: 'sent_unknown', nextAttemptAt: now, claimedAt: null },
+            { expectState: 'sending', expectClaimGeneration: row.claimGeneration },
           );
           if (recovered) recoveredSends += 1;
         }
@@ -365,6 +410,7 @@ export function createSyncQueue(deps: QueueDeps): SyncQueue {
       const retryable =
         old.state === 'needs_confirmation' ||
         old.state === 'failed_permanent' ||
+        (old.kind === 'send_message' && old.state === 'cancelled') ||
         // Directly overdue pending rows may go straight to a new operation
         // without waiting for the next sweep.
         (old.state === 'pending' && now >= old.expiresAt);
@@ -373,6 +419,10 @@ export function createSyncQueue(deps: QueueDeps): SyncQueue {
           `operation in state "${old.state}" must not be re-sent as a new operation`,
           'not_retryable',
         );
+      }
+      const payload = input.payload ?? old.payload;
+      if (old.kind === 'send_message' && messagePeer(payload) !== old.orderingKey) {
+        throw new QueueError('a confirmed retry cannot change recipient', 'invalid_payload');
       }
       const operationId = newOperationId();
       if (operationId === old.operationId) {
@@ -383,7 +433,7 @@ export function createSyncQueue(deps: QueueDeps): SyncQueue {
         input.accountId,
         old.operationId,
         { state: 'superseded' },
-        { expectState: old.state },
+        { expectState: old.state, expectClaimGeneration: old.claimGeneration },
       );
       if (!superseded) {
         throw new QueueError('operation changed concurrently', 'conflict');
@@ -392,7 +442,10 @@ export function createSyncQueue(deps: QueueDeps): SyncQueue {
         accountId: input.accountId,
         operationId,
         kind: old.kind,
-        payload: input.payload ?? old.payload,
+        payload,
+        orderingKey: old.orderingKey,
+        ...(old.kind === 'send_message' && old.state !== 'cancelled'
+          ? { queueSequence: old.queueSequence } : {}),
         baseVersion:
           input.baseVersion !== undefined ? input.baseVersion : old.baseVersion,
         createdAt: now,
@@ -403,6 +456,9 @@ export function createSyncQueue(deps: QueueDeps): SyncQueue {
       });
       if (!inserted) {
         throw new QueueError('operation id already exists', 'conflict');
+      }
+      if (old.kind === 'send_message') {
+        await updateOperation(tx, input.accountId, operationId, { reachStage: 'not_started' });
       }
       const operation = await getOperation(tx, input.accountId, operationId);
       if (!operation) {
@@ -425,20 +481,25 @@ export function createSyncQueue(deps: QueueDeps): SyncQueue {
         // flight: a late answer must not resurrect the queue.
         return null;
       }
-      if (!isClaimableState(row.state) && !isInFlightState(row.state)) {
-        // Already settled by someone else; same id + same payload means
-        // the answers agree, so keep the first result.
+      if (row.state !== 'sending' || row.claimGeneration !== operation.claimGeneration) {
+        // The lease was recovered, another claim owns the row, or this claim
+        // already settled. Never let a stale callback change newer work.
         return row.state as QueueState;
       }
+      const chat = row.kind === 'send_message';
+      const receipt = outcome.status === 'ok' && chat ? readMessageReceipt(outcome.data) : null;
+      if (chat && outcome.status === 'ok' && receipt === null) outcome = { status: 'unknown' };
       let patch: OutboxPatch;
       switch (outcome.status) {
         case 'ok':
-          patch = { state: 'succeeded', nextAttemptAt: null };
+          patch = { state: 'succeeded', nextAttemptAt: null,
+            ...(chat ? { reachStage: 'accepted', result: receipt } : {}) };
           break;
         case 'conflict':
         case 'rejected':
           // 権限不足、失効、プロフィール競合を一時通信失敗として繰り返さない.
-          patch = { state: 'failed_permanent', nextAttemptAt: null };
+          patch = { state: 'failed_permanent', nextAttemptAt: null,
+            ...(chat ? { reachStage: 'rejected' as const } : {}) };
           break;
         case 'transient': {
           // An id that already reached the wire (this claim came from
@@ -446,19 +507,23 @@ export function createSyncQueue(deps: QueueDeps): SyncQueue {
           // 送信待ち: 送信済みで結果不明の操作は24時間超過だけで未実行と
           // 断定しない. Only a first-attempt failure stays 送信待ち.
           const alreadySent =
-            operation.from === 'sent_unknown' || row.state === 'sent_unknown';
+            operation.from === 'sent_unknown' || (chat && row.reachStage === 'request_started');
           const state: QueueState = alreadySent ? 'sent_unknown' : 'pending';
-          patch = { state, nextAttemptAt: nextAttemptAt(now, row.attempts, random) };
+          patch = { state, nextAttemptAt: nextAttemptAt(now, row.attempts, random),
+            ...(chat && !alreadySent ? { reachStage: 'not_started' as const } : {}) };
           break;
         }
         case 'unknown':
           patch = {
             state: 'sent_unknown',
             nextAttemptAt: nextAttemptAt(now, row.attempts, random),
+            ...(chat ? { reachStage: 'request_started' as const } : {}),
           };
           break;
       }
-      await updateOperation(tx, accountId, operationId, patch, { expectState: row.state });
+      await updateOperation(tx, accountId, operationId, { ...patch, claimedAt: null }, {
+        expectState: 'sending', expectClaimGeneration: operation.claimGeneration,
+      });
       const after = await getOperation(tx, accountId, operationId);
       return (after?.state ?? null) as QueueState | null;
     });
