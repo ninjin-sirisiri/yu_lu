@@ -15,7 +15,7 @@ import {
   png,
   pngChunk,
 } from './fixtures/chat-images.ts';
-import { deflateSync } from 'node:zlib';
+import { deflateRawSync, deflateSync, gzipSync } from 'node:zlib';
 
 function assert(value: unknown, message = 'assertion failed'): asserts value {
   if (!value) throw new Error(message);
@@ -203,6 +203,69 @@ Deno.test('PNG trailing compressed data is rejected rather than silently ignored
         concat(deflateSync(new Uint8Array(9)), new Uint8Array([1, 2, 3])),
       ),
       end,
+    ),
+  );
+});
+Deno.test('PNG validates one complete zlib stream, its Adler checksum and exact bounded output', async () => {
+  const header = png().subarray(0, 33);
+  const end = pngChunk('IEND', new Uint8Array());
+  const pixels = new Uint8Array(9); // 2x1 RGBA8: filter byte plus eight samples
+  const compressed = deflateSync(pixels);
+  const badChecksum = new Uint8Array(compressed);
+  badChecksum[badChecksum.length - 1] ^= 1;
+  for (const idat of [
+    deflateSync(new Uint8Array(8)),
+    deflateSync(new Uint8Array(10)),
+    deflateSync(new Uint8Array(1024 * 1024)), // expansion bomb, not a bigger image
+    concat(compressed, new Uint8Array([0])),
+    concat(compressed, deflateSync(new Uint8Array())),
+    compressed.subarray(0, -1),
+    badChecksum,
+    deflateRawSync(pixels),
+    gzipSync(pixels),
+  ]) await rejects(concat(header, pngChunk('IDAT', idat), end));
+  // Separate IDAT chunks are one zlib stream, not individually inflated members.
+  const split = concat(
+    header,
+    pngChunk('IDAT', compressed.subarray(0, 5)),
+    pngChunk('IDAT', compressed.subarray(5)),
+    end,
+  );
+  assert((await validateChatImage(split)).width === 2);
+});
+Deno.test('PNG Adam7 preflight counts each nonempty pass rather than ordinary rows', async () => {
+  const ihdr = png().subarray(16, 29).slice();
+  ihdr[12] = 1;
+  const header = concat(png().subarray(0, 8), pngChunk('IHDR', ihdr));
+  const end = pngChunk('IEND', new Uint8Array());
+  // 2x1 RGBA8 has two nonempty Adam7 passes: (filter + one pixel) twice.
+  const image = concat(
+    header,
+    pngChunk('IDAT', deflateSync(new Uint8Array(10))),
+    end,
+  );
+  const result = await validateChatImage(image);
+  assert(result.width === 2 && result.height === 1);
+  for (const length of [9, 11]) {
+    await rejects(
+      concat(header, pngChunk('IDAT', deflateSync(new Uint8Array(length))), end),
+    );
+  }
+});
+Deno.test('PNG preflight does not replace CRC or decoded-pixel filter validation', async () => {
+  const image = png();
+  for (const crcByte of [29, image.length - 13, image.length - 1]) {
+    const corrupt = image.slice();
+    corrupt[crcByte] ^= 1; // intact zlib pixels, corrupt IHDR/IDAT/IEND checksum
+    await rejects(corrupt);
+  }
+  const pixels = new Uint8Array(9);
+  pixels[0] = 5; // only PNG filter types 0..4 are defined
+  await rejects(
+    concat(
+      image.subarray(0, 33),
+      pngChunk('IDAT', deflateSync(pixels)),
+      pngChunk('IEND', new Uint8Array()),
     ),
   );
 });

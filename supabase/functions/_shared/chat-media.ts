@@ -3,7 +3,15 @@
 import jpeg from 'npm:jpeg-js@0.4.4';
 import { PNG } from 'npm:pngjs@7.0.0';
 import { Buffer } from 'node:buffer';
-import { inflateSync } from 'node:zlib';
+import {
+  Z_FINISH,
+  Z_OK,
+  Z_STREAM_END,
+  zlibInflate,
+  zlibInflateEnd,
+  zlibInflateInit2,
+  ZStream,
+} from 'npm:pako@3.0.2';
 import { jsonError } from './auth.ts';
 import { mapRpcError, type RpcOutcome, UUID_RE } from './commands.ts';
 
@@ -143,18 +151,24 @@ function inspectPng(b: Uint8Array): [number, number] {
     }
   }
   const input = Buffer.concat(compressed);
-  // Deno's node:zlib type currently omits the info:true result overload.
-  const inflated = inflateSync(input, {
-    maxOutputLength: expected + 1,
-    info: true,
-  }) as unknown as {
-    buffer: Uint8Array;
-    engine: { bytesWritten: number };
-  };
-  if (
-    inflated.buffer.length !== expected ||
-    inflated.engine.bytesWritten !== input.length
-  ) invalid();
+  // Edge Runtime's node:zlib ignores info:true. Use the pinned portable zlib
+  // engine with a fixed output buffer: even a bomb can emit at most expected+1
+  // bytes. Require one complete zlib member (including Adler32), exact scanline
+  // length, and full input consumption; never accept gzip/raw or trailing data.
+  const stream = new ZStream();
+  if (zlibInflateInit2(stream, 15) !== Z_OK) invalid();
+  try {
+    stream.input = input;
+    stream.avail_in = input.length;
+    stream.output = new Uint8Array(expected + 1);
+    stream.avail_out = stream.output.length;
+    if (
+      zlibInflate(stream, Z_FINISH) !== Z_STREAM_END ||
+      stream.next_out !== expected || stream.avail_in !== 0
+    ) invalid();
+  } finally {
+    zlibInflateEnd(stream);
+  }
   return [width, height];
 }
 

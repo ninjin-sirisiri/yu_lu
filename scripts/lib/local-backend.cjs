@@ -35,12 +35,18 @@ const path = require('node:path');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
+function localCliEnv(workdir, inherited = process.env) {
+  if (workdir === REPO_ROOT) return inherited;
+  return Object.fromEntries(Object.entries(inherited).filter(([key]) => !key.startsWith('SUPABASE_')));
+}
+
 // ---------------------------------------------------------------------------
 // Output: redact anything that could be a secret before it reaches stdout.
 // ---------------------------------------------------------------------------
 
 function redact(text) {
   return String(text)
+    .replaceAll(/(["']?(?:[A-Z_]*(?:SECRET|TOKEN|KEY)|password|access_token|refresh_token)["']?\s*[:=]\s*)("[^"\n]*"|'[^'\n]*'|[^\s,}]+)/gi, '$1[redacted]')
     .replaceAll(/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, '[redacted-jwt]')
     .replaceAll(/sb_(?:publishable|secret)_[A-Za-z0-9_-]+/g, '[redacted-key]')
     .replaceAll(/Bearer\s+\S{16,}/gi, 'Bearer [redacted]')
@@ -53,9 +59,10 @@ function redact(text) {
 // (the suite runner exits 2, the journey test fails its beforeAll).
 // ---------------------------------------------------------------------------
 
-function readSupabaseStatus() {
+function readSupabaseStatus(workdir = REPO_ROOT) {
   const res = spawnSync('npx', ['supabase', 'status', '--output', 'json'], {
-    cwd: REPO_ROOT,
+    cwd: workdir,
+    env: localCliEnv(workdir),
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
   });
@@ -181,9 +188,11 @@ async function mintUserToken(status, userId) {
 // functions serve: a separate process, readiness-polled, always stopped.
 // ---------------------------------------------------------------------------
 
-function startFunctionsServe() {
+function startFunctionsServe(workdir = REPO_ROOT) {
   const child = spawn('npx', ['supabase', 'functions', 'serve'], {
-    cwd: REPO_ROOT,
+    cwd: workdir,
+    env: localCliEnv(workdir),
+    detached: workdir !== REPO_ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const output = [];
@@ -191,7 +200,7 @@ function startFunctionsServe() {
   child.stdout.on('data', capture);
   child.stderr.on('data', capture);
   child.exited = new Promise((resolve) => child.once('exit', (code) => resolve(code)));
-  return { child, output };
+  return { child, output, processGroup: workdir !== REPO_ROOT };
 }
 
 async function waitForGateway(status, serve, timeoutMs) {
@@ -227,7 +236,13 @@ async function waitForGateway(status, serve, timeoutMs) {
 
 async function stopFunctionsServe(serve) {
   if (serve.child.exitCode !== null) return;
-  serve.child.kill('SIGTERM');
+  const kill = (signal) => {
+    try {
+      if (serve.processGroup) process.kill(-serve.child.pid, signal);
+      else serve.child.kill(signal);
+    } catch (error) { if (error.code !== 'ESRCH') throw error; }
+  };
+  kill('SIGTERM');
   let guard;
   const timedOut = await Promise.race([
     serve.child.exited.then(() => false),
@@ -238,7 +253,7 @@ async function stopFunctionsServe(serve) {
   // Clear the guard: an uncleared 5s timer keeps jest (and any host that
   // waits for a clean event loop) alive after the child is already gone.
   clearTimeout(guard);
-  if (timedOut) serve.child.kill('SIGKILL');
+  if (timedOut) { kill('SIGKILL'); await serve.child.exited; }
 }
 
 // ---------------------------------------------------------------------------
@@ -293,6 +308,7 @@ async function postRest(status, pathName, { token, body, method = 'POST', apikey
 
 module.exports = {
   REPO_ROOT,
+  localCliEnv,
   redact,
   readSupabaseStatus,
   adminCreateUser,
