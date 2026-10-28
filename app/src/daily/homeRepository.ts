@@ -3,12 +3,13 @@ import { readCache, writeCache } from '../storage/cache';
 import { listLocalMessages } from '../storage/chat';
 import { optimisticUnread, type ReadStateRepository } from '../messages/readState';
 import { stopObsoleteSends, type RepositorySession } from '../messages/repository';
+import { compareChatRows, compareTargets, localChatRows, type ChatListRow } from '../messages/chatListRows';
 
 interface SavedHome {
   home: HomeResult; list: ChatListResult; unread: ChatUnreadResult; readVersion: number;
 }
 export interface HomeSnapshot {
-  home: HomeResult | null; targets: ChatSummary[]; others: ChatSummary[];
+  home: HomeResult | null; targets: ChatListRow[]; others: ChatListRow[];
   unreadPeerCount: number; unreadCountsExact: boolean;
   dayStatus: 'current' | 'stale' | 'unavailable'; nextCursor: string | null;
 }
@@ -73,7 +74,10 @@ export function createHomeRepository(deps: {
       unreadCountsExact: false, dayStatus: 'unavailable', nextCursor: null };
     if (disposed || !await session.active()) return unavailable;
     const cached = (await readCache<SavedHome>(session.storage, session.accountId, 'chat.home'))?.payload;
-    if (!cached) return unavailable;
+    if (!cached) {
+      const others = (await localChatRows(session, [], new Map())).sort(compareChatRows);
+      return await session.active() && !disposed ? { ...unavailable, others } : unavailable;
+    }
     const counts = new Map<string, number>();
     let unreadCountsExact = true;
     for (const row of cached.unread.items) {
@@ -86,9 +90,11 @@ export function createHomeRepository(deps: {
       unreadCountsExact &&= count.exact;
     }
     const decorate = (row: ChatSummary): ChatSummary => ({ ...row, unread_count: counts.get(row.peer_id) ?? row.unread_count });
-    const targets = [...new Map(cached.home.targets.map(row => [row.peer_id, decorate(row)])).values()];
+    const combined = await localChatRows(session, [...cached.home.targets, ...cached.list.items].map(decorate), counts);
+    const byPeer = new Map(combined.map(row => [row.peer_id, row]));
+    const targets = [...new Set(cached.home.targets.map(row => row.peer_id))].map(id => byPeer.get(id)!).sort(compareTargets);
     const targetIds = new Set(targets.map(row => row.peer_id));
-    const others = cached.list.items.filter(row => !targetIds.has(row.peer_id)).map(decorate);
+    const others = combined.filter(row => !targetIds.has(row.peer_id)).sort(compareChatRows);
     const elapsed = clock ? now() - clock.local : -1;
     const current = clock && clock.day === cached.home.daily_key && elapsed >= 0 &&
       clock.server + elapsed < Date.parse(cached.home.deadline);

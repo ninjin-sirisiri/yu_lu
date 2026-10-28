@@ -111,7 +111,9 @@ export function createConversationRepository(deps: {
     const result = await session.commit(session.token(), null, async tx => {
       const row = await getOperation(tx, session.accountId, id);
       if (!row || row.kind !== 'send_message' || row.orderingKey !== peerId) throw new Error('Unknown local message.');
-      return action(tx, row);
+      const result = await action(tx, row);
+      await writeCache(tx, session.accountId, `chat.localActivity.${peerId}`, now(), now());
+      return result;
     }, () => valid(g));
     if (result === null) throw new Error('Chat repository was revoked.');
     return result;

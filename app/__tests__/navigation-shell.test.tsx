@@ -129,7 +129,8 @@ describe('navigation shell', () => {
 
     await fireEvent.press(screen.getByTestId('tab-chat'));
     await waitFor(() => expect(app.getPathname()).toBe('/chat'));
-    expect(screen.getAllByText('準備中').length).toBeGreaterThan(0);
+    expect(screen.getByText('新しいチャット')).toBeTruthy();
+    expect(screen.queryByText('準備中')).toBeNull();
     expect(
       screen.queryByText(/送信しました|削除しました|ブロックしました/),
     ).toBeNull();

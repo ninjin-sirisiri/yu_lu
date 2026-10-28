@@ -324,7 +324,11 @@ export function createChatStore(deps: ChatStoreDeps) {
         const applied = await session.commit(session.token(), null, async tx => {
           await saveChatDraft(tx, { ...value, accountId: deps.accountId, peerId, updatedAt: Date.now() }); return true;
         }, current);
-        if (applied && current()) { update({ drafts: { ...state.drafts, [peerId]: value } }); return; }
+        if (applied && current()) {
+          update({ drafts: { ...state.drafts, [peerId]: value } });
+          try { await publish(); } catch { update({ error: 'Chat refresh pending.' }); requestFetch(); }
+          return;
+        }
       }
     },
   };

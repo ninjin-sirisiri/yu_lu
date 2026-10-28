@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '../../../auth/provider';
+import { conversationEntry } from '../../../navigation/conversationEntry';
 import { QueryError, getProfile, type ProfileDetail } from '../../../backend/queries';
 import { RELATIONSHIP_LABELS, defaultIsOnline } from '../../../discovery/searchController';
 import { enqueueFriendRequest } from '../../../requests/sendRequest';
@@ -375,6 +376,12 @@ export function ProfilePanel({ userId, onBack, testID = 'profile-panel' }: Profi
           accessibilityHint="承認と拒否は受信した申請の一覧で行います"
           onPress={() => router.push('/friends/requests?tab=incoming')}
         />
+      )}
+
+      {profile.relationship === 'friend' && (
+        <Button label="メッセージ" testID="profile-message"
+          accessibilityHint="この友達との会話を開きます"
+          onPress={() => router.push(conversationEntry(profile.userId, 'profile'))} />
       )}
 
       {sendNotice !== null && (

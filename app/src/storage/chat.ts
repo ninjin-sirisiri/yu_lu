@@ -76,6 +76,19 @@ export async function readChatDraft(db: Storage, accountId: string, peerId: stri
   });
 }
 
+/** Account-local composers, including image-only drafts. Empty saved editors
+ * are deliberately omitted: viewing/clearing a peer must not create a list row. */
+export async function listChatDrafts(db: Storage, accountId: string): Promise<ChatDraft[]> {
+  requireNonEmpty('accountId', accountId);
+  return db.withWriteTransaction(async tx => {
+    const rows = await tx.getAllAsync<{ peer_id: string; body: string; updated_at: number }>(
+      'SELECT peer_id, body, updated_at FROM chat_drafts WHERE account_id = ?', [accountId]);
+    const drafts = await Promise.all(rows.map(async row => ({ accountId, peerId: row.peer_id, body: row.body,
+      updatedAt: row.updated_at, attachments: await listAttachmentReferences(tx, accountId, 'draft', row.peer_id) })));
+    return drafts.filter(draft => draft.body.length > 0 || draft.attachments.length > 0);
+  });
+}
+
 /** An accepted receipt is immutable. Re-fetches are idempotent; withdrawal is
  * monotonic and redacts content even if an older response arrives afterwards. */
 export async function storeAcceptedMessage(db: Storage, message: AcceptedMessage): Promise<void> {
@@ -125,6 +138,13 @@ export async function listLocalMessages(db: Storage, accountId: string, peerId: 
   return rows.map(row => ({ accountId, peerId, messageId: row.message_id, conversationId: row.conversation_id,
     sequence: row.sequence, senderId: row.sender_id, recipientId: row.recipient_id, clientKey: row.client_key,
     acceptedAt: row.accepted_at, withdrawn: row.withdrawn === 1, body: row.body, imagePaths: JSON.parse(row.image_paths) as string[] }));
+}
+
+/** Membership comes from accepted history, never a viewed-peer metadata cache. */
+export async function listLocalMessagePeers(db: Storage, accountId: string): Promise<string[]> {
+  requireNonEmpty('accountId', accountId);
+  return (await db.getAllAsync<{ peer_id: string }>(
+    'SELECT DISTINCT peer_id FROM chat_messages WHERE account_id = ?', [accountId])).map(row => row.peer_id);
 }
 
 /** Idempotent immutable intent, safe to replay under the same operation ID. */
