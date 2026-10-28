@@ -221,6 +221,20 @@ async function expectQueueCode(promise: Promise<unknown>, code: string): Promise
   expect((error as QueueError).code).toBe(code);
 }
 
+it('keeps relationship-stopped uncertainty in the existing unfinished list without unsafe actions', async () => {
+  const operation = await enqueue('send_message', { recipient_id: 'peer', client_key: 'key' });
+  await updateOperation(harness.storage, ACCOUNT, operation.operationId,
+    { state: 'relationship_stopped', reachStage: 'request_started' });
+  expect(await countUnfinishedOperations(harness.storage, ACCOUNT)).toBe(1);
+  await render(statusTree(unfinishedOperations(await harness.rows()), {
+    onCancelUnsent: jest.fn(), onRetryAsNew: jest.fn(),
+  }));
+  await screen.findByTestId(`sync-row-${operation.operationId}`);
+  expect(screen.queryByTestId(`sync-cancel-${operation.operationId}`)).toBeNull();
+  expect(screen.queryByTestId(`sync-retry-${operation.operationId}`)).toBeNull();
+  expect(screen.queryByTestId(`sync-deadline-${operation.operationId}`)).toBeNull();
+});
+
 /**
  * Renders the app through expo-router's testing library. NOTE: renderRouter
  * enables jest FAKE timers, so this helper only drains promise microtasks —

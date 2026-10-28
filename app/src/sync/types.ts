@@ -44,6 +44,7 @@ export type QueueState =
   | 'pending'
   | 'sending'
   | 'sent_unknown'
+  | 'relationship_stopped'
   | 'succeeded'
   | 'failed_permanent'
   | 'needs_confirmation'
@@ -54,6 +55,7 @@ export const QUEUE_STATES: readonly QueueState[] = [
   'pending',
   'sending',
   'sent_unknown',
+  'relationship_stopped',
   'succeeded',
   'failed_permanent',
   'needs_confirmation',
@@ -66,7 +68,9 @@ export const QUEUE_STATES: readonly QueueState[] = [
  * same target (kind) waits while one of these exists ahead of it, and they
  * block successors for legacy kinds. Chat has the stricter per-peer rule below.
  */
-export const IN_FLIGHT_STATES: readonly QueueState[] = ['sending', 'sent_unknown'];
+// A relationship-stopped request may already have been accepted. It is not
+// claimable, but logout must still explain the possible established outcome.
+export const IN_FLIGHT_STATES: readonly QueueState[] = ['sending', 'sent_unknown', 'relationship_stopped'];
 
 /** States that have never reached the server (cancellable, coalescible). */
 export const UNSENT_STATES: readonly QueueState[] = ['pending', 'needs_confirmation'];

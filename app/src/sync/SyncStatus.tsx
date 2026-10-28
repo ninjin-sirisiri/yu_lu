@@ -35,6 +35,7 @@ export const UNFINISHED_STATES: readonly string[] = [
   'pending',
   'sending',
   'sent_unknown',
+  'relationship_stopped',
   'failed_permanent',
   'needs_confirmation',
 ];
@@ -85,6 +86,7 @@ const STATE_LABELS: Record<QueueState, string> = {
   pending: '送信待ち',
   sending: '送信中',
   sent_unknown: '結果確認中',
+  relationship_stopped: '送信停止・結果未確認',
   succeeded: '完了',
   failed_permanent: '不成立',
   needs_confirmation: '確認が必要',

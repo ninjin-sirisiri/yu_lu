@@ -101,8 +101,9 @@ export function createChatSendApi(base: CommandApi, deps: ChatSendApiDeps): Comm
         if (await deps.getAccountId() !== envelope.accountId) throw new RevokedClaim();
         return deps.storage.withWriteTransaction(async tx => {
           const row = await getOperation(tx, envelope.accountId, envelope.operationId);
+          const pendingLogout = await readDeviceSetting(tx, 'logout.pending');
           if (!row || row.state !== 'sending' || row.claimGeneration !== envelope.claimGeneration ||
-              await readDeviceSetting(tx, 'logout.pending') !== null) throw new RevokedClaim();
+              (pendingLogout !== null && pendingLogout !== '')) throw new RevokedClaim();
           if ((row.reachStage === 'not_started' || row.reachStage === 'preparing') && now() >= row.expiresAt) {
             await updateOperation(tx, row.accountId, row.operationId,
               { state: 'needs_confirmation', reachStage: 'not_started', claimedAt: null, nextAttemptAt: null },
