@@ -70,6 +70,7 @@ export async function countUnfinishedOperations(
 }
 
 const KIND_LABELS: Record<string, string> = {
+  send_message: 'メッセージの送信',
   request: '申請の送信',
   approve: '申請の承認',
   reject: '申請の拒否',

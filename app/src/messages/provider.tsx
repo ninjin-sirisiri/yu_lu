@@ -214,8 +214,20 @@ export function createChatStore(deps: ChatStoreDeps) {
         await peer.recordVisible(ids); if (!stopped) { await publish(); requestReads(); }
       },
       async enqueueMessage(input: Parameters<typeof peer.enqueueMessage>[0]) {
-        const id = await peer.enqueueMessage(input); if (!stopped) { await publish(); wakeOutbox(); } return id;
+        const id = await peer.enqueueMessage(input);
+        if (!stopped) {
+          if (input.clearDraft) update({ drafts: { ...state.drafts, [peerId]: { body: '', attachments: [] } } });
+          // Enqueue already committed. A view/cache refresh failure must not
+          // reject that receipt and invite another tap with a fresh client key.
+          try { await publish(); }
+          catch { update({ error: 'Chat refresh pending.' }); requestFetch(); }
+          wakeOutbox();
+        } return id;
       },
+      async cancelUnsent(id: string) { const result = await peer.cancelUnsent(id); await publish(); return result; },
+      async saveCancelled(id: string, draft: ChatDraft) { const result = await peer.saveCancelled(id, draft); await publish(); return result; },
+      async discardCancelled(id: string) { const result = await peer.discardCancelled(id); await publish(); return result; },
+      async retryConfirmed(id: string) { const result = await peer.retryConfirmed(id); await publish(); wakeOutbox(); return result; },
     };
   }
   async function attach() {

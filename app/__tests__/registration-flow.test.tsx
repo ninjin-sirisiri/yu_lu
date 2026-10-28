@@ -37,7 +37,7 @@ import {
 // Module mocks (hoisted by jest; factories only read mock* bindings lazily)
 // ---------------------------------------------------------------------------
 
-let mockSession: { user: { id: string; email?: string } } | null = null;
+let mockSession: Session | null = null;
 let mockProfileRow: {
   user_id_confirmed_at: string | null;
   onboarding_seen_at: string | null;
@@ -88,7 +88,9 @@ const { NodeSqliteDriver } = jest.requireActual('../src/storage/testSupport/node
 // ---------------------------------------------------------------------------
 
 function fakeSession(id: string, email?: string): Session {
-  return { user: { id, email } } as unknown as Session;
+  return { access_token: 'registration-fixture-token', refresh_token: 'registration-fixture-refresh',
+    token_type: 'bearer', expires_in: 3600, user: { id, email, aud: 'authenticated',
+      app_metadata: {}, user_metadata: {}, created_at: '2026-10-28T00:00:00Z' } } as Session;
 }
 
 function installClient(): void {
@@ -109,7 +111,18 @@ function installClient(): void {
       }),
     }),
     functions: {
-      invoke: (name: string, options: { body: unknown }) => mockInvoke(name, options),
+      invoke: (name: string, options: { body: unknown }) => {
+        if (name !== 'app-query') return mockInvoke(name, options);
+        // Provider queries are an independent external port, not register
+        // commands. Keep command assertions and the current auth contract real.
+        const op = (options.body as { op: string }).op;
+        const common = { revision: 0, items: [], targets: [], unread_peer_count: 0 };
+        return Promise.resolve({ data: { op, result: op === 'get_home' ? { ...common,
+          server_now: '2026-10-28T00:00:00Z', daily_key: '2026-10-28', deadline: '2026-10-28T19:00:00Z',
+          draw_deadline: '2026-10-27T19:05:00Z', draw_state: 'succeeded', draw_finalized_at: null,
+          participation: 'no_friends', streak: 0, send_completed: null, reply_completed: 0, reply_total: 0,
+          achieved: false, actionable_complete: true } : { ...common, next_cursor: null } }, error: null });
+      },
     },
   };
 }

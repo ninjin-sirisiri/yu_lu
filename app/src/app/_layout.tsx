@@ -1,4 +1,4 @@
-import { Stack, usePathname } from 'expo-router';
+import { Stack, useGlobalSearchParams, usePathname } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { Dimensions, View } from 'react-native';
@@ -8,6 +8,7 @@ import { AuthProvider } from '../auth/provider';
 import { AvatarProbeHost } from '../media/avatarProbe';
 import { AuthenticatedChatProvider } from '../messages/provider';
 import { rememberDestination } from '../navigation/entry';
+import { parseConversationEntry } from '../navigation/conversationEntry';
 import { NotificationHost } from '../notify/NotificationHost';
 import { runPersistenceProbeIfEnabled } from '../storage/persistenceProbe';
 import { ThemeProvider, useTheme } from '../theme/provider';
@@ -34,9 +35,13 @@ import { ThemeProvider, useTheme } from '../theme/provider';
 
 function DestinationRecorder() {
   const pathname = usePathname();
+  const { origin } = useGlobalSearchParams();
   useEffect(() => {
-    if (pathname) rememberDestination(pathname);
-  }, [pathname]);
+    if (!pathname) return;
+    const entry = pathname.startsWith('/conversations/')
+      ? parseConversationEntry({ peerId: pathname.split('/')[2], origin }) : null;
+    rememberDestination(entry ? `/conversations/${entry.peerId}?origin=${entry.origin}` : pathname);
+  }, [pathname, origin]);
   return null;
 }
 
@@ -66,6 +71,7 @@ function ThemedRoot() {
         <Stack.Screen name="register" options={{ headerShown: false }} />
         <Stack.Screen name="auth/callback" options={{ headerShown: false }} />
         <Stack.Screen name="invitation/[token]" options={{ headerShown: false }} />
+        <Stack.Screen name="conversations/[peerId]" options={{ headerShown: false }} />
       </Stack>
       {/* Task 19: notification receipt + in-app notice. Renders null until a
           notification actually arrives, so routes/tests are unaffected. */}

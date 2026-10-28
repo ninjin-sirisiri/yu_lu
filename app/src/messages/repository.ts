@@ -1,12 +1,14 @@
 import type { ChatAnchor, ChatClient, ChatMessagesResult, ChatPeer } from '../backend/chat';
 import { randomId, type Storage } from '../storage/database';
 import { readCache, writeCache } from '../storage/cache';
-import { listLocalMessages, storeAcceptedMessage } from '../storage/chat';
-import { listOperations, updateOperation, type OutboxRecord } from '../storage/outbox';
+import { listLocalMessages, storeAcceptedMessage, saveChatDraft, saveAttachmentReferences } from '../storage/chat';
+import { getOperation, listOperations, updateOperation, type OutboxRecord } from '../storage/outbox';
 import { readDeviceSetting } from '../storage/settings';
 import { isChatTerminalState } from '../sync/types';
 import type { ImageReference } from '../storage/files';
 import { sendMessage } from './send';
+import { createSyncQueue } from '../sync/queue';
+import { validateChatBody } from './text';
 import type { AcceptedMessage, MessageReceipt } from './types';
 import type { ReadStateRepository } from './readState';
 
@@ -87,7 +89,7 @@ function accepted(accountId: string, peerId: string, m: ChatMessagesResult['item
 }
 
 export interface ConversationSnapshot {
-  messages: AcceptedMessage[]; pending: OutboxRecord[];
+  messages: AcceptedMessage[]; pending: OutboxRecord[]; cancelled: OutboxRecord[];
   metadata: ChatMessagesResult | null; canSend: boolean;
 }
 
@@ -101,7 +103,19 @@ export function createConversationRepository(deps: {
   let disposed = false;
   let live = false;
   let liveEpoch: string | null = null;
+  let loadedOnce = false;
   const valid = (g: number) => !disposed && g === generation;
+  const queue = (tx: Storage) => createSyncQueue({ store: tx, clock: { now }, random: Math.random });
+  async function localAction<T>(id: string, action: (tx: Storage, row: OutboxRecord) => Promise<T>): Promise<T> {
+    const g = generation;
+    const result = await session.commit(session.token(), null, async tx => {
+      const row = await getOperation(tx, session.accountId, id);
+      if (!row || row.kind !== 'send_message' || row.orderingKey !== peerId) throw new Error('Unknown local message.');
+      return action(tx, row);
+    }, () => valid(g));
+    if (result === null) throw new Error('Chat repository was revoked.');
+    return result;
+  }
 
   async function load(anchor: ChatAnchor): Promise<boolean> {
     if (disposed) return false;
@@ -116,6 +130,8 @@ export function createConversationRepository(deps: {
     if (!valid(g) || result.peer_id !== peerId) return false;
     const applied = await session.commit(token, result.revision, async tx => {
       const cached = await readCache<ChatMessagesResult>(tx, session.accountId, cacheKey);
+      const previousMessages = anchor === 'first_unread' && loadedOnce
+        ? await listLocalMessages(tx, session.accountId, peerId) : [];
       for (const item of result.items) await storeAcceptedMessage(tx, accepted(session.accountId, peerId, item));
       // History can confirm a request whose HTTP response was lost. Match the
       // actor AND peer/client key, persist the actual server receipt, and revoke
@@ -136,13 +152,22 @@ export function createConversationRepository(deps: {
       const metadata = { ...result, items: [],
         before_cursor: anchor === 'after' ? cached?.payload.before_cursor ?? null : result.before_cursor,
         after_cursor: anchor === 'before' ? cached?.payload.after_cursor ?? null : result.after_cursor };
+      // Realtime recovery refetches first_unread, not the user's viewport.
+      // Preserve the cursor at a previously extended edge unless this response
+      // actually extends that edge. An explicit latest jump still resets both.
+      if (cached && previousMessages.length && anchor === 'first_unread') {
+        const first = result.items[0]?.sequence ?? Infinity;
+        const last = result.items.at(-1)?.sequence ?? -Infinity;
+        if (first >= previousMessages[0].sequence) metadata.before_cursor = cached.payload.before_cursor;
+        if (last <= previousMessages.at(-1)!.sequence) metadata.after_cursor = cached.payload.after_cursor;
+      }
       await writeCache(tx, session.accountId, cacheKey, metadata, now());
       if (anchor === 'latest' && result.conversation_id && result.latest_sequence > 0) {
         await reads.record(peerId, result.conversation_id, [], result.latest_sequence, tx);
       }
       return true;
     }, () => valid(g));
-    if (applied && valid(g)) { live = true; liveEpoch = result.friendship_epoch; }
+    if (applied && valid(g)) { live = true; loadedOnce = true; liveEpoch = result.friendship_epoch; }
     return applied === true;
   }
 
@@ -151,11 +176,12 @@ export function createConversationRepository(deps: {
     loadAfter: () => load('after'), jumpLatest: () => load('latest'),
     dispose() { disposed = true; live = false; generation++; },
     async snapshot(): Promise<ConversationSnapshot> {
-      if (disposed || !await session.active()) return { messages: [], pending: [], metadata: null, canSend: false };
+      if (disposed || !await session.active()) return { messages: [], pending: [], cancelled: [], metadata: null, canSend: false };
       const metadata = (await readCache<ChatMessagesResult>(session.storage, session.accountId, cacheKey))?.payload ?? null;
       const relationship = (await readCache<ChatPeer>(session.storage, session.accountId, `chat.relationship.${peerId}`))?.payload;
       const messages = await listLocalMessages(session.storage, session.accountId, peerId);
-      const rows = (await listOperations(session.storage, session.accountId, { orderingKey: peerId }))
+      const allRows = await listOperations(session.storage, session.accountId, { orderingKey: peerId });
+      const rows = allRows
         .filter(row => row.kind === 'send_message' && row.state !== 'cancelled' && row.state !== 'superseded');
       // A durable receipt can precede the next history fetch. It is confirmed,
       // not a speculative timestamp; server sequence still orders it.
@@ -171,10 +197,11 @@ export function createConversationRepository(deps: {
       messages.sort((a, b) => a.sequence - b.sequence);
       const pending = rows.filter(row => !messages.some(m => m.senderId === session.accountId &&
         m.clientKey === (row.payload as { client_key?: string }).client_key));
-      if (!await session.active() || disposed) return { messages: [], pending: [], metadata: null, canSend: false };
-      return { messages, pending, metadata, canSend: live && relationship?.can_send === true && relationship.friendship_epoch === liveEpoch };
+      if (!await session.active() || disposed) return { messages: [], pending: [], cancelled: [], metadata: null, canSend: false };
+      return { messages, pending, cancelled: allRows.filter(row => row.kind === 'send_message' && row.state === 'cancelled'),
+        metadata, canSend: live && relationship?.can_send === true && relationship.friendship_epoch === liveEpoch };
     },
-    async enqueueMessage(input: { body: string; attachments: ImageReference[]; clientKey?: string }): Promise<string> {
+    async enqueueMessage(input: { body: string; attachments: ImageReference[]; clientKey?: string; clearDraft?: boolean }): Promise<string> {
       const g = generation;
       if (!live || disposed) throw new Error('Currently unable to send to this person.');
       const result = await session.commit(session.token(), null, async tx => {
@@ -182,13 +209,40 @@ export function createConversationRepository(deps: {
         const relationship = (await readCache<ChatPeer>(tx, session.accountId, `chat.relationship.${peerId}`))?.payload;
         if (!metadata?.can_send || !metadata.friendship_epoch || !relationship?.can_send ||
             relationship.friendship_epoch !== liveEpoch) throw new Error('Currently unable to send to this person.');
-        return sendMessage({ accountId: session.accountId, recipientId: peerId,
+        const id = await sendMessage({ accountId: session.accountId, recipientId: peerId,
           friendshipEpoch: metadata.friendship_epoch, body: input.body, attachments: input.attachments,
           clientKey: input.clientKey ?? randomId() }, { storage: tx, now });
+        if (input.clearDraft) await saveChatDraft(tx, { accountId: session.accountId, peerId, body: '', attachments: [], updatedAt: now() });
+        return id;
       }, () => valid(g) && live);
       if (!result) throw new Error('Chat repository was revoked.');
       return result;
     },
+    cancelUnsent: (id: string) => localAction(id, tx => queue(tx).cancelUnsent(session.accountId, id)),
+    saveCancelled: (id: string, draft: { body: string; attachments: ImageReference[] }) => localAction(id, async (tx, row) => {
+      if (row.state !== 'cancelled') throw new Error('Only cancelled local messages can be edited.');
+      const checked = validateChatBody(draft.body, draft.attachments.length);
+      if (!checked.ok) throw new Error(checked.error);
+      await saveAttachmentReferences(tx, session.accountId, 'outbox', id, draft.attachments);
+      return updateOperation(tx, session.accountId, id, { payload: { ...(row.payload as Record<string, unknown>),
+        body: checked.value, images_staged: draft.attachments, chat_prepared: undefined, chat_preparation_id: undefined } }, { expectState: 'cancelled' });
+    }),
+    discardCancelled: (id: string) => localAction(id, async (tx, row) => {
+      if (row.state !== 'cancelled') throw new Error('Only cancelled local messages can be discarded.');
+      await saveAttachmentReferences(tx, session.accountId, 'outbox', id, []);
+      return updateOperation(tx, session.accountId, id, { state: 'superseded', payload: {} }, { expectState: 'cancelled' });
+    }),
+    retryConfirmed: (id: string) => localAction(id, async (tx, row) => {
+      const relationship = (await readCache<ChatPeer>(tx, session.accountId, `chat.relationship.${peerId}`))?.payload;
+      if (!live || !relationship?.can_send || relationship.friendship_epoch !== liveEpoch) throw new Error('Currently unable to send to this person.');
+      const payload = row.payload as Record<string, unknown>;
+      const checked = validateChatBody(payload.body as string, Array.isArray(payload.images_staged) ? payload.images_staged.length : 0);
+      if (!checked.ok) throw new Error(checked.error);
+      // Explicit confirmation creates a NEW send under this displayed epoch;
+      // stopped/unknown work is never revived by a relationship refresh.
+      return queue(tx).retryAsNew({ accountId: session.accountId, operationId: id,
+        payload: { ...payload, friendship_epoch: liveEpoch, body: checked.value } });
+    }),
     async recordVisible(ids: readonly string[]): Promise<void> {
       const g = generation;
       await session.commit(session.token(), null, async tx => {
