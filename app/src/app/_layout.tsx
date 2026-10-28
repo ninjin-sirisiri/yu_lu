@@ -6,6 +6,7 @@ import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-c
 
 import { AuthProvider } from '../auth/provider';
 import { AvatarProbeHost } from '../media/avatarProbe';
+import { AuthenticatedChatProvider } from '../messages/provider';
 import { rememberDestination } from '../navigation/entry';
 import { NotificationHost } from '../notify/NotificationHost';
 import { runPersistenceProbeIfEnabled } from '../storage/persistenceProbe';
@@ -83,9 +84,11 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider initialMetrics={initialWindowMetrics ?? ZERO_METRICS}>
       <AuthProvider>
-        <ThemeProvider>
-          <ThemedRoot />
-        </ThemeProvider>
+        <AuthenticatedChatProvider>
+          <ThemeProvider>
+            <ThemedRoot />
+          </ThemeProvider>
+        </AuthenticatedChatProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );
