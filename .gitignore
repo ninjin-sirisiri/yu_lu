@@ -4,3 +4,5 @@
 .env
 invite-web/dist/
 invite-web/dist-test/
+
+**/.DS_Store
