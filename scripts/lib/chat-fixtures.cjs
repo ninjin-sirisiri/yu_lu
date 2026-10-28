@@ -125,4 +125,14 @@ async function createChatFixtures({ workdir, status, defer }) {
   return { ...users, ...fixture, sql: sql => ownerSql(workdir, sql) };
 }
 
-module.exports = { createChatFixtures, ownerSql, uuid, png, pngWithIdat, storage };
+async function changeJourneyRelationship(f, action) {
+  const a = uuid(f.a.id), b = uuid(f.b.id);
+  if (action === 'end') {
+    await f.sql(`begin; set local daily_chat.cycle_apply='on'; delete from public.friendships
+      where user_a=least(${a},${b}) and user_b=greatest(${a},${b}); commit;`);
+  } else if (action === 'renew') {
+    await f.sql(`begin; insert into public.friendships(user_a,user_b) values(least(${a},${b}),greatest(${a},${b})); commit;`);
+  } else throw Error('Unknown dedicated relationship fixture action');
+}
+
+module.exports = { createChatFixtures, changeJourneyRelationship, ownerSql, uuid, png, pngWithIdat, storage };

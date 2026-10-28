@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-// Task 10. Real HTTP integration only; missing infrastructure is a hard failure.
+// Tasks 10/21. Real HTTP/screens only; missing infrastructure is a hard failure.
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { deflateRawSync, deflateSync, gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+import { fork } from 'node:child_process';
 import backend from './lib/local-backend.cjs';
 import stack from './lib/chat-test-stack.cjs';
 import fixtures from './lib/chat-fixtures.cjs';
@@ -283,16 +284,61 @@ async function backendSuite(ctx) {
   });
 }
 
+async function journeySuite(ctx) {
+  const tests = ['__tests__/chat-env.test.ts', '__tests__/home-chat-journey.test.tsx'];
+  for (const test of tests) await fs.access(path.join(backend.REPO_ROOT, 'app', test));
+  const f = await fixtures.createChatFixtures(ctx);
+  const config = { project: stack.PROJECT_ID, url: ctx.status.API_URL, anonKey: ctx.status.ANON_KEY, a: f.a, b: f.b };
+  await new Promise((resolve, reject) => {
+    const child = fork(path.join(backend.REPO_ROOT, 'app/node_modules/jest/bin/jest.js'),
+      ['--runInBand', '--detectOpenHandles', '--runTestsByPath', ...tests], {
+        cwd: path.join(backend.REPO_ROOT, 'app'),
+        env: { ...backend.localCliEnv(ctx.workdir), CHAT_JOURNEY_CONFIG: JSON.stringify(config) },
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+      });
+    // Never stream credentials/SDK error objects unredacted.
+    child.stdout.on('data', bytes => process.stdout.write(backend.redact(bytes.toString())));
+    child.stderr.on('data', bytes => process.stderr.write(backend.redact(bytes.toString())));
+    let tail = Promise.resolve();
+    child.on('message', message => {
+      if (message?.type !== 'chat-relationship-fixture') return;
+      tail = tail.then(async () => {
+        try { await fixtures.changeJourneyRelationship(f, message.action); child.send({ id: message.id, ok: true }); }
+        catch { child.send({ id: message.id, ok: false }); }
+      });
+    });
+    const timeout = setTimeout(() => { child.kill('SIGTERM'); }, 240_000);
+    ctx.defer(async () => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      child.kill('SIGTERM');
+      await new Promise(resolve => child.once('exit', resolve));
+    });
+    child.on('error', error => { clearTimeout(timeout); reject(error); });
+    child.on('exit', async code => {
+      clearTimeout(timeout); await tail;
+      if (code === 0) resolve(); else reject(new Error(`dedicated screen journey failed (${code})`));
+    });
+  });
+  log('PASS real screen journey and dedicated clients closed');
+}
+
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (isMain && process.argv.slice(2).join(' ') !== '--suite backend') {
-  console.error('Usage: node scripts/test-chat-backend.mjs --suite backend');
+const suite = process.argv[3];
+if (isMain && (process.argv[2] !== '--suite' || !['backend', 'journey', 'all'].includes(suite) || process.argv.length !== 4)) {
+  console.error('Usage: node scripts/test-chat-backend.mjs --suite backend|journey|all');
   process.exitCode = 2;
 } else if (isMain) {
   let before;
   try {
     before = await protectedState();
-    await stack.withChatTestStack(backendSuite);
-    log('PASS dedicated backend suite and fixture/process/stack cleanup');
+    // Separate owned lifetimes isolate fixtures; all executes BOTH even if one
+    // fails, while each stack still enforces collision and cleanup safety.
+    const failures = [];
+    for (const run of suite === 'all' ? [journeySuite, backendSuite] : [suite === 'journey' ? journeySuite : backendSuite]) {
+      try { await stack.withChatTestStack(run); } catch (error) { failures.push(error); }
+    }
+    if (failures.length) throw new AggregateError(failures, failures.map(error => error.message).join('\n'));
+    log(`PASS dedicated ${suite} suite and fixture/process/stack cleanup`);
   } catch (error) {
     console.error(backend.redact(`FAIL ${error.message}`));
     process.exitCode = 1;

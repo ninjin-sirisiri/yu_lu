@@ -283,7 +283,7 @@ it('root wiring revokes synchronously on auth changes and creates a fresh same-a
     from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { user_id_confirmed_at: 'confirmed' } }) }) }) }),
     channel: () => {
       const channel = {
-        on: (_event: string, filter: { filter: string }, _callback: unknown) => { filters.push(filter.filter); return channel; },
+        on: (event: string, filter: { filter: string }, _callback: unknown) => { if (event === 'postgres_changes') filters.push(filter.filter); return channel; },
         subscribe: () => channel,
       };
       return channel;
@@ -329,12 +329,12 @@ it('subscribes exclusively to actor chat_updates and drops foreign, malformed an
   let change!: (payload: { new: unknown }) => void;
   let status!: (value: string) => void;
   interface Channel { on: jest.Mock; subscribe: jest.Mock }
-  const on: jest.Mock = jest.fn((_event, _filter, callback): Channel => { change = callback; return channel; });
+  const on: jest.Mock = jest.fn((event, _filter, callback): Channel => { if (event === 'postgres_changes') change = callback; return channel; });
   const channel: Channel = { on, subscribe: jest.fn(callback => { status = callback; return channel; }) };
   const client = { channel: jest.fn(() => channel), removeChannel: jest.fn(async () => 'ok') };
   const revisions: number[] = []; const statuses: string[] = [];
   const stop = createChatRealtime(client as never).subscribe(A, { revision: n => revisions.push(n), status: s => statuses.push(s) });
-  expect(on).toHaveBeenCalledTimes(1);
+  expect(on.mock.calls.filter(call => call[0] === 'postgres_changes')).toHaveLength(1);
   expect(on.mock.calls[0].slice(0, 2)).toEqual(['postgres_changes', {
     event: '*', schema: 'public', table: 'chat_updates', filter: `user_id=eq.${A}`,
   }]);
@@ -343,4 +343,22 @@ it('subscribes exclusively to actor chat_updates and drops foreign, malformed an
   stop(); change({ new: { user_id: A, revision: 3 } }); status('SUBSCRIBED');
   expect(revisions).toEqual([2]); expect(statuses).toEqual(['SUBSCRIBED']);
   expect(client.removeChannel).toHaveBeenCalledWith(channel);
+});
+
+it('refetches when PostgreSQL replication becomes live AFTER the channel join, and ignores revoked/unrelated system events', () => {
+  const handlers = new Map<string, (payload: unknown) => void>();
+  const channel = { on(event: string, _filter: unknown, callback: (payload: unknown) => void) {
+    handlers.set(event, callback); return channel;
+  }, subscribe(callback: (status: string) => void) { callback('SUBSCRIBED'); return channel; } };
+  const statuses: string[] = [];
+  const stop = createChatRealtime({ channel: () => channel, removeChannel: async () => 'ok' } as never)
+    .subscribe(A, { revision: () => {}, status: status => statuses.push(status) });
+  const system = (payload: unknown) => handlers.get('system')?.(payload);
+  system({ extension: 'broadcast', status: 'ok' });
+  system({ extension: 'postgres_changes', status: 'error' });
+  expect(statuses).toEqual(['SUBSCRIBED']);
+  system({ extension: 'postgres_changes', status: 'ok' });
+  expect(statuses).toEqual(['SUBSCRIBED', 'SUBSCRIBED']);
+  stop(); system({ extension: 'postgres_changes', status: 'ok' });
+  expect(statuses).toHaveLength(2);
 });

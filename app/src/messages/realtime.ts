@@ -25,6 +25,14 @@ export function createChatRealtime(client: SupabaseClient): ChatRealtimePort {
           if (!stopped && row?.user_id === accountId && typeof row.revision === 'number' &&
               Number.isSafeInteger(row.revision) && row.revision >= 0) callbacks.revision(row.revision);
         })
+        .on('system', {}, payload => {
+          // A channel join can precede PostgreSQL's replication subscription.
+          // Close that second gap too: accepted messages during setup otherwise
+          // have neither an event nor a subsequent authoritative refetch.
+          if (!stopped && payload.extension === 'postgres_changes' && payload.status === 'ok') {
+            callbacks.status('SUBSCRIBED');
+          }
+        })
         .subscribe(status => { if (!stopped) callbacks.status(status); });
       return () => {
         if (stopped) return;
