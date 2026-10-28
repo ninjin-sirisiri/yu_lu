@@ -64,6 +64,7 @@ export function createChatStore(deps: ChatStoreDeps) {
   let fetchTimer: Timer | null = null;
   let readTimer: Timer | null = null;
   let boundaryTimer: Timer | null = null;
+  let drawTimer: Timer | null = null;
   let unregister: (() => void) | null = null;
   const canRun = () => started && !stopped && state.foreground;
   function update(value: Partial<ChatState>) {
@@ -75,7 +76,9 @@ export function createChatStore(deps: ChatStoreDeps) {
     if (fetchTimer !== null) clearTimeout(fetchTimer);
     if (readTimer !== null) clearTimeout(readTimer);
     if (boundaryTimer !== null) clearTimeout(boundaryTimer);
+    if (drawTimer !== null) clearTimeout(drawTimer);
     fetchTimer = readTimer = boundaryTimer = null;
+    drawTimer = null;
   }
   function timer(callback: () => void, delay: number): Timer {
     const handle = setTimeout(() => { if (canRun()) callback(); }, Math.min(2_147_483_647, Math.max(1, delay)));
@@ -102,11 +105,22 @@ export function createChatStore(deps: ChatStoreDeps) {
   }
   function armBoundary(startedAt: number) {
     if (boundaryTimer !== null) clearTimeout(boundaryTimer);
+    if (drawTimer !== null) clearTimeout(drawTimer);
+    boundaryTimer = drawTimer = null;
     const home = state.home?.home;
     if (!canRun() || !home) return;
     // Server-relative remaining duration; no device-calendar achievement/day math.
-    const remaining = Date.parse(home.deadline) - Date.parse(home.server_now) - (now() - startedAt);
-    if (Number.isFinite(remaining)) boundaryTimer = timer(() => { boundaryTimer = null; refresh(); }, Math.max(1_000, remaining));
+    const remaining = (deadline: string) => Date.parse(deadline) - Date.parse(home.server_now) - (now() - startedAt);
+    const boundary = remaining(home.deadline);
+    if (Number.isFinite(boundary)) boundaryTimer = timer(() => {
+      boundaryTimer = null;
+      // Mark the old snapshot stale even if the next request hangs/offline.
+      void publish().catch(() => {}); refresh();
+    }, boundary > 0 ? boundary : 1_000);
+    const draw = remaining(home.draw_deadline);
+    if (home.participation === 'checking' && Number.isFinite(draw)) drawTimer = timer(() => {
+      drawTimer = null; refresh();
+    }, draw > 0 ? draw : 1_000);
   }
   function requestFetch() {
     if (stopped) return;
@@ -132,7 +146,9 @@ export function createChatStore(deps: ChatStoreDeps) {
       if (!stopped) {
         update({ error: accepted ? null : 'Chat refresh pending.' });
         await publish();
-        if (accepted) { fetchAttempt = 0; armBoundary(startedAt); }
+        // Home scheduling is independent of a selected conversation's failure.
+        if (results[0].status === 'fulfilled' && results[0].value) armBoundary(startedAt);
+        if (accepted) fetchAttempt = 0;
       }
     } catch {
       update({ error: 'Chat refresh pending.' });
