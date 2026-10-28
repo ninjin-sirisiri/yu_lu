@@ -122,6 +122,13 @@ export function payloadSummary(payload: unknown): string {
   return entries.map(([key, value]) => `${key}=${String(value)}`).join(' / ');
 }
 
+function operationSummary(operation: OutboxRecord): string {
+  if (operation.kind !== 'send_message') return payloadSummary(operation.payload);
+  const payload = operation.payload as { body?: string; images_staged?: unknown[]; media_ids?: unknown[] };
+  const images = payload.images_staged?.length ?? payload.media_ids?.length ?? 0;
+  return [payload.body ?? '', images ? `画像 ${images}枚` : ''].filter(Boolean).join(' / ');
+}
+
 export interface SyncStatusProps {
   /** Unfinished operations (the screen filters with {@link unfinishedOperations}). */
   operations: OutboxRecord[];
@@ -157,10 +164,12 @@ export function SyncStatus({
         この内容のまま新しい操作として送り直します
       </Text>
       <Text style={[styles.content, { color: tokens.text }]} allowFontScaling>
-        {payloadSummary(operation.payload)}
+        {operationSummary(operation)}
       </Text>
       <Text style={[styles.message, { color: tokens.muted }]} allowFontScaling>
-        以前の操作は履歴に残り、request_id は変わりません。
+        {operation.kind === 'send_message'
+          ? '元の待ち順で、新しいメッセージとして送り直します。'
+          : '以前の操作は履歴に残り、request_id は変わりません。'}
       </Text>
       <View style={styles.confirmActions}>
         <Button
@@ -188,9 +197,13 @@ export function SyncStatus({
 
   const renderRow = (operation: OutboxRecord) => {
     const { state } = operation;
-    const cancellable = state === 'pending' || state === 'needs_confirmation';
-    const retryable = state === 'needs_confirmation' || state === 'failed_permanent';
-    const summary = payloadSummary(operation.payload);
+    const chat = operation.kind === 'send_message';
+    const positive = operation.reachStage === 'not_started' || operation.reachStage === 'rejected';
+    const cancellable = chat ? ((state === 'pending' || state === 'needs_confirmation') && operation.reachStage === 'not_started') ||
+      (state === 'failed_permanent' && operation.reachStage === 'rejected')
+      : state === 'pending' || state === 'needs_confirmation';
+    const retryable = (state === 'needs_confirmation' || state === 'failed_permanent') && (!chat || positive);
+    const summary = operationSummary(operation);
     const attemptsLine =
       operation.attempts > 0 ? `送信試行 ${String(operation.attempts)}回` : null;
 
@@ -241,6 +254,10 @@ export function SyncStatus({
           </Text>
         )}
 
+        {state === 'relationship_stopped' && <Text style={[styles.message, { color: tokens.muted }]} allowFontScaling>
+          現在この相手には送信できません。送信結果を確認中のため、未送信とは扱いません。
+        </Text>}
+
         {state === 'sent_unknown' && (
           <>
             <Text style={[styles.message, { color: tokens.muted }]} testID={`sync-unknown-${operation.operationId}`} allowFontScaling>
@@ -270,7 +287,8 @@ export function SyncStatus({
         {state === 'needs_confirmation' && (
           <>
             <Text style={[styles.message, { color: tokens.muted }]} testID={`sync-overdue-${operation.operationId}`} allowFontScaling>
-              送信待ち期限（24時間）を過ぎたため自動では送信しません。内容と最新の状態を確認して、新しい操作として送り直してください。
+              {chat ? '自動送信は停止しています。内容と最新の状態を確認して、新しいメッセージとして送り直してください。'
+                : '送信待ち期限（24時間）を過ぎたため自動では送信しません。内容と最新の状態を確認して、新しい操作として送り直してください。'}
             </Text>
             <Text style={[styles.meta, { color: tokens.muted }]} allowFontScaling>
               {`期限 ${formatSyncStamp(operation.expiresAt)}`}

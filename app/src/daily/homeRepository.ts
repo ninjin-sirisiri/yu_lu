@@ -4,6 +4,7 @@ import { listLocalMessages } from '../storage/chat';
 import { optimisticUnread, type ReadStateRepository } from '../messages/readState';
 import { stopObsoleteSends, type RepositorySession } from '../messages/repository';
 import { compareChatRows, compareTargets, localChatRows, type ChatListRow } from '../messages/chatListRows';
+import { prepareChatArrivals, type ChatArrival } from '../notify/chatArrivals';
 
 interface SavedHome {
   home: HomeResult; list: ChatListResult; unread: ChatUnreadResult; readVersion: number;
@@ -20,6 +21,7 @@ export interface HomeSnapshot {
  * Daily targets are never part of the 20-item other-chat page limit. */
 export function createHomeRepository(deps: {
   session: RepositorySession; client: ChatClient; reads: ReadStateRepository; now?: () => number;
+  onArrival?(arrival: ChatArrival): void;
 }) {
   const { session, client, reads } = deps;
   const now = deps.now ?? (() => performance.now());
@@ -28,7 +30,7 @@ export function createHomeRepository(deps: {
   let clock: { server: number; local: number; day: string } | null = null;
   const valid = (g: number) => !disposed && generation === g;
 
-  async function refreshHome(): Promise<boolean> {
+  async function refreshHome(announce = false): Promise<boolean> {
     const g = ++generation;
     const token = session.token();
     if (disposed || !await session.active()) return false;
@@ -37,14 +39,19 @@ export function createHomeRepository(deps: {
     const [home, list, unread] = await Promise.all([client.getHome(), client.listChats(null), client.getUnread()]);
     if (!valid(g) || home.daily_key !== list.daily_key ||
         home.revision !== list.revision || home.revision !== unread.revision) return false;
+    const notices = await prepareChatArrivals(session, client, unread, home.server_now, announce);
     const result = await session.commit(token, home.revision, async tx => {
       const previous = (await readCache<SavedHome>(tx, session.accountId, 'chat.home'))?.payload;
       if (previous && home.daily_key < previous.home.daily_key) return false;
+      await notices.commit(tx);
       await writeCache(tx, session.accountId, 'chat.home', { home, list, unread, readVersion } satisfies SavedHome, started);
       for (const peer of [...home.targets, ...list.targets, ...list.items]) await stopObsoleteSends(tx, session.accountId, peer);
       return true;
     }, () => valid(g));
-    if (result && valid(g)) clock = { server: Date.parse(home.server_now), local: started, day: home.daily_key };
+    if (result && valid(g)) {
+      clock = { server: Date.parse(home.server_now), local: started, day: home.daily_key };
+      for (const arrival of notices.arrivals) deps.onArrival?.(arrival);
+    }
     return result === true;
   }
 

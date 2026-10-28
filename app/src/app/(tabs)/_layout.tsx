@@ -6,6 +6,7 @@ import { useAuth } from '../../auth/provider';
 import { LeftNav, useLayoutMetrics } from '../../navigation/AdaptiveLayout';
 import { emitTabReselect } from '../../navigation/tabReselect';
 import { useTheme } from '../../theme/provider';
+import { useChatUnreadBadge } from '../../messages/unreadBadge';
 
 // Smartphones get a bottom tab bar with exactly four tabs:
 // ホーム / チャット / 友達 / マイページ
@@ -48,6 +49,7 @@ const tabScreenListeners: TabScreenListeners = ({ route, navigation }) => ({
 });
 
 export default function TabLayout() {
+  const unread = useChatUnreadBadge();
   const auth = useAuth();
   const { mode } = useLayoutMetrics();
   const { tokens } = useTheme();
@@ -89,7 +91,7 @@ export default function TabLayout() {
     <Tabs.Screen
       key="chat"
       name="chat"
-      options={{ title: 'チャット', tabBarButtonTestID: 'tab-chat' }}
+      options={{ title: 'チャット', tabBarButtonTestID: 'tab-chat', tabBarBadge: unread.badge, tabBarAccessibilityLabel: unread.label }}
     />,
     <Tabs.Screen
       key="friends"

@@ -10,6 +10,7 @@ import { AuthenticatedChatProvider } from '../messages/provider';
 import { rememberDestination } from '../navigation/entry';
 import { parseConversationEntry } from '../navigation/conversationEntry';
 import { NotificationHost } from '../notify/NotificationHost';
+import { ChatArrivalHost } from '../notify/ChatArrivalHost';
 import { runPersistenceProbeIfEnabled } from '../storage/persistenceProbe';
 import { ThemeProvider, useTheme } from '../theme/provider';
 
@@ -76,6 +77,7 @@ function ThemedRoot() {
       {/* Task 19: notification receipt + in-app notice. Renders null until a
           notification actually arrives, so routes/tests are unaffected. */}
       <NotificationHost />
+      <ChatArrivalHost />
     </View>
   );
 }

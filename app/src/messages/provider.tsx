@@ -15,6 +15,7 @@ import { createChatRealtime, type ChatRealtimePort } from './realtime';
 import { createReadStateRepository } from './readState';
 import { createConversationRepository, createRepositorySession, type ConversationSnapshot } from './repository';
 import type { ChatDraft as StoredChatDraft } from './types';
+import type { ChatArrival } from '../notify/chatArrivals';
 
 export type ChatDraft = Pick<StoredChatDraft, 'body' | 'attachments'>;
 export interface ChatState {
@@ -22,6 +23,7 @@ export interface ChatState {
   home: HomeSnapshot | null; conversation: ConversationSnapshot | null;
   drafts: Readonly<Record<string, ChatDraft>>;
   pendingReadSync: boolean; refreshPending: boolean; error: string | null; stopped: boolean;
+  arrival: ChatArrival | null;
 }
 export interface ChatStoreDeps {
   storage: Storage; accountId: string; getAccountId(): Promise<string | null>;
@@ -39,7 +41,12 @@ export function createChatStore(deps: ChatStoreDeps) {
   const session = createRepositorySession(deps);
   const reads = createReadStateRepository({ session, commandApi: deps.commandApi });
   const now = deps.elapsedNow ?? (() => performance.now());
-  const homeRepository = createHomeRepository({ session, client: deps.client, reads, now });
+  let foregroundGeneration = 0;
+  let noticeGeneration = 0;
+  let baselineReady = false;
+  const homeRepository = createHomeRepository({ session, client: deps.client, reads, now, onArrival(arrival) {
+    if (canRun() && noticeGeneration === foregroundGeneration && state.activePeerId !== arrival.peerId) update({ arrival });
+  } });
   const appState = deps.appState === undefined ? AppState : deps.appState;
   const peers = new Map<string, ReturnType<typeof createConversationRepository>>();
   const draftGenerations = new Map<string, number>();
@@ -47,7 +54,7 @@ export function createChatStore(deps: ChatStoreDeps) {
   const cleanup: Array<() => void> = [];
   let state: ChatState = { accountId: deps.accountId, activePeerId: null,
     foreground: appState ? appState.currentState === 'active' : true, connected: false,
-    home: null, conversation: null, drafts: {}, pendingReadSync: false, refreshPending: false, error: null, stopped: false };
+    home: null, conversation: null, drafts: {}, pendingReadSync: false, refreshPending: false, error: null, stopped: false, arrival: null };
   let started = false;
   let stopped = false;
   let publishGeneration = 0;
@@ -95,6 +102,7 @@ export function createChatStore(deps: ChatStoreDeps) {
     return peer;
   }
   async function publish() {
+    if (stopped) return;
     const generation = ++publishGeneration;
     const peerId = state.activePeerId;
     const [home, conversation, intents] = await Promise.all([homeRepository.snapshot(),
@@ -138,16 +146,21 @@ export function createChatStore(deps: ChatStoreDeps) {
     try {
       if (!await session.active()) { stop(); return; }
       const peerId = state.activePeerId;
+      noticeGeneration = foregroundGeneration;
+      const announce = baselineReady;
       // Concurrent, not on the sender promise chain; one failure cannot suppress
       // the other repository's accepted data or relationship/outbox reconciliation.
-      const results = await Promise.allSettled([homeRepository.refreshHome(),
+      const results = await Promise.allSettled([homeRepository.refreshHome(announce),
         peerId ? rawPeer(peerId).loadInitial() : Promise.resolve(true)]);
       accepted = results.every(result => result.status === 'fulfilled' && result.value);
       if (!stopped) {
         update({ error: accepted ? null : 'Chat refresh pending.' });
         await publish();
         // Home scheduling is independent of a selected conversation's failure.
-        if (results[0].status === 'fulfilled' && results[0].value) armBoundary(startedAt);
+        if (results[0].status === 'fulfilled' && results[0].value) {
+          if (noticeGeneration === foregroundGeneration) baselineReady = true;
+          armBoundary(startedAt);
+        }
         if (accepted) fetchAttempt = 0;
       }
     } catch {
@@ -213,7 +226,7 @@ export function createChatStore(deps: ChatStoreDeps) {
     }
     homeRepository.dispose(); for (const peer of peers.values()) peer.dispose();
     update({ stopped: true, activePeerId: null, home: null, conversation: null, drafts: {},
-      connected: false, pendingReadSync: false, refreshPending: false });
+      connected: false, pendingReadSync: false, refreshPending: false, arrival: null });
   }
   const wrappedPeers = new Map<string, ReturnType<typeof wrapPeer>>();
   function wrapPeer(peerId: string) {
@@ -255,7 +268,8 @@ export function createChatStore(deps: ChatStoreDeps) {
           if (stopped) return;
           const foreground = value === 'active';
           const resumed = foreground && !state.foreground;
-          update({ foreground });
+          if (foreground !== state.foreground) { foregroundGeneration++; baselineReady = false; }
+          update({ foreground, ...(!foreground ? { arrival: null } : {}) });
           if (resumed) refresh();
           else if (!foreground) clearTimers();
         });
@@ -305,6 +319,7 @@ export function createChatStore(deps: ChatStoreDeps) {
       void attach();
     },
     stop, refresh,
+    dismissArrival(id: string) { if (state.arrival?.id === id) update({ arrival: null }); },
     getConversation(peerId: string) {
       let peer = wrappedPeers.get(peerId);
       if (!peer) { peer = wrapPeer(peerId); wrappedPeers.set(peerId, peer); }

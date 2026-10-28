@@ -5,6 +5,7 @@ import { Link, usePathname } from 'expo-router';
 import { useTheme } from '../theme/provider';
 import { useScreenInsets } from '../ui/Screen';
 import { radius, spacing, typography } from '../theme/tokens';
+import { useChatUnreadBadge } from '../messages/unreadBadge';
 
 /**
  * Adaptive layout (Global Constraints).
@@ -228,6 +229,7 @@ export interface LeftNavProps {
  * differs, so the switch never changes which screen is open.
  */
 export function LeftNav({ metrics, testID = 'left-nav' }: LeftNavProps) {
+  const unread = useChatUnreadBadge();
   const { tokens } = useTheme();
   const insets = useScreenInsets();
   const pathname = usePathname();
@@ -254,7 +256,7 @@ export function LeftNav({ metrics, testID = 'left-nav' }: LeftNavProps) {
             testID={item.testID}
             accessible
             accessibilityRole="tab"
-            accessibilityLabel={item.label}
+            accessibilityLabel={item.href === '/chat' ? unread.label : item.label}
             accessibilityState={{ selected: active }}
             style={[
               styles.navItem,
@@ -275,6 +277,7 @@ export function LeftNav({ metrics, testID = 'left-nav' }: LeftNavProps) {
               {/* Shape marker so the active item is not colour-only. */}
               {active ? '▸ ' : '  '}
               {item.label}
+              {item.href === '/chat' && unread.badge !== undefined ? ` (${unread.badge})` : ''}
             </Text>
           </Link>
         );
