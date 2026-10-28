@@ -259,7 +259,8 @@ export interface DeleteAccountDataOptions {
 
 /**
  * Removes every account-owned row and file for `accountId`: cache, drafts,
- * outbox queue, pending invitations, account settings and copied images.
+ * outbox queue/counters, chat history/drafts/read intents, attachment/cache
+ * references, pending invitations, account settings and copied images.
  * Device-scoped `device_settings` rows (theme, 端末設定) are left untouched.
  *
  * Row removal is transactional; the image directory is removed afterwards, so
@@ -273,6 +274,12 @@ export async function deleteAccountData(
 ): Promise<void> {
   requireNonEmpty('accountId', accountId);
   await db.withWriteTransaction(async (tx) => {
+    await tx.runAsync('DELETE FROM chat_attachment_refs WHERE account_id = ?', [accountId]);
+    await tx.runAsync('DELETE FROM chat_image_cache WHERE account_id = ?', [accountId]);
+    await tx.runAsync('DELETE FROM chat_read_intents WHERE account_id = ?', [accountId]);
+    await tx.runAsync('DELETE FROM chat_drafts WHERE account_id = ?', [accountId]);
+    await tx.runAsync('DELETE FROM chat_messages WHERE account_id = ?', [accountId]);
+    await tx.runAsync('DELETE FROM outbox_sequences WHERE account_id = ?', [accountId]);
     await tx.runAsync('DELETE FROM cache WHERE account_id = ?', [accountId]);
     await tx.runAsync('DELETE FROM drafts WHERE account_id = ?', [accountId]);
     await tx.runAsync('DELETE FROM outbox WHERE account_id = ?', [accountId]);
