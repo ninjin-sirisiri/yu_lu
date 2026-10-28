@@ -508,7 +508,7 @@ describe('createCommandApi (default network port)', () => {
         getSession: () => {
           const userId = options.userId === undefined ? 'alice' : options.userId;
           return Promise.resolve({
-            data: { session: userId ? { user: { id: userId } } : null },
+            data: { session: userId ? { user: { id: userId }, access_token: 'synthetic-worker-session' } : null },
             error: null,
           });
         },

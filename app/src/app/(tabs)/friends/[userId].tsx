@@ -7,7 +7,7 @@ import { QueryError, getProfile, type ProfileDetail } from '../../../backend/que
 import { RELATIONSHIP_LABELS, defaultIsOnline } from '../../../discovery/searchController';
 import { enqueueFriendRequest } from '../../../requests/sendRequest';
 import { getOperation } from '../../../storage/outbox';
-import { createCommandApi } from '../../../sync/api';
+import { createDeviceSyncApi } from '../../../sync/deviceApi';
 import { createSyncQueue } from '../../../sync/queue';
 import { createSyncWorker } from '../../../sync/worker';
 import { useTheme } from '../../../theme/provider';
@@ -171,7 +171,7 @@ export function ProfilePanel({ userId, onBack, testID = 'profile-panel' }: Profi
         clock: { now: () => Date.now() },
         random: Math.random,
       });
-      const worker = createSyncWorker({ queue, api: createCommandApi(), accountId });
+      const worker = createSyncWorker({ queue, api: createDeviceSyncApi(storage), accountId });
       const outcome = await enqueueFriendRequest({ queue, storage, accountId, target });
       setSendState('queued');
       try {

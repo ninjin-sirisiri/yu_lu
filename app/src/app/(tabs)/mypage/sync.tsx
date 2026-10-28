@@ -3,7 +3,7 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '../../../auth/provider';
 import { defaultIsOnline } from '../../../discovery/searchController';
-import { createDeviceProfileSendApi } from '../../../profiles/editor';
+import { createDeviceSyncApi } from '../../../sync/deviceApi';
 import { subscribeAppResume } from '../../../requests/friendsRepository';
 import { listOperations, type OutboxRecord } from '../../../storage/outbox';
 import { createCommandApi, type CommandApi } from '../../../sync/api';
@@ -48,15 +48,12 @@ export default function SyncScreen() {
   const auth = useAuth();
   const { tokens } = useTheme();
 
-  // Task 17: profile rows with a staged image must go through the profile
-  // send pipeline (upload → command, 409 capture) even when this screen or
-  // a 内容確認 resend triggers the pump — the raw command port would send
-  // the client-only `avatar_staged` key straight at the server.
+  // This pump may claim profile OR chat work. Use both shared preprocessing
+  // decorators, never send local staged-image fields to the raw command port.
   const api = useMemo<CommandApi>(() => {
-    const base = createCommandApi();
     return auth.storage !== null
-      ? createDeviceProfileSendApi(base, auth.storage)
-      : base;
+      ? createDeviceSyncApi(auth.storage)
+      : createCommandApi();
   }, [auth.storage]);
   const bindings = useMemo(() => {
     if (auth.accountId === null || auth.storage === null) return null;

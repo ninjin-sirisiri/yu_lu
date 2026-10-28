@@ -28,6 +28,9 @@ import { getAppClient } from '../backend/client';
 //                status: treated as NOT delivered, so the operation stays
 //                未送信 with its original 24-hour deadline and is retried
 //                automatically with the SAME operation id (接続復帰で再試行).
+//                For chat, a connection failure AFTER dispatch is unknown,
+//                never positive evidence of non-delivery. Its decorator also
+//                upgrades post-dispatch transient HTTP outcomes to unknown.
 //                A connection error cannot prove delivery either way, and
 //                the same-id retry replays idempotently if it did arrive.
 // - unknown      the port KNOWS the request may have reached the server but
@@ -52,6 +55,11 @@ export interface CommandEnvelope {
   operationId: string;
   kind: string;
   payload: Record<string, unknown>;
+  /** Local claim capability, never included in the HTTP body. */
+  claimGeneration?: number;
+  /** Transport must await this AFTER authentication, immediately before HTTP
+   * dispatch. Local-only capability: never serialize it into the request body. */
+  beforeRequest?(): Promise<void>;
 }
 
 export type CommandOutcome =
@@ -133,9 +141,11 @@ export function createCommandApi(options: CommandApiOptions = {}): CommandApi {
       const client = options.client ?? defaultClient();
 
       let sessionId: string | null = null;
+      let sessionToken: string | null = null;
       try {
         const { data } = await client.auth.getSession();
         sessionId = data.session?.user?.id ?? null;
+        sessionToken = data.session?.access_token ?? null;
       } catch (error) {
         // Session storage unreadable: nothing was sent.
         return {
@@ -143,7 +153,7 @@ export function createCommandApi(options: CommandApiOptions = {}): CommandApi {
           message: error instanceof Error ? error.message : 'session unavailable',
         };
       }
-      if (!sessionId) {
+      if (!sessionId || !sessionToken) {
         return { status: 'rejected', httpStatus: 401, message: 'authentication required' };
       }
       if (sessionId !== envelope.accountId) {
@@ -154,7 +164,12 @@ export function createCommandApi(options: CommandApiOptions = {}): CommandApi {
         };
       }
 
+      await envelope.beforeRequest?.();
       const { data, error } = await client.functions.invoke(APP_COMMAND_FUNCTION, {
+        // Pin this verified account's credential. The shared client's session
+        // can change while preprocessors/authentication await; its implicit
+        // fetch-time token must never substitute another account here.
+        headers: { Authorization: `Bearer ${sessionToken}` },
         body: {
           operation_id: envelope.operationId,
           kind: envelope.kind,
@@ -167,11 +182,9 @@ export function createCommandApi(options: CommandApiOptions = {}): CommandApi {
         const conflict = body?.['conflict'];
         if (status === 409 && isConflictShape(conflict)) return conflictOutcome(conflict);
         if (status === 0) {
-          // Connection-level failure: no HTTP status means the request
-          // never produced a response we can attribute - classify as a
-          // transient 一時失敗 so the entry stays 送信待ち with its
-          // original deadline (see the header comment).
-          return { status: 'transient', message };
+          // No response is NOT evidence that chat was never accepted. Legacy
+          // kinds retain their existing transient/same-ID retry behavior.
+          return { status: envelope.kind === 'send_message' ? 'unknown' : 'transient', message };
         }
         if (status === 408 || status === 429 || status >= 500) {
           return { status: 'transient', httpStatus: status, message };

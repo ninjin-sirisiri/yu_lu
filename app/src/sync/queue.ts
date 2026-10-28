@@ -1,5 +1,6 @@
 import { randomId, requireNonEmpty, type Storage } from '../storage/database';
 import type { MessageReceipt } from '../messages/types';
+import { listAttachmentReferences, saveAttachmentReferences } from '../storage/chat';
 import {
   enqueueOperation,
   getOperation,
@@ -383,11 +384,18 @@ export function createSyncQueue(deps: QueueDeps): SyncQueue {
         const claimedAt = row.claimedAt ?? row.nextAttemptAt;
         const leaseExpired = claimedAt === null || now - claimedAt >= SEND_LEASE_MS;
         if (leaseExpired) {
+          // A chat worker persists request_started BEFORE invoking send. A
+          // dropped preprocessing claim is therefore positively unsent, not an
+          // unknown request allowed to bypass the original 24-hour deadline.
+          const preparing = row.kind === 'send_message' &&
+            (row.reachStage === 'preparing' || row.reachStage === 'not_started');
           const recovered = await updateOperation(
             tx,
             accountId,
             row.operationId,
-            { state: 'sent_unknown', nextAttemptAt: now, claimedAt: null },
+            { state: preparing ? (now >= row.expiresAt ? 'needs_confirmation' : 'pending') : 'sent_unknown',
+              nextAttemptAt: now, claimedAt: null,
+              ...(preparing ? { reachStage: 'not_started' as const } : {}) },
             { expectState: 'sending', expectClaimGeneration: row.claimGeneration },
           );
           if (recovered) recoveredSends += 1;
@@ -420,13 +428,26 @@ export function createSyncQueue(deps: QueueDeps): SyncQueue {
           'not_retryable',
         );
       }
-      const payload = input.payload ?? old.payload;
+      let payload = input.payload ?? old.payload;
       if (old.kind === 'send_message' && messagePeer(payload) !== old.orderingKey) {
         throw new QueueError('a confirmed retry cannot change recipient', 'invalid_payload');
       }
       const operationId = newOperationId();
       if (operationId === old.operationId) {
         throw new QueueError('new operation id collides with the old one', 'conflict');
+      }
+      if (old.kind === 'send_message') {
+        // Explicit confirmation creates a NEW logical send, not a replay of
+        // the old client-key receipt or media batch. Never refresh the epoch.
+        assertPayload(payload);
+        const freshPayload: Record<string, unknown> = { ...payload, client_key: operationId };
+        delete freshPayload['chat_prepared'];
+        delete freshPayload['chat_preparation_id'];
+        if (Array.isArray(freshPayload['images_staged'])) freshPayload['media_ids'] = [];
+        else if (Array.isArray(freshPayload['media_ids']) && freshPayload['media_ids'].length > 0) {
+          throw new QueueError('a new image send requires local image sources', 'invalid_payload');
+        }
+        payload = freshPayload;
       }
       const superseded = await updateOperation(
         tx,
@@ -459,6 +480,9 @@ export function createSyncQueue(deps: QueueDeps): SyncQueue {
       }
       if (old.kind === 'send_message') {
         await updateOperation(tx, input.accountId, operationId, { reachStage: 'not_started' });
+        const images = (payload as Record<string, unknown>)['images_staged'];
+        await saveAttachmentReferences(tx, input.accountId, 'outbox', operationId,
+          Array.isArray(images) ? images : await listAttachmentReferences(tx, input.accountId, 'outbox', old.operationId));
       }
       const operation = await getOperation(tx, input.accountId, operationId);
       if (!operation) {

@@ -17,6 +17,7 @@ import { getOperation, listOperations } from '../storage/outbox';
 import { createCommandApi, type CommandApi, type CommandEnvelope, type CommandOutcome } from '../sync/api';
 import { createSyncQueue, type SyncQueue } from '../sync/queue';
 import { createSyncWorker } from '../sync/worker';
+import { createDeviceChatSendApi } from '../sync/chatPipeline';
 import { assertEditableProfileField } from './edit';
 import {
   computeDifferingFields,
@@ -945,7 +946,8 @@ export function createDeviceProfileEditor(
     accountId: options.accountId,
     storage: options.storage,
     queue,
-    api: createCommandApi(options.client === undefined ? {} : { client: options.client }),
+    api: createDeviceChatSendApi(
+      createCommandApi(options.client === undefined ? {} : { client: options.client }), options.storage, options.client),
     fetchPublication: () => getOwnPublication(options.client),
     uploadImage: (operationId, upload) => uploadProfileImage(operationId, upload, options.client),
     resolvePath: (reference) => store.resolvePath(reference),

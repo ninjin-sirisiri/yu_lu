@@ -37,6 +37,7 @@ import { createCommandApi, type CommandApi, type CommandOutcome } from '../../..
 import { createSyncQueue } from '../../../sync/queue';
 import { countUnfinishedOperations } from '../../../sync/SyncStatus';
 import { createSyncWorker } from '../../../sync/worker';
+import { createDeviceSyncApi } from '../../../sync/deviceApi';
 import { useTheme } from '../../../theme/provider';
 import { spacing, typography } from '../../../theme/tokens';
 import { Button } from '../../../ui/Button';
@@ -107,7 +108,7 @@ export function RequestsArea() {
   const { tokens } = useTheme();
   const { selectedPeerId, selectPeer } = useAdaptiveLayoutState();
 
-  const api = useMemo<CommandApi>(() => createCommandApi(), []);
+  const api = useMemo<CommandApi>(() => auth.storage ? createDeviceSyncApi(auth.storage) : createCommandApi(), [auth.storage]);
   const bindings = useMemo(() => {
     if (auth.accountId === null || auth.storage === null) return null;
     const queue = createSyncQueue({
