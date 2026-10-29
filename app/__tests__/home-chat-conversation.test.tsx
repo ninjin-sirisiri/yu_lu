@@ -75,9 +75,8 @@ it('uses existing in-app history ahead of the safe origin fallback', async () =>
     const router = useRouter();
     return <Button label="Open conversation" onPress={() => router.push(conversationEntry(B, 'profile'))} />;
   }
-  const router = renderRouter({ _layout: () => <Harness><Stack /></Harness>, home: Source,
+  const router = await renderRouter({ _layout: () => <Harness><Stack /></Harness>, home: Source,
     'conversations/[peerId]': ConversationRoute }, { initialUrl: '/home' });
-  await router;
   await fireEvent.press(screen.getByText('Open conversation'));
   await screen.findByLabelText('元の画面へ戻る');
   await fireEvent.press(screen.getByLabelText('元の画面へ戻る'));
@@ -85,10 +84,9 @@ it('uses existing in-app history ahead of the safe origin fallback', async () =>
 });
 
 it('connects to the existing common send-status route', async () => {
-  const router = renderRouter({ _layout: () => <Harness><Stack /></Harness>,
+  const router = await renderRouter({ _layout: () => <Harness><Stack /></Harness>,
     'conversations/[peerId]': ConversationRoute, 'mypage/sync': () => <Text>Common send status</Text> },
   { initialUrl: `/conversations/${B}?origin=chat` });
-  await router;
   await fireEvent.press(await screen.findByText('共通の送信状況'));
   await waitFor(() => expect(router.getPathname()).toBe('/mypage/sync'));
 });
@@ -96,18 +94,16 @@ it('connects to the existing common send-status route', async () => {
 it.each([['signed out', null, 'registered', '/login'], ['unregistered', A, 'unregistered', '/register']])(
   'guards the conversation when %s', async (_, accountId, registration, destination) => {
     mockAuth = { ...mockAuth, accountId, registration };
-    const router = renderRouter({ 'conversations/[peerId]': ConversationRoute,
+    const router = await renderRouter({ 'conversations/[peerId]': ConversationRoute,
       login: () => <Text>Login</Text>, register: () => <Text>Register</Text> }, { initialUrl: `/conversations/${B}` });
-    await router;
     await waitFor(() => expect(router.getPathname()).toBe(destination));
     expect(store.getSnapshot().activePeerId).toBeNull();
   });
 
 it('returns a history-less entry to its allowlisted origin', async () => {
-  const router = renderRouter({ _layout: () => <Harness><Slot /></Harness>,
+  const router = await renderRouter({ _layout: () => <Harness><Slot /></Harness>,
     'conversations/[peerId]': ConversationRoute, home: () => <Text>Home</Text> },
   { initialUrl: `/conversations/${B}?origin=home&returnTo=https://evil.example` });
-  await router;
   await fireEvent.press(await screen.findByLabelText('元の画面へ戻る'));
   await waitFor(() => expect(router.getPathname()).toBe('/home'));
 });

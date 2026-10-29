@@ -57,7 +57,7 @@ function appendLogLine(line: ProbeLine): void {
     const file = new File(Paths.document, AVATAR_PROBE_LOG_FILE);
     const previous = file.exists ? file.textSync() : '';
     if (!file.exists) file.create({ intermediates: true });
-    file.write(`${previous}${JSON.stringify(line)}\n`);
+    file.writeSync(`${previous}${JSON.stringify(line)}\n`);
     console.log(`[avatar-probe] ${JSON.stringify(line)}`);
   } catch (error) {
     console.warn(`[avatar-probe] log write failed: ${String(error)}`);
@@ -69,7 +69,7 @@ function ensureFixture(fs: FileSystemPort, name: string, base64: string): string
   if (!file.exists || file.size === 0) {
     if (file.exists) file.delete();
     file.create({ intermediates: true });
-    file.write(base64, { encoding: 'base64' });
+    file.writeSync(base64, { encoding: 'base64' });
   }
   if (fs.size(file.uri) <= 0) throw new Error(`fixture ${name} could not be written`);
   return file.uri;

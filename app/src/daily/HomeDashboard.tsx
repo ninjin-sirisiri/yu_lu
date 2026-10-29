@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
 import { profileImageUrl } from '../backend/profile';
 import type { RepositorySession } from '../messages/repository';
 import { useChat } from '../messages/provider';
@@ -74,7 +74,7 @@ export function HomeDashboard({ onOpen, onFriends, onChat }: {
   const chat = useChat();
   const { tokens } = useTheme();
   const { mode } = useLayoutMetrics();
-  const scroll = useRef<ScrollView>(null);
+  const scroll = useRef<ScrollViewInstance>(null);
   useEffect(() => subscribeTabReselect('home', () => scrollRefToTop(scroll)), []);
   const snapshot = chat?.home;
   const home = snapshot?.home;

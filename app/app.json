@@ -28,14 +28,7 @@
       "expo-router",
       "expo-sqlite",
       "expo-secure-store",
-      [
-        "expo-build-properties",
-        {
-          "ios": {
-            "enableSceneSupport": true
-          }
-        }
-      ],
+      "expo-build-properties",
       "expo-web-browser",
       "expo-background-task"
     ]

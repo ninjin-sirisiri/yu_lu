@@ -11,7 +11,7 @@ import {
   zlibInflateEnd,
   zlibInflateInit2,
   ZStream,
-} from 'npm:pako@3.0.2';
+} from 'npm:pako@3.0.3';
 import { jsonError } from './auth.ts';
 import { mapRpcError, type RpcOutcome, UUID_RE } from './commands.ts';
 

@@ -165,13 +165,12 @@ async function openStorage(): Promise<AppStorage> {
 }
 
 async function renderApp(initialUrl: string) {
-  const router = renderRouter('./src/app', { initialUrl });
-  const result = await router;
+  const router = await renderRouter('./src/app', { initialUrl });
   return {
     app: {
       getPathname: () => router.getPathname(),
       unmount: async () => {
-        await result.unmount();
+        await router.unmount();
       },
     },
   };

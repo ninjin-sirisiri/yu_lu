@@ -265,8 +265,7 @@ it('shows chat content and original-position retry guidance without request iden
  * the fake clock.
  */
 async function renderApp(initialUrl: string): Promise<{ getPathname(): string; unmount(): Promise<void> }> {
-  const router = renderRouter('./src/app', { initialUrl });
-  const result = await router;
+  const router = await renderRouter('./src/app', { initialUrl });
   for (let i = 0; i < 8; i += 1) {
     await act(async () => {
       await Promise.resolve();
@@ -275,7 +274,7 @@ async function renderApp(initialUrl: string): Promise<{ getPathname(): string; u
   return {
     getPathname: () => router.getPathname(),
     unmount: async () => {
-      await result.unmount();
+      await router.unmount();
     },
   };
 }

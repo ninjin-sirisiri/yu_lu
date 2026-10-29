@@ -749,12 +749,11 @@ async function renderApp(initialUrl: string): Promise<{
   getPathname(): string;
   unmount(): Promise<void>;
 }> {
-  const router = renderRouter('./src/app', { initialUrl });
-  const result = await router;
+  const router = await renderRouter('./src/app', { initialUrl });
   const app = {
     getPathname: () => router.getPathname(),
     unmount: async () => {
-      await result.unmount();
+      await router.unmount();
     },
   };
   mountedApps.push(app);
@@ -909,7 +908,7 @@ describe('プロフィール編集・競合解決画面 (router)', () => {
     const store = createImageStore({ fs: expoFileSystemPort });
     const file = new File(store.resolvePath(reference));
     if (!file.exists) file.create({ intermediates: true });
-    file.write(new Uint8Array([1, 2, 3, 4]));
+    file.writeSync(new Uint8Array([1, 2, 3, 4]));
 
     await renderApp('/mypage/edit');
     await waitFor(() => expect(screen.getByTestId('edit-display-name')).toBeTruthy());

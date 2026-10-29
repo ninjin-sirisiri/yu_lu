@@ -1,6 +1,6 @@
 # Daily Chat — 開発環境 README
 
-スマホアプリ (Expo 57) + ローカル Supabase + 招待 Web のモノレポ。
+スマホアプリ (Expo 58) + ローカル Supabase + 招待 Web のモノレポ。
 この README に **起動・二者での動作確認・自動テスト・トラブル対処**をまとめる。
 
 - [バックエンドを起動する](#1-ローカルバックエンド-supabase-の起動)
@@ -9,10 +9,11 @@
 - [自動テストを実行する](#5-動作確認と自動テスト)
 - [起動・接続で困ったとき](#6-トラブルシューティング)
 
-**現在の確認状況:** 自動回帰と実バックエンドの二者送受信は成功、iOS・Androidのネイティブビルドも成功。
+**Task 22完了時の確認状況（SDK 57、依存更新前）:** 自動回帰と実バックエンドの二者送受信は成功、iOS・Androidのネイティブビルドも成功。
 2026-10-29、利用者から **Android・iOSとも全項目の動作確認完了、大きな問題なし**との報告を受領。
 Task 22は完了。修正後の最終自動回帰・専用環境の後片付けも確認済み（DBテストは分離環境で実施）。
 利用者による手動確認と自動テストの証拠は区別する。本番デプロイ・外部ジョブ登録は未実施。
+SDK 58への更新と更新後の検証範囲は§5.5に記録する。上記の手動確認はSDK 58での確認ではない。
 
 詳細: [ホーム・チャット検証記録](docs/testing/home-chat.md) /
 [日次ジョブ・復旧手順](docs/operations/home-chat.md)。
@@ -22,17 +23,17 @@ Task 22は完了。修正後の最終自動回帰・専用環境の後片付け�
 
 | ディレクトリ | 内容 |
 | --- | --- |
-| `app/` | Expo 57 / RN 0.86.3 アプリ本体 (`package.json` の `scripts` が起動定義) |
+| `app/` | Expo 58 / RN 0.88.1 / React 19.3 アプリ本体 (`package.json` の `scripts` が起動定義) |
 | `supabase/` | ローカル Supabase 設定・マイグレーション・Edge Functions |
 | `invite-web/` | 招待ランディングの静的サイト (ソースのみ。`dist/` はビルド生成・git 管理外) |
 | `scripts/` | 招待 Web ビルド・ローカル統合テスト・ネイティブ設定チェッカー |
 
 ## 前提条件
 
-- Node.js 22.13+（Expo SDK 57の最低要件。テストでは `node:sqlite` も使用。実測: v26.7.0 / npm 11.19.0）
+- Node.js 22系は22.13+、24系は24.3+、または26以降の偶数メジャー（Expo SDK 58要件。23・25系は非対応。テストでは `node:sqlite` も使用。SDK 58検証時: v26.12.1）
 - Docker 起動中 (ローカル Supabase 用)
 - Supabase CLI（ホーム・チャット検証時: 2.122.0。以下では `npx supabase` を使用）
-- iOS: macOS・Xcode・シミュレータまたは開発用実機。Android: Android SDK・JDK 17・接続デバイスまたはAVD
+- iOS: macOS・Xcode・シミュレータまたは開発用実機（SDK 58検証時: Xcode 27.1）。Android: Android SDK・JDK 17・接続デバイスまたはAVD
 - Edge Function の単体テスト用に Deno (実行形は `npx deno test ...`。本環境未導入でも他は動く)
 
 ## 1. ローカルバックエンド (Supabase) の起動
@@ -350,8 +351,36 @@ NODE
 通常DBのpgTAP失敗と `.env` を読み込んだ招待Webテストの失敗は、分離条件での成功とは分けて記録している。
 途中のタイムアウトやDocker不調も[検証記録](docs/testing/home-chat.md)に残している。
 
-`app/` での `npx expo install --check` は既存14依存のSDK 57パッチ更新を推奨して **exit 1**。
-合格扱いにせず、依存更新は別途影響を確認する。§2.3の両OS手動確認は利用者から完了報告を受領済みで、ビルド成功だけを根拠にしたものではない。
+上記の最終回帰時点では、`app/` の `npx expo install --check` は既存14依存のSDK 57パッチ更新を推奨して **exit 1** だった。
+その後の依存更新は次節に記録する。§2.3の両OS手動確認は更新前の利用者報告であり、更新後の動作確認を示すものではない。
+
+### 5.4 SDK 57内の依存更新（2026-10-29、SDK 58移行前の記録）
+
+- Expoを **57.0.31**、関連パッケージをSDK 57の推奨パッチへ更新。React **19.2.3**、React Native **0.86.3**、Jest 29、TypeScript 6は維持する。
+- Supabase JSをアプリ・Edge Functionsとも **2.118.0**、React Native Testing Libraryを **14.1.0**、Edgeのpakoを **3.0.3**へ更新。npm・Denoのlockfileも更新した。
+- 間接依存の最新版がSDKと衝突するため、Reanimated **4.5.1** / Worklets **0.10.1**をSDK 57推奨版として明示的に固定。`test-renderer` はReact 19.2対応のreconcilerを使う **1.2.0**に固定する（1.3系はReact 19.3を要求する）。
+- `npm ci`、`npm ls --all`、型検査、`expo install --check`、Expo Doctor **21/21**、iOS・Android向けJSバンドル生成、ローカルネイティブ設定検査が成功した。
+- DBなしのJest **925件（54 suite）**、Deno **168件**、招待Web **25件**が成功。Jestには `act(...)` の警告が残る。今回のJest実行は以下のとおりで、実DBを使う2つのjourneyは除外した。
+
+  ```sh
+  npm --prefix app test -- --runInBand --testPathIgnorePatterns '(^|/)(app-journey|home-chat-journey)\.test\.tsx$'
+  ```
+
+- `npm audit` は **25件 → 19件（high 3 / moderate 3 / low 13、critical 0）**。Expo CLI経由の `zod`、`deepmerge`、Router経由の `decode-uri-component` に関連する警告が残る。互換性を崩す `npm audit fix --force` は実施していない。
+- **更新後のネイティブビルド・実機操作・実DB統合テストは未確認**。ネイティブ依存が変わったため、§2.2の `npm run ios` / `npm run android` で開発ビルドを作り直してから再確認する。JSバンドル生成だけをネイティブビルド成功とは扱わない。
+
+### 5.5 Expo SDK 58への移行（2026-10-29）
+
+- Expo **58.0.21**、React **19.3.0**、React Native **0.88.1**へ更新。Expo関連・Reanimated **4.7.1**・Worklets **0.13.0**もSDK 58推奨版へ揃えた。Jest **30.5.2**、`jest-expo` **58.0.13**、`test-renderer` **1.3.0**とし、TypeScript 6は維持する。
+- `File.write()` の非同期化に対応し、同期保存を約束するアダプターと開発用probeは **`writeSync()`**へ移行。UTF-8・base64・バイト列の即時保存とエラー伝播を検証する回帰テスト4件を追加した。
+- React NativeのStrict TypeScript APIに合わせてスクロールref・リストcallbackの型を更新。Routerテストは `await renderRouter(...)` の結果を使う新APIへ移行した。
+- UIKit scene lifecycleはSDK 58標準のため、不要になった `ios.enableSceneSupport` を削除。ローカルの `ios/`・`android/` は旧生成物を退避してから再生成し、Android SDKパス・debug keystore・ローカルXcode環境・既存のiOS署名teamを引き継いだ。退避先は `/private/var/folders/1l/g5bm30qs6mq6m4zd0hqj2y4r0000gn/T/opencode/yu-lu-sdk57-native-backup-S4T9j8`（この検証環境の一時ディレクトリ）。
+- 同一manifest・lockfileをコピーしたクリーンな一時ディレクトリでの `npm ci` と `npm ls --all` が成功。アプリ本体でも依存関係検査・型検査・`expo install --check`・Expo Doctor **20/20**・iOS／Android向けJSバンドル生成・ローカルネイティブ設定検査が成功した。
+- DBなしのJest **929件（55 suite）**と招待Web **25件**が成功した。Jestの `act(...)` 警告は残る。除外する実DB journeyとJest実行コマンドは§5.4と同じ。
+- Androidのarm64 Debugネイティブビルドが成功（JDK 17、`:app:assembleDebug -PreactNativeArchitectures=arm64-v8a`）。APKは `app/android/app/build/outputs/apk/debug/app-debug.apk`。端末へのインストール・起動確認は行っていない。
+- `npm audit` はSDK 57更新後の **19件 → 16件（high 3 / low 13、moderate・critical 0）**。Expo CLI経由の `zod` と `deepmerge` の警告が残る。`npm audit fix --force` は実施していない。
+- **SDK 58での実機操作・実DB統合テストは未確認**。既存開発クライアントは再ビルド・再インストールし、§2.3の両OS手動確認を再実施する。別の作業環境にSDK 57の生成済み `ios/`・`android/` がある場合は、独自変更を退避してからSDK 58で再生成する。
+- 移行根拠: [SDK 58リリースノート](https://expo.dev/changelog/sdk-58)、[Router移行ガイド](https://docs.expo.dev/router/migrate/sdk-57-to-58/)、[SDK 58 APIリファレンス](https://docs.expo.dev/versions/v58.0.0/)。
 
 ## 6. トラブルシューティング
 

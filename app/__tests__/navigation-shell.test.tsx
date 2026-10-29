@@ -73,11 +73,7 @@ import { listFriends } from '../src/backend/queries';
 // startup instead of hand-built fixtures. Jest runs with cwd = app/
 // (npm --prefix app test), which is what renderRouter resolves from.
 async function renderApp(initialUrl: string) {
-  // The router helpers (getPathname, ...) are attached to the render promise
-  // itself, so keep a reference to it and wrap it in a plain object — awaiting
-  // the promise directly would unwrap and drop the helpers.
-  const app = renderRouter('./src/app', { initialUrl });
-  await app;
+  const app = await renderRouter('./src/app', { initialUrl });
   return { app };
 }
 

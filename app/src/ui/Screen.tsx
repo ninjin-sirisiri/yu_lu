@@ -1,6 +1,7 @@
 import React, { useContext } from 'react';
 import {
   ScrollView,
+  type ScrollViewInstance,
   StyleSheet,
   Text,
   View,
@@ -47,7 +48,7 @@ export interface ScreenProps {
    * re-select signal scrolls this ref back to the top). Ignored when
    * `scroll` is off — there is no scrollable to reference.
    */
-  scrollViewRef?: React.RefObject<ScrollView | null>;
+  scrollViewRef?: React.RefObject<ScrollViewInstance | null>;
 }
 
 export function Screen({

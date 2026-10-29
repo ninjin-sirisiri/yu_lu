@@ -199,10 +199,9 @@ async function seedDeviceRegistration(storage: AppStorage): Promise<void> {
 }
 
 async function renderMypage(): Promise<void> {
-  const router = renderRouter('./src/app', { initialUrl: '/mypage' });
-  const result = await router;
+  const router = await renderRouter('./src/app', { initialUrl: '/mypage' });
   unmountCurrent = async () => {
-    await result.unmount();
+    await router.unmount();
   };
 }
 

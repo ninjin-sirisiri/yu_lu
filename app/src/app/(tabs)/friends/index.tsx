@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
 
 import { useAuth } from '../../../auth/provider';
 import { listRequests } from '../../../backend/queries';
@@ -100,7 +100,7 @@ export function FriendsArea({ metrics }: FriendsAreaProps) {
   // Task 22 (spec line 32): 選択中タブの再選択でこの一覧を先頭へ戻す.
   // The rows list is the friends tab's scrollable; when it renders no
   // ScrollView (空一覧) the ref is null and the helper simply no-ops.
-  const listScrollRef = useRef<ScrollView>(null);
+  const listScrollRef = useRef<ScrollViewInstance>(null);
   useEffect(
     () => subscribeTabReselect('friends', () => scrollRefToTop(listScrollRef)),
     [listScrollRef],

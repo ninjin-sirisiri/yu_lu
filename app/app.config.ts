@@ -1,5 +1,5 @@
 // Task 15: dynamic Expo config — wires the SAME validated invite domain
-// into the SDK 57 link configuration that scripts/build-invite-web.mjs
+// into the SDK 58 link configuration that scripts/build-invite-web.mjs
 // writes into the association files.
 //
 // Ownership: the domain additions only. Everything already in app.json is
@@ -61,7 +61,7 @@ export default ({ config }: ConfigContext): Partial<ExpoConfig> => {
     ...config,
     ios: {
       ...config.ios,
-      // SDK 57 shape: `applinks:<fully qualified domain>` entries.
+      // `applinks:<fully qualified domain>` entries.
       associatedDomains: [...(config.ios?.associatedDomains ?? []), `applinks:${host}`],
     },
     android: {

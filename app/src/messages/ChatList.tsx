@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
 import { scrollRefToTop, subscribeTabReselect } from '../navigation/tabReselect';
 import { useTheme } from '../theme/provider';
 import { radius, spacing, typography } from '../theme/tokens';
@@ -39,7 +39,7 @@ export function ChatList({ onOpen, onNew, selectedPeerId = null }: {
 }) {
   const chat = useChat();
   const { tokens } = useTheme();
-  const scroll = useRef<ScrollView>(null);
+  const scroll = useRef<ScrollViewInstance>(null);
   const [busy, setBusy] = useState(false);
   const [pageError, setPageError] = useState(false);
   const locked = useRef(false);

@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View, type ScrollView } from 'react-native';
+import { StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
 
 import { createDeviceLogoutPorts, performLogout, type UnsentSummary } from '../../../auth/logout';
 import { useAuth } from '../../../auth/provider';
@@ -120,7 +120,7 @@ export default function MypageScreen() {
   useEffect(() => subscribeAppResume(() => void refreshQueue()), [refreshQueue]);
 
   // Task 22 (spec line 32): 選択中タブの再選択でこの一覧を先頭へ戻す.
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
   useEffect(
     () => subscribeTabReselect('mypage', () => scrollRefToTop(scrollRef)),
     [scrollRef],

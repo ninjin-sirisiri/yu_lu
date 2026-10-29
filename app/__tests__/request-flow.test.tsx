@@ -170,12 +170,11 @@ async function renderRequests(): Promise<{
   getPathname(): string;
   unmount(): Promise<void>;
 }> {
-  const router = renderRouter('./src/app', { initialUrl: '/friends/requests' });
-  const result = await router;
+  const router = await renderRouter('./src/app', { initialUrl: '/friends/requests' });
   return {
     getPathname: () => router.getPathname(),
     unmount: async () => {
-      await result.unmount();
+      await router.unmount();
     },
   };
 }

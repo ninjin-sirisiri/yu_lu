@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View, type ViewToken } from 'react-native';
+import { FlatList, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View, type FlatListProps } from 'react-native';
 import { createImageStore, expoFileSystemPort } from '../storage/files';
 import type { OutboxRecord } from '../storage/outbox';
 import { queueStateLabel, formatSyncStamp } from '../sync/SyncStatus';
@@ -134,7 +134,7 @@ function OwnedConversationPanel({ peerId, active = true, onBack, loadImage: inje
     const ids = visible.current.filter(m => m.recipientId === state.chat.accountId).map(m => m.messageId);
     if (ids.length) void state.peer.recordVisible(ids).catch(() => setError('閲覧状態は未同期です。再試行してください。'));
   }).current;
-  const viewableItemsChanged = useRef(({ viewableItems }: { viewableItems: Array<ViewToken<AcceptedMessage>> }) => {
+  const viewableItemsChanged = useRef<NonNullable<FlatListProps<AcceptedMessage>['onViewableItemsChanged']>>(({ viewableItems }) => {
     visible.current = viewableItems.filter(v => v.isViewable).map(v => v.item);
     reportVisible();
   }).current;

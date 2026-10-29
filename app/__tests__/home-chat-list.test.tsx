@@ -65,10 +65,9 @@ async function list() {
   return view;
 }
 async function router(initialUrl = '/chat') {
-  const app = renderRouter({ _layout: () => <Harness><Stack /></Harness>, 'chat/_layout': ChatLayout,
+  const app = await renderRouter({ _layout: () => <Harness><Stack /></Harness>, 'chat/_layout': ChatLayout,
     'chat/index': ChatScreen, 'chat/new': NewChatScreen, 'conversations/[peerId]': ConversationRoute,
     profile: () => <ProfilePanel userId={C} />, home: () => <Text>Home</Text> }, { initialUrl });
-  await app;
   return { app };
 }
 

@@ -95,7 +95,7 @@ export const expoFileSystemPort: FileSystemPort = {
   writeFile(path: string, contents: string, encoding: 'utf8' | 'base64' = 'utf8'): void {
     const file = new File(path);
     if (!file.exists) file.create({ intermediates: true });
-    file.write(contents, { encoding });
+    file.writeSync(contents, { encoding });
   },
   readBytes(path) {
     return new File(path).bytesSync();
@@ -103,7 +103,7 @@ export const expoFileSystemPort: FileSystemPort = {
   writeBytes(path, contents) {
     const file = new File(path);
     if (!file.exists) file.create({ intermediates: true });
-    file.write(contents);
+    file.writeSync(contents);
   },
 };
 

@@ -13,7 +13,7 @@
 // never starve the rest.
 
 import type { RefObject } from 'react';
-import type { ScrollView } from 'react-native';
+import type { ScrollViewInstance } from 'react-native';
 
 type TabReselectListener = () => void;
 
@@ -54,7 +54,7 @@ export function resetTabReselectListeners(): void {
 }
 
 /** Scrolls a registered scrollable back to the top; no-op without one. */
-export function scrollRefToTop(ref: RefObject<ScrollView | null>): void {
+export function scrollRefToTop(ref: RefObject<ScrollViewInstance | null>): void {
   try {
     ref.current?.scrollTo({ y: 0, animated: true });
   } catch {

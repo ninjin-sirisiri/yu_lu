@@ -233,16 +233,12 @@ function profileTree(store: import('../src/theme/provider').ThemeSettingsStore, 
 }
 
 async function renderApp(initialUrl: string) {
-  const router = renderRouter('./src/app', { initialUrl });
-  const result = await router;
-  // renderRouter attaches router helpers to the render promise itself, while
-  // unmount lives on the awaited RNTL result — bridge both here (same shape
-  // as registration-flow.test.tsx).
+  const router = await renderRouter('./src/app', { initialUrl });
   return {
     app: {
       getPathname: () => router.getPathname(),
       unmount: async () => {
-        await result.unmount();
+        await router.unmount();
       },
     },
   };

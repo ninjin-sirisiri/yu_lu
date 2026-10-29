@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
 
 import { useAuth } from '../../../auth/provider';
 import {
@@ -299,7 +299,7 @@ export function RequestsArea() {
   // Task 22 (spec line 32): 選択中タブの再選択でこの一覧を先頭へ戻す.
   // The requests screen lives inside the friends tab, so it answers the
   // same 'friends' re-select signal with its own scrollable.
-  const listScrollRef = useRef<ScrollView>(null);
+  const listScrollRef = useRef<ScrollViewInstance>(null);
   useEffect(
     () => subscribeTabReselect('friends', () => scrollRefToTop(listScrollRef)),
     [listScrollRef],

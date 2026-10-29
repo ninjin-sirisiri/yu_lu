@@ -176,8 +176,7 @@ function readProbe(testID = 'theme-probe') {
 }
 
 async function renderApp(initialUrl: string) {
-  const app = renderRouter('./src/app', { initialUrl });
-  await app;
+  const app = await renderRouter('./src/app', { initialUrl });
   return { app };
 }
 

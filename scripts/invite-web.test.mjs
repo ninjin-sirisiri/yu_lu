@@ -623,7 +623,6 @@ test('expo config without external values: succeeds, adds no domain config', () 
   assert.equal(status, 0, stderr);
   // Existing app.json values preserved.
   assert.match(stdout, /bundleIdentifier: 'com\.anonymous\.app'/);
-  assert.match(stdout, /enableSceneSupport: true/); // Xcode 27 requirement
   assert.match(stdout, /scheme: 'app'/);
   // No invented domain wiring.
   assert.doesNotMatch(stdout, /associatedDomains/);
@@ -646,7 +645,6 @@ test('expo config with INVITE_ORIGIN: same value feeds iOS and Android', () => {
   assert.match(stdout, /'DEFAULT'/);
   // Existing values still preserved alongside the additions.
   assert.match(stdout, /bundleIdentifier: 'com\.anonymous\.app'/);
-  assert.match(stdout, /enableSceneSupport: true/);
 });
 
 test('expo config with an invalid INVITE_ORIGIN fails loudly', () => {

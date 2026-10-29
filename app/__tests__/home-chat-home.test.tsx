@@ -46,10 +46,10 @@ beforeEach(async () => {
 afterEach(async () => { store.stop(); jest.useRealTimers(); await db.close(); });
 async function settle() { for (let i = 0; i < 16; i++) await new Promise<void>(resolve => setImmediate(resolve)); }
 async function router() {
-  const app = renderRouter({ _layout: () => <Harness><Stack /></Harness>, 'home/index': HomeScreen,
+  const app = await renderRouter({ _layout: () => <Harness><Stack /></Harness>, 'home/index': HomeScreen,
     'conversations/[peerId]': ConversationRoute, 'friends/add': () => <Text>友達検索</Text>,
     'chat/index': () => <Text>友達とのチャット一覧</Text> }, { initialUrl: '/home' });
-  await app; await waitFor(() => expect(!!store.getSnapshot().home?.home || !!store.getSnapshot().error).toBe(true));
+  await waitFor(() => expect(!!store.getSnapshot().home?.home || !!store.getSnapshot().error).toBe(true));
   return { app };
 }
 async function dashboard() {

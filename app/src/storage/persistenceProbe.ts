@@ -31,7 +31,7 @@ function appendLogLine(line: ProbeLogLine): void {
   const file = new File(Paths.document, PROBE_LOG_FILE);
   const previous = file.exists ? file.textSync() : '';
   if (!file.exists) file.create({ intermediates: true });
-  file.write(`${previous}${JSON.stringify(line)}\n`);
+  file.writeSync(`${previous}${JSON.stringify(line)}\n`);
 }
 
 async function runProbe(): Promise<void> {

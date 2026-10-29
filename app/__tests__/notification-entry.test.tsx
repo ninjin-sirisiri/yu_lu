@@ -324,18 +324,16 @@ async function renderApp(initialUrl: string): Promise<{
   getPathname(): string;
   unmount(): Promise<void>;
 }> {
-  let router!: ReturnType<typeof renderRouter>;
+  let router!: Awaited<ReturnType<typeof renderRouter>>;
   // The act scope opens BEFORE the render so the async cold-start seed
   // (getLastNotificationResponse → enqueue) is flushed as part of it.
   await act(async () => {
-    router = renderRouter('./src/app', { initialUrl });
-    await router;
+    router = await renderRouter('./src/app', { initialUrl });
   });
-  const result = await router;
   const app = {
     getPathname: () => router.getPathname(),
     unmount: async () => {
-      await result.unmount();
+      await router.unmount();
     },
   };
   mountedApps.push(app);
