@@ -85,7 +85,8 @@ describe('navigation shell', () => {
   it('boots through the router and lands on the home tab', async () => {
     const { app } = await renderApp('/');
     await waitFor(() => expect(app.getPathname()).toBe('/home'));
-    expect(screen.getAllByText('準備中').length).toBeGreaterThan(0);
+    expect(screen.getByRole('header', { name: '今日のつながり' })).toBeTruthy();
+    expect(screen.queryByText('準備中')).toBeNull();
   });
 
   it('shows exactly the four Japanese bottom tabs', async () => {
@@ -129,7 +130,8 @@ describe('navigation shell', () => {
 
     await fireEvent.press(screen.getByTestId('tab-chat'));
     await waitFor(() => expect(app.getPathname()).toBe('/chat'));
-    expect(screen.getAllByText('準備中').length).toBeGreaterThan(0);
+    expect(screen.getByText('新しいチャット')).toBeTruthy();
+    expect(screen.queryByText('準備中')).toBeNull();
     expect(
       screen.queryByText(/送信しました|削除しました|ブロックしました/),
     ).toBeNull();

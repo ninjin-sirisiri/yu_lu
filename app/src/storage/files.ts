@@ -33,6 +33,9 @@ export interface FileSystemPort {
    * the SVG white-composite step renders, before it is encoded to JPEG.
    */
   writeFile(path: string, contents: string, encoding?: 'utf8' | 'base64'): void;
+  /** Raw bytes for chat's post-encoder metadata inspection and scrubbed output. */
+  readBytes(path: string): Uint8Array;
+  writeBytes(path: string, contents: Uint8Array): void;
 }
 
 function stripTrailingSlash(value: string): string {
@@ -93,6 +96,14 @@ export const expoFileSystemPort: FileSystemPort = {
     const file = new File(path);
     if (!file.exists) file.create({ intermediates: true });
     file.write(contents, { encoding });
+  },
+  readBytes(path) {
+    return new File(path).bytesSync();
+  },
+  writeBytes(path, contents) {
+    const file = new File(path);
+    if (!file.exists) file.create({ intermediates: true });
+    file.write(contents);
   },
 };
 

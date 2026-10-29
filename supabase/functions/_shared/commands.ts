@@ -22,6 +22,8 @@ import { validateCommandPayload } from './profile-validation.ts';
 import { validateInvitationCommandPayload } from './invitation-commands.ts';
 import { validateProfileCommandPayload } from './profile-commands.ts';
 import { validateRequestCommandPayload } from './request-commands.ts';
+import type { MediaBackend } from './chat-media.ts';
+import { validateChatCommandPayload } from './chat-commands.ts';
 
 export interface CommandRequest {
   operationId: string;
@@ -170,6 +172,7 @@ export async function executeCommand(
   req: Request,
   authorization: string,
   transport: RpcTransport = defaultTransport,
+  context?: { actorId: string; mediaBackend?: MediaBackend },
 ): Promise<Response> {
   let raw: unknown;
   try {
@@ -181,6 +184,16 @@ export async function executeCommand(
   const parsed = parseCommandBody(raw);
   if (!parsed.ok) return jsonError(400, parsed.error);
 
+  // This kind must never reach app_command: only the HTTP boundary has verified
+  // the actor and can inspect staging bytes using a server-only Storage client.
+  if (parsed.value.kind === 'prepare_chat_media') {
+    if (!context?.actorId) return jsonError(403, 'verified media actor required');
+    // Keep Node-backed image decoders out of non-media commands. Plain send
+    // validation/transport requires no filesystem, env or network permissions.
+    const { prepareChatMedia } = await import('./chat-media.ts');
+    return prepareChatMedia(context.actorId, parsed.value.payload, context.mediaBackend);
+  }
+
   const payloadError = validateCommandPayload(
     parsed.value.kind,
     parsed.value.payload,
@@ -191,6 +204,9 @@ export async function executeCommand(
     parsed.value.kind,
     parsed.value.payload,
   ) ?? validateProfileCommandPayload(
+    parsed.value.kind,
+    parsed.value.payload,
+  ) ?? validateChatCommandPayload(
     parsed.value.kind,
     parsed.value.payload,
   );

@@ -71,7 +71,9 @@ import {
   type AppStorage,
 } from '../src/storage/database';
 import { listOperations, updateOperation, type OutboxRecord } from '../src/storage/outbox';
-import { NodeSqliteDriver } from '../src/storage/testSupport/nodePorts';
+import { createNodeFileSystemPort, NodeSqliteDriver } from '../src/storage/testSupport/nodePorts';
+import { createImageStore } from '../src/storage/files';
+import { createChatSendApi } from '../src/sync/chatPipeline';
 import { writeAccountSetting, writeDeviceSetting } from '../src/storage/settings';
 import type { CommandApi, CommandEnvelope, CommandOutcome } from '../src/sync/api';
 import {
@@ -149,7 +151,8 @@ function createFakeApi(): FakeApi {
   return {
     calls,
     api: {
-      send: (command: CommandEnvelope) => {
+      send: async (command: CommandEnvelope) => {
+        await command.beforeRequest?.();
         calls.push(command);
         if (handler) return handler(command);
         const outcome = queue.shift() ?? ({ status: 'ok' } as const);
@@ -402,6 +405,27 @@ describe('startup: TaskManager definition and OS registration', () => {
 // ---------------------------------------------------------------------------
 
 describe('background task handler → shared claim path', () => {
+  it('the real background handler uses the chat decorator and persists a client-key-matched receipt', async () => {
+    currentAccount = uuid(80);
+    const { operation } = await harness.queue.enqueue({ accountId: currentAccount, kind: 'send_message', payload: {
+      recipient_id: uuid(81), client_key: uuid(82), friendship_epoch: uuid(83), body: 'background chat', images_staged: [],
+    } });
+    harness.fakeApi.script({ status: 'ok', data: { result: { message_id: uuid(84), client_key: uuid(82),
+      conversation_id: uuid(85), sequence: 1, accepted_at: '2026-10-28T01:00:00.123456Z' } } });
+    const disk = createNodeFileSystemPort(path.join(os.tmpdir(), 'unused-chat-background-documents'));
+    setSharedSyncLifecycle(makeLifecycle({ createApi: () => createChatSendApi(harness.fakeApi.api, {
+      storage: harness.storage, fs: disk, store: createImageStore({ fs: disk }),
+      getAccountId: async () => currentAccount, now: () => clockNow,
+      uploadImage: async () => { throw new Error('text send must never upload'); },
+    }) }));
+    expect(await taskHandler()({})).toBe(1);
+    const rows = await listOperations(harness.storage, currentAccount);
+    expect(rows[0]).toMatchObject({ operationId: operation.operationId, state: 'succeeded', reachStage: 'accepted',
+      result: { messageId: uuid(84), acceptedAt: '2026-10-28T01:00:00.123456Z' } });
+    expect(harness.fakeApi.calls[0].payload).toEqual({ recipient_id: uuid(81), client_key: uuid(82),
+      friendship_epoch: uuid(83), body: 'background chat', media_ids: [] });
+  });
+
   function taskHandler(): (body?: unknown) => Promise<unknown> {
     const TaskManagerMock = jest.requireMock('expo-task-manager') as {
       __handlers: Map<string, unknown>;
@@ -510,6 +534,51 @@ describe('foreground/background simultaneous send', () => {
 // ---------------------------------------------------------------------------
 
 describe('app resume and network regain re-enter the claim path', () => {
+  it('a cold start already in background does not arm foreground retry timers', async () => {
+    jest.useFakeTimers();
+    const app = fakeAppState();
+    const lifecycle = makeLifecycle({ appState: { ...app.source, currentState: 'background' } });
+    try {
+      await harness.enqueue('request'); harness.fakeApi.script({ status: 'transient' });
+      lifecycle.start(); await lifecycle.drain('background');
+      expect(jest.getTimerCount()).toBe(0);
+      app.emit('active'); await lifecycle.drain('foreground');
+      expect(jest.getTimerCount()).toBe(1);
+    } finally { lifecycle.stop(); jest.useRealTimers(); }
+  });
+
+  it('foreground automatically wakes at the persisted retry time without another OS event', async () => {
+    jest.useFakeTimers();
+    const lifecycle = makeLifecycle();
+    try {
+      await harness.enqueue('request');
+      harness.fakeApi.script({ status: 'transient' }, { status: 'ok' });
+      const detach = lifecycle.start();
+      await lifecycle.drain('foreground');
+      expect((await harness.rows())[0].nextAttemptAt).toBe(T0 + 5_000);
+      harness.advance(4_999); await jest.advanceTimersByTimeAsync(4_999);
+      expect((await harness.rows())[0].state).toBe('pending');
+      harness.advance(1); await jest.advanceTimersByTimeAsync(1);
+      expect((await harness.rows())[0].state).toBe('succeeded');
+      detach();
+      expect(jest.getTimerCount()).toBe(0);
+    } finally { lifecycle.stop(); jest.useRealTimers(); }
+  });
+
+  it('background and stopped lifecycles do not arm foreground retry timers', async () => {
+    jest.useFakeTimers();
+    const app = fakeAppState(); const lifecycle = makeLifecycle({ appState: app.source });
+    try {
+      await harness.enqueue('request'); harness.fakeApi.script({ status: 'transient' });
+      lifecycle.start(); await lifecycle.drain('foreground');
+      app.emit('background');
+      await lifecycle.drain('background');
+      expect(jest.getTimerCount()).toBe(0);
+      lifecycle.stop(); harness.advance(5_000); await jest.advanceTimersByTimeAsync(5_000);
+      expect((await harness.rows())[0].state).toBe('pending');
+    } finally { lifecycle.stop(); jest.useRealTimers(); }
+  });
+
   it('start() drains on foreground, then active/connectivity events drain again', async () => {
     const app = fakeAppState();
     const net = fakeNetwork();

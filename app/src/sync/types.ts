@@ -35,15 +35,16 @@ import type { OutboxRecord } from '../storage/outbox';
 // - superseded         replaced by the fresh operation retryAsNew created;
 //                      kept for the queue history, never sent.
 //
-// Invariant: an operation id that was ever written to the wire
-// (sending/sent_unknown/succeeded/failed_permanent) never moves back to an
-// unsent state, so a sent id is never reused with a different payload.
+// A retry never changes a payload that may have reached the server. Only a
+// positively unsent transient failure can return to pending; unknown results
+// keep the same id and payload until confirmed.
 
 /** Every state a queue row can be in. */
 export type QueueState =
   | 'pending'
   | 'sending'
   | 'sent_unknown'
+  | 'relationship_stopped'
   | 'succeeded'
   | 'failed_permanent'
   | 'needs_confirmation'
@@ -54,6 +55,7 @@ export const QUEUE_STATES: readonly QueueState[] = [
   'pending',
   'sending',
   'sent_unknown',
+  'relationship_stopped',
   'succeeded',
   'failed_permanent',
   'needs_confirmation',
@@ -64,13 +66,20 @@ export const QUEUE_STATES: readonly QueueState[] = [
 /**
  * States that hold an unresolved server result. A later operation of the
  * same target (kind) waits while one of these exists ahead of it, and they
- * are the only states that block successors (先行結果不明の同対象後続処理は
- * 待たせる). Unrelated kinds keep flowing.
+ * block successors for legacy kinds. Chat has the stricter per-peer rule below.
  */
-export const IN_FLIGHT_STATES: readonly QueueState[] = ['sending', 'sent_unknown'];
+// A relationship-stopped request may already have been accepted. It is not
+// claimable, but logout must still explain the possible established outcome.
+export const IN_FLIGHT_STATES: readonly QueueState[] = ['sending', 'sent_unknown', 'relationship_stopped'];
 
 /** States that have never reached the server (cancellable, coalescible). */
 export const UNSENT_STATES: readonly QueueState[] = ['pending', 'needs_confirmation'];
+
+/** Chat failures and expired rows still own their position until the user
+ * retries or explicitly excludes them. Unknown/new states fail closed. */
+export function isChatTerminalState(state: string): boolean {
+  return state === 'succeeded' || state === 'cancelled' || state === 'superseded';
+}
 
 /** True for the two states `claim` may pick. */
 export function isClaimableState(state: string): state is 'pending' | 'sent_unknown' {

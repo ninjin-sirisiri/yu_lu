@@ -17,6 +17,7 @@ import { listOperations, updateOperation, type OutboxRecord } from '../src/stora
 import { NodeSqliteDriver } from '../src/storage/testSupport/nodePorts';
 import { QueueError, createSyncQueue, type SyncQueue } from '../src/sync/queue';
 import { createSyncWorker } from '../src/sync/worker';
+import { createSyncLifecycle, setSharedSyncLifecycle } from '../src/sync/lifecycle';
 import type { CommandApi, CommandEnvelope, CommandOutcome } from '../src/sync/api';
 import {
   SyncStatus,
@@ -167,9 +168,15 @@ beforeEach(async () => {
     },
     rows: () => listOperations(storage, ACCOUNT),
   };
+  setSharedSyncLifecycle(createSyncLifecycle({ getAccountId: async () => ACCOUNT,
+    openStorage: async () => storage, createApi: () => ({ send: (envelope) => mockSend(envelope) }),
+    // Screen reservations use the real/fake platform clock, not the headless
+    // harness's separately advanced expiry clock.
+    clock: { now: () => Date.now() }, random: () => .5 }));
 });
 
 afterEach(async () => {
+  setSharedSyncLifecycle(null);
   const storage = mockSyncStorage;
   mockSyncStorage = null;
   if (storage !== null) {
@@ -220,6 +227,36 @@ async function expectQueueCode(promise: Promise<unknown>, code: string): Promise
   expect(error).toBeInstanceOf(QueueError);
   expect((error as QueueError).code).toBe(code);
 }
+
+it('keeps relationship-stopped uncertainty in the existing unfinished list without unsafe actions', async () => {
+  const operation = await enqueue('send_message', { recipient_id: 'peer', client_key: 'key' });
+  await updateOperation(harness.storage, ACCOUNT, operation.operationId,
+    { state: 'relationship_stopped', reachStage: 'request_started' });
+  expect(await countUnfinishedOperations(harness.storage, ACCOUNT)).toBe(1);
+  await render(statusTree(unfinishedOperations(await harness.rows()), {
+    onCancelUnsent: jest.fn(), onRetryAsNew: jest.fn(),
+  }));
+  await screen.findByTestId(`sync-row-${operation.operationId}`);
+  expect(screen.queryByTestId(`sync-cancel-${operation.operationId}`)).toBeNull();
+  expect(screen.queryByTestId(`sync-retry-${operation.operationId}`)).toBeNull();
+  expect(screen.queryByTestId(`sync-deadline-${operation.operationId}`)).toBeNull();
+});
+
+it('shows chat content and original-position retry guidance without request identifiers; excludes only positively unsent/rejected work', async () => {
+  const operation = await enqueue('send_message', { recipient_id: uuid(900), body: 'チャット本文', images_staged: [] });
+  await updateOperation(harness.storage, ACCOUNT, operation.operationId, { state: 'failed_permanent', reachStage: 'rejected' });
+  const view = await render(statusTree(unfinishedOperations(await harness.rows())));
+  expect(screen.getByTestId(`sync-kind-${operation.operationId}`).props.children).toBe('メッセージの送信');
+  expect(screen.getByTestId(`sync-content-${operation.operationId}`).props.children).toBe('内容: チャット本文');
+  expect(screen.getByTestId(`sync-cancel-${operation.operationId}`)).toBeTruthy();
+  await fireEvent.press(screen.getByTestId(`sync-retry-${operation.operationId}`));
+  expect(screen.getByText('元の待ち順で、新しいメッセージとして送り直します。')).toBeTruthy();
+  expect(screen.queryByText(/request_id/)).toBeNull();
+  await updateOperation(harness.storage, ACCOUNT, operation.operationId, { state: 'needs_confirmation', reachStage: 'request_started' });
+  await view.rerender(statusTree(unfinishedOperations(await harness.rows())));
+  expect(screen.queryByTestId(`sync-cancel-${operation.operationId}`)).toBeNull();
+  expect(screen.queryByTestId(`sync-retry-${operation.operationId}`)).toBeNull();
+});
 
 /**
  * Renders the app through expo-router's testing library. NOTE: renderRouter
@@ -516,6 +553,19 @@ describe('同対象の順序と独立操作', () => {
 // ---------------------------------------------------------------------------
 
 describe('マイページ入口と送信状況スクリーン', () => {
+  it('never bypasses a stopped shared sender with an independent screen worker', async () => {
+    const stopped = createSyncLifecycle({ getAccountId: async () => ACCOUNT,
+      openStorage: async () => harness.storage, createApi: () => ({ send: (envelope) => mockSend(envelope) }) });
+    stopped.stop(); setSharedSyncLifecycle(stopped);
+    const overdue = await enqueue('approve', { request_id: uuid(999) });
+    harness.advance(DAY_MS + 60_000); await harness.queue.reconcile(ACCOUNT);
+    const app = await renderApp('/mypage/sync'); await screen.findByTestId(`sync-retry-${overdue.operationId}`);
+    await fireEvent.press(screen.getByTestId(`sync-retry-${overdue.operationId}`));
+    await fireEvent.press(screen.getByTestId('sync-retry-yes')); await screen.findByTestId('sync-retried');
+    expect(mockSend).not.toHaveBeenCalled();
+    expect((await harness.rows()).filter(r => r.state === 'pending')).toHaveLength(1);
+    await app.unmount();
+  });
   it('shows the unfinished count on マイページ and navigates to the sync screen', async () => {
     const first = await enqueue('request', { target_user_id: uuid(701) });
     const second = await enqueue('approve', { request_id: uuid(702) });

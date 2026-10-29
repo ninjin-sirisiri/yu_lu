@@ -109,6 +109,11 @@ describe('schema and migrations', () => {
         'outbox',
         'pending_invitation',
         'device_settings',
+        'chat_messages',
+        'chat_drafts',
+        'chat_read_intents',
+        'chat_attachment_refs',
+        'chat_image_cache',
       ]),
     );
     expect(await schemaVersion(storage)).toBe(SCHEMA_VERSION);
@@ -140,6 +145,12 @@ describe('schema and migrations', () => {
         'attempts',
         'next_attempt_at',
         'state',
+        'ordering_key',
+        'queue_sequence',
+        'claim_generation',
+        'claimed_at',
+        'reach_stage',
+        'result',
       ]),
     );
     expect(await columns('pending_invitation')).toEqual(
@@ -169,7 +180,7 @@ describe('schema and migrations', () => {
     await initial.close();
 
     const extra: Migration = {
-      version: 2,
+      version: SCHEMA_VERSION + 1,
       description: 'test-only follow-up migration',
       async up(tx) {
         await tx.execAsync('CREATE TABLE extra_table (id INTEGER PRIMARY KEY NOT NULL)');
@@ -177,7 +188,7 @@ describe('schema and migrations', () => {
       },
     };
     const upgraded = await harness.openStorage({ migrations: [...schemaMigrations, extra] });
-    expect(await schemaVersion(upgraded)).toBe(2);
+    expect(await schemaVersion(upgraded)).toBe(SCHEMA_VERSION + 1);
     expect((await readDraft(upgraded, 'alice', 'registration'))?.body).toEqual({ userId: 'alice' });
     const extraRow = await upgraded.getFirstAsync<{ id: number }>('SELECT id FROM extra_table');
     expect(extraRow?.id).toBe(1);
@@ -185,7 +196,7 @@ describe('schema and migrations', () => {
 
   it('rolls back a failed migration and keeps the previous version', async () => {
     const failing: Migration = {
-      version: 2,
+      version: SCHEMA_VERSION + 1,
       description: 'fails after partial work',
       async up(tx) {
         await tx.execAsync('CREATE TABLE half_applied (id INTEGER PRIMARY KEY NOT NULL)');
@@ -199,7 +210,7 @@ describe('schema and migrations', () => {
     await driver.close();
 
     const reopened = await harness.openStorage();
-    expect(await schemaVersion(reopened)).toBe(1);
+    expect(await schemaVersion(reopened)).toBe(SCHEMA_VERSION);
     const tables = (await tableNames(reopened, 'table')).map((row) => row.name);
     expect(tables).not.toContain('half_applied');
   });
@@ -359,6 +370,12 @@ describe('outbox', () => {
       attempts: 0,
       nextAttemptAt: 500,
       state: 'queued',
+      orderingKey: null,
+      queueSequence: 1,
+      claimGeneration: 0,
+      claimedAt: null,
+      reachStage: null,
+      result: null,
     });
     expect(await countOperations(storage, 'alice')).toBe(1);
     expect(await countOperations(storage, 'alice', { state: 'queued' })).toBe(1);

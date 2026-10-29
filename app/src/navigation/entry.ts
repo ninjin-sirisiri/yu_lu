@@ -19,6 +19,8 @@
 // starts with no remembered destination, which is exactly what "cold" means
 // here: 手動タスクキルとOS終了は区別しない — only an alive process can resume.
 
+import { isConversationDestination } from './conversationEntry';
+
 export type EntryPhase = 'cold' | 'warm';
 
 export type EntryAuthState = 'loading' | 'signedOut' | 'signedIn';
@@ -50,6 +52,7 @@ const RESTORABLE_PREFIXES = ['/home', '/chat', '/friends', '/mypage'] as const;
  * not by entry memory.
  */
 export function isRestorableDestination(path: string): boolean {
+  if (path.startsWith('/conversations')) return isConversationDestination(path);
   if (!path.startsWith('/')) return false;
   if (path.includes('://')) return false;
   if (path === '/' || path === '/login' || path === '/register') return false;

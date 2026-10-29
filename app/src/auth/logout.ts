@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { getAppClient } from '../backend/client';
+import { stopAccountChat } from '../messages/lifetime';
 import { deleteAccountData, type Storage } from '../storage/database';
 import { createImageStore, expoFileSystemPort, type ImageStore } from '../storage/files';
 import { listOperations } from '../storage/outbox';
@@ -299,6 +300,7 @@ export async function performLogout(deps: LogoutDeps): Promise<LogoutResult> {
   let stage: LogoutStage = 'stop';
   try {
     // Step 2: worker停止.
+    stopAccountChat(deps.accountId);
     await deps.stopWorker();
 
     stage = 'marker';
@@ -413,6 +415,8 @@ export async function finalizePendingLogout(deps: FinalizeDeps): Promise<Finaliz
     return { status: 'none' };
   }
   if (marker === null) return { status: 'none' };
+
+  stopAccountChat(marker.accountId);
 
   let session: SessionSnapshot | null = null;
   try {

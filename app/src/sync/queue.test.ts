@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { openAppDatabase, type AppStorage } from '../storage/database';
-import { getOperation, listOperations, removeOperation } from '../storage/outbox';
+import { getOperation, listOperations, removeOperation, updateOperation } from '../storage/outbox';
 import { NodeSqliteDriver } from '../storage/testSupport/nodePorts';
 import {
   PENDING_DEADLINE_MS,
@@ -434,6 +434,15 @@ describe('reconcile', () => {
     expect(recovered?.state).toBe('sent_unknown');
     expect(recovered?.nextAttemptAt).toBe(harness.now()); // confirmable now
   });
+
+  it('uses the dedicated claim time even if another retry marker was changed', async () => {
+    const queue = harness.makeQueue();
+    const { operation } = await queue.enqueue({ accountId: 'alice', ...REQUEST });
+    await queue.claim('alice');
+    await updateOperation(harness.storage, 'alice', operation.operationId, { nextAttemptAt: T0 + PENDING_DEADLINE_MS });
+    harness.advance(SEND_LEASE_MS);
+    expect((await queue.reconcile('alice')).recoveredSends).toBe(1);
+  });
 });
 
 describe('retryAsNew', () => {
@@ -560,6 +569,31 @@ describe('retry timing', () => {
 });
 
 describe('applySendResult', () => {
+  it('revokes an expired claim immediately and rejects callbacks from older claim generations', async () => {
+    const queue = harness.makeQueue();
+    const { operation } = await queue.enqueue({ accountId: 'alice', ...REQUEST });
+    const first = await queue.claim('alice');
+    expect(first?.claimGeneration).toBe(1);
+    expect(first?.claimedAt).toBe(T0);
+    harness.advance(SEND_LEASE_MS);
+    await queue.reconcile('alice');
+    expect(await queue.applySendResult(first!, { status: 'ok' })).toBe('sent_unknown');
+    const second = await queue.claim('alice');
+    expect(second!.claimGeneration).toBeGreaterThan(first!.claimGeneration);
+    expect(await queue.applySendResult(first!, { status: 'rejected', httpStatus: 403, message: 'stale' })).toBe('sending');
+    expect((await getOperation(harness.storage, 'alice', operation.operationId))?.state).toBe('sending');
+    expect(await queue.applySendResult(second!, { status: 'ok' })).toBe('succeeded');
+  });
+
+  it('rejects a duplicate transient callback after a profile save coalesces', async () => {
+    const queue = harness.makeQueue();
+    await queue.enqueue({ accountId: 'alice', ...PROFILE });
+    const first = await queue.claim('alice');
+    await queue.applySendResult(first!, { status: 'transient' });
+    await queue.enqueue({ accountId: 'alice', kind: 'update_profile', payload: { display_name: 'B' } });
+    expect(await queue.applySendResult(first!, { status: 'ok' })).toBe('pending');
+  });
+
   it('retries transient failures with backoff without ever extending the deadline', async () => {
     const queue = harness.makeQueue();
     const { operation } = await queue.enqueue({ accountId: 'alice', ...REQUEST });

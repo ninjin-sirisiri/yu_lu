@@ -119,7 +119,7 @@ jest.mock('expo-notifications', () => ({
   setNotificationChannelAsync: () => mockSetChannel(),
   AndroidImportance: { MAX: 4 },
   DEFAULT_ACTION_IDENTIFIER: 'expo.default',
-}));
+}), { virtual: true });
 
 jest.mock('../src/auth/provider', () => {
   const React = require('react');
@@ -179,6 +179,10 @@ jest.mock('../src/backend/queries', () => {
 
 jest.mock('../src/backend/client', () => ({
   getAppClient: () => ({
+    auth: {
+      getSession: async () => ({ data: { session: null } }),
+      onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
+    },
     functions: {
       invoke: (...args: unknown[]) => mockInvoke(...args),
     },

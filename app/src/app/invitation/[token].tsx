@@ -36,7 +36,7 @@ import {
 import { defaultIsOnline } from '../../discovery/searchController';
 import { randomId, type Storage } from '../../storage/database';
 import { getOperation } from '../../storage/outbox';
-import { createCommandApi } from '../../sync/api';
+import { createDeviceSyncApi } from '../../sync/deviceApi';
 import { createSyncQueue } from '../../sync/queue';
 import { createSyncWorker } from '../../sync/worker';
 import { useTheme } from '../../theme/provider';
@@ -239,7 +239,7 @@ export default function InvitationRoute() {
         clock: { now: () => Date.now() },
         random: Math.random,
       });
-      const api = createCommandApi();
+      const api = createDeviceSyncApi(storage);
       const worker = createSyncWorker({ queue, api, accountId });
       return { queue, worker };
     } catch {

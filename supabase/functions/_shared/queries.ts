@@ -20,6 +20,7 @@
 // the database derives the actor from the same verified JWT.
 
 import { jsonError, requireActor } from './auth.ts';
+import { CHAT_QUERY_OPS, validateChatQueryPayload } from './chat-queries.ts';
 import {
   mapRpcError,
   UUID_RE,
@@ -37,6 +38,7 @@ export const QUERY_OPS = [
   'list_requests',
   'resolve_invitation',
   'get_invitation_status',
+  ...CHAT_QUERY_OPS,
 ] as const;
 
 export type QueryOp = (typeof QUERY_OPS)[number];
@@ -145,6 +147,11 @@ export function validateQueryPayload(
   payload: Record<string, unknown>,
 ): string | null {
   switch (op) {
+    case 'get_home':
+    case 'list_chats':
+    case 'get_chat_messages':
+    case 'get_chat_unread':
+      return validateChatQueryPayload(op, payload);
     case 'search_profiles': {
       const required = readStringField(
         payload,

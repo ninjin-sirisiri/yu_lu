@@ -128,6 +128,19 @@ async function renderApp(initialUrl: string) {
 }
 
 describe('focused tab re-selection (spec line 32)', () => {
+  it('keeps new-chat selection inside the chat stack and pops it on chat tab reselect', async () => {
+    const { app } = await renderApp('/chat');
+    await fireEvent.press(screen.getByText('新しいチャット'));
+    await waitFor(() => expect(app.getPathname()).toBe('/chat/new'));
+    await fireEvent.press(screen.getByTestId('tab-friends'));
+    await waitFor(() => expect(app.getPathname()).toBe('/friends'));
+    await fireEvent.press(screen.getByTestId('tab-chat'));
+    await waitFor(() => expect(app.getPathname()).toBe('/chat/new'));
+    await fireEvent.press(screen.getByTestId('tab-chat'));
+    await waitFor(() => expect(app.getPathname()).toBe('/chat'));
+    expect(screen.getByText('新しいチャット')).toBeTruthy();
+  });
+
   it('keeps the friend detail screen when returning from another tab', async () => {
     const { app } = await renderApp(`/friends/${PROFILE_UUID}`);
     await waitFor(() => expect(app.getPathname()).toBe(`/friends/${PROFILE_UUID}`));

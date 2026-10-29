@@ -1,18 +1,22 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-
-import { MAX_IMAGES } from '../media/images';
-
-const url = process.env.EXPO_PUBLIC_SUPABASE_URL as string;
-const anon = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY as string;
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { getAppClient } from '../backend/client';
+import type { Storage } from '../storage/database';
+import type { ImageReference } from '../storage/files';
+import { saveAttachmentReferences } from '../storage/chat';
+import { createSyncQueue } from '../sync/queue';
+import { validateChatBody } from './text';
 
 function defaultClient(): SupabaseClient {
-  return createClient(url, anon);
+  return getAppClient();
 }
 
 export interface SendMessageInput {
+  accountId: string;
   recipientId: string;
+  /** Captured when the user confirmed this send. Never refreshed by a worker. */
+  friendshipEpoch: string;
   body: string;
-  localImageUris: string[];
+  attachments: ImageReference[];
   clientKey: string;
 }
 
@@ -23,15 +27,6 @@ export interface EditMessageInput {
   imagePaths: string[];
 }
 
-/** Row shape for the `messages` insert. No timestamp field: the server
- *  `accepted_at` default is the recorded truth for send time. */
-export interface MessageInsert {
-  recipient_id: string;
-  body: string;
-  image_paths: string[];
-  client_key: string;
-}
-
 /** Row shape for the `message_edits` insert. No `edited_at` override and no
  *  `accepted_at`: editing keeps history without changing send time or order. */
 export interface MessageEditInsert {
@@ -39,21 +34,6 @@ export interface MessageEditInsert {
   version: number;
   body: string;
   image_paths: string[];
-}
-
-export function assertSendable(body: string, localImageUris: string[]): void {
-  if (body.trim() === '' && localImageUris.length === 0) {
-    throw new Error('Blank-only body with no image cannot be sent');
-  }
-}
-
-export function buildMessageInsert(input: SendMessageInput): MessageInsert {
-  return {
-    recipient_id: input.recipientId,
-    body: input.body,
-    image_paths: input.localImageUris.slice(0, MAX_IMAGES),
-    client_key: input.clientKey,
-  };
 }
 
 export function buildEditInsert(input: EditMessageInput): MessageEditInsert {
@@ -71,15 +51,27 @@ export function buildWithdrawUpdate(): { withdrawn: boolean } {
   return { withdrawn: true };
 }
 
-export async function sendMessage(
-  input: SendMessageInput,
-  client: SupabaseClient = defaultClient(),
-): Promise<string> {
-  assertSendable(input.body, input.localImageUris);
-  const row = buildMessageInsert(input);
-  const result = await client.from('messages').insert(row).select('message_id').single();
-  if (result.error) throw new Error(result.error.message);
-  return result.data.message_id as string;
+/** Reserve, never insert directly or return an invented server receipt. The
+ * returned ID identifies durable queued work; the shared lifecycle sends it.
+ * Attachment pins and enqueue commit together or neither is visible. */
+export async function sendMessage(input: SendMessageInput, options: {
+  storage: Storage;
+  now?: () => number;
+}): Promise<string> {
+  const body = validateChatBody(input.body, input.attachments.length);
+  if (!body.ok) throw new Error(body.error);
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  if (![input.accountId, input.recipientId, input.friendshipEpoch, input.clientKey].every(v => uuid.test(v)) ||
+      input.accountId === input.recipientId) throw new Error('Invalid message identity.');
+  return options.storage.withWriteTransaction(async tx => {
+    const queue = createSyncQueue({ store: tx, clock: { now: options.now ?? Date.now }, random: Math.random });
+    const { operation } = await queue.enqueue({ accountId: input.accountId, kind: 'send_message', payload: {
+      recipient_id: input.recipientId, client_key: input.clientKey, friendship_epoch: input.friendshipEpoch,
+      body: body.value, images_staged: input.attachments,
+    } });
+    await saveAttachmentReferences(tx, input.accountId, 'outbox', operation.operationId, input.attachments);
+    return operation.operationId;
+  });
 }
 
 export async function editMessage(

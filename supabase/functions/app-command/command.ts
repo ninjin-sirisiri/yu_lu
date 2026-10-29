@@ -36,7 +36,7 @@ export function createCommandHandler(
     if (actor instanceof Response) return actor;
     const authorization = req.headers.get('authorization');
     if (!authorization) return jsonError(401, 'authentication required');
-    return deps.executeCommand(req, authorization);
+    return deps.executeCommand(req, authorization, undefined, { actorId: actor.actorId });
   };
 }
 

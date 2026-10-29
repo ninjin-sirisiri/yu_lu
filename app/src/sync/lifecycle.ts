@@ -4,10 +4,12 @@ import * as Network from 'expo-network';
 import { getAppClient } from '../backend/client';
 import { pendingLogoutGate } from '../auth/logout';
 import { openAppDatabase, type Storage } from '../storage/database';
-import { createDeviceProfileSendApi } from '../profiles/editor';
 import type { AppStateLike } from '../theme/provider';
-import { createCommandApi, type CommandApi } from './api';
-import { createSyncQueue } from './queue';
+import type { CommandApi } from './api';
+import { createDeviceSyncApi } from './deviceApi';
+import { listOperations, type OutboxRecord } from '../storage/outbox';
+import { isChatTerminalState, isClaimableState, isInFlightState } from './types';
+import { createSyncQueue, SEND_LEASE_MS } from './queue';
 import { createSyncWorker, type WorkerStep } from './worker';
 
 // Task 20: the shared send lifecycle — ONE drain entry point.
@@ -43,7 +45,7 @@ import { createSyncWorker, type WorkerStep } from './worker';
 // background task calls `drain('background')` directly. All of them are
 // injectable so tests drive events without native modules.
 
-export type DrainTrigger = 'foreground' | 'resume' | 'network' | 'background';
+export type DrainTrigger = 'foreground' | 'resume' | 'network' | 'background' | 'retry';
 
 export type DrainStatus =
   | 'drained' // worker ran (steps listed below; may be empty when idle)
@@ -77,7 +79,7 @@ export interface SyncLifecycleDeps {
   clock?: { now(): number };
   random?: () => number;
   /** App-state source; null disables the resume listener. */
-  appState?: AppStateLike | null;
+  appState?: (AppStateLike & { currentState?: string | null }) | null;
   /** Network source; null disables the network-regained listener. */
   network?: NetworkPort | null;
 }
@@ -105,10 +107,45 @@ export interface SyncLifecycle {
 export function createSyncLifecycle(deps: SyncLifecycleDeps): SyncLifecycle {
   let stopped = false;
   let detachState: (() => void) | null = null;
+  let foreground = true;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  const now = () => deps.clock?.now() ?? Date.now();
+  function clearRetry() {
+    if (retryTimer !== null) clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+  async function armRetry(storage: Storage, accountId: string) {
+    clearRetry();
+    if (stopped || detachState === null || !foreground || await deps.getAccountId() !== accountId) return;
+    const rows = await listOperations(storage, accountId);
+    const heads = new Map<string | null, OutboxRecord>();
+    for (const row of rows) {
+      if (row.kind !== 'send_message' || isChatTerminalState(row.state)) continue;
+      const head = heads.get(row.orderingKey);
+      if (!head || row.queueSequence < head.queueSequence) heads.set(row.orderingKey, row);
+    }
+    const wake: number[] = [];
+    const blocked = new Set<string>();
+    for (const row of rows) {
+      if (row.state === 'pending') wake.push(row.expiresAt);
+      const head = row.kind === 'send_message'
+        ? heads.get(row.orderingKey)?.operationId === row.operationId : !blocked.has(row.kind);
+      if (head && isClaimableState(row.state)) wake.push(row.nextAttemptAt ?? now());
+      if (row.state === 'sending') wake.push((row.claimedAt ?? row.nextAttemptAt ?? now()) + SEND_LEASE_MS);
+      if (row.kind !== 'send_message' && isInFlightState(row.state)) blocked.add(row.kind);
+    }
+    if (!wake.length || stopped || detachState === null || !foreground) return;
+    // The queue remains the authority. Timers only wake the same drain; they
+    // do not retain account credentials, extend deadlines, or run in background.
+    retryTimer = setTimeout(() => { retryTimer = null; void drain('retry'); },
+      Math.max(1, Math.min(2_147_483_647, Math.min(...wake) - now())));
+    (retryTimer as unknown as { unref?: () => void }).unref?.();
+  }
   // Serialization chain: one drain at a time, in trigger order.
   let tail: Promise<unknown> = Promise.resolve();
 
   async function drainOnce(trigger: DrainTrigger): Promise<DrainResult> {
+    clearRetry();
     const base = { trigger, accountId: null as string | null, steps: [] as WorkerStep[] };
     if (stopped) {
       return { ...base, status: 'stopped', message: 'lifecycle stopped (logout)' };
@@ -163,8 +200,10 @@ export function createSyncLifecycle(deps: SyncLifecycleDeps): SyncLifecycle {
         queue,
         api: deps.createApi(accountId, storage),
         accountId,
+        canRun: async () => !stopped && await deps.getAccountId() === accountId,
       });
       const steps = await worker.runUntilIdle();
+      await armRetry(storage, accountId);
       return { trigger, status: 'drained', accountId, steps };
     } catch (cause) {
       return {
@@ -194,14 +233,17 @@ export function createSyncLifecycle(deps: SyncLifecycleDeps): SyncLifecycle {
     // (new sign-in) — the in-memory halt must not outlive the session it
     // was set for.
     stopped = false;
+    const appState = deps.appState === undefined ? AppState : deps.appState;
+    foreground = appState && 'currentState' in appState ? appState.currentState === 'active' : true;
     if (detachState !== null) return detachState;
     const unsubscribers: Array<() => void> = [];
 
-    const appState = deps.appState === undefined ? AppState : deps.appState;
     if (appState) {
       try {
         const subscription = appState.addEventListener('change', (state) => {
-          if (state === 'active') void drain('resume');
+          foreground = state === 'active';
+          if (foreground) void drain('resume');
+          else clearRetry();
         });
         unsubscribers.push(() => {
           try {
@@ -246,6 +288,7 @@ export function createSyncLifecycle(deps: SyncLifecycleDeps): SyncLifecycle {
     }
 
     detachState = () => {
+      clearRetry();
       for (const unsubscribe of unsubscribers) {
         try {
           unsubscribe();
@@ -263,6 +306,7 @@ export function createSyncLifecycle(deps: SyncLifecycleDeps): SyncLifecycle {
     start,
     stop: () => {
       stopped = true;
+      clearRetry();
     },
     isStopped: () => stopped,
   };
@@ -346,9 +390,8 @@ export function getSharedSyncLifecycle(): SyncLifecycle {
         }
       },
       createApi(_accountId: string, storage: Storage): CommandApi {
-        // Task 17 note: the background/foreground wire format is the same
-        // profile send pipeline (staged avatar upload → command port).
-        return createDeviceProfileSendApi(createCommandApi(), storage);
+        // Foreground and background use the same chat + profile decorators.
+        return createDeviceSyncApi(storage);
       },
       async beforeDrain(storage: Storage) {
         // Pending-logout gate: never send while a logout is pending, and

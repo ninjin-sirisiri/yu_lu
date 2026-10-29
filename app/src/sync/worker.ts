@@ -34,6 +34,8 @@ export interface SyncWorkerDeps {
   queue: SyncQueue;
   api: CommandApi;
   accountId: string;
+  /** Rechecked between steps, including after an account switch/logout. */
+  canRun?(): Promise<boolean>;
 }
 
 export interface SyncWorker {
@@ -54,6 +56,7 @@ export function createSyncWorker(deps: SyncWorkerDeps): SyncWorker {
   const { queue, api, accountId } = deps;
 
   async function runOnce(): Promise<WorkerStep | null> {
+    if (deps.canRun && !await deps.canRun()) return null;
     await queue.reconcile(accountId);
     const operation: ClaimedOperation | null = await queue.claim(accountId);
     if (!operation) return null;
@@ -67,12 +70,14 @@ export function createSyncWorker(deps: SyncWorkerDeps): SyncWorker {
         // enqueue() validated the payload as a JSON object, so the cast is
         // safe for every row this queue created.
         payload: operation.payload as Record<string, unknown>,
+        claimGeneration: operation.claimGeneration,
       });
     } catch (error) {
-      // A port that throws reports a transport failure; the operation id is
-      // already persisted, so schedule a same-id retry instead of losing it.
+      // A chat exception alone cannot prove non-delivery. Only an explicitly
+      // classified pre-request preparation failure may return to pending.
+      // Preserve legacy kinds' existing transient classification.
       outcome = {
-        status: 'transient',
+        status: operation.kind === 'send_message' ? 'unknown' : 'transient',
         message: error instanceof Error ? error.message : String(error),
       };
     }

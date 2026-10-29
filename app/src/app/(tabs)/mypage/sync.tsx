@@ -2,18 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '../../../auth/provider';
+import { useChat } from '../../../messages/provider';
 import { defaultIsOnline } from '../../../discovery/searchController';
-import { createDeviceProfileSendApi } from '../../../profiles/editor';
 import { subscribeAppResume } from '../../../requests/friendsRepository';
 import { listOperations, type OutboxRecord } from '../../../storage/outbox';
-import { createCommandApi, type CommandApi } from '../../../sync/api';
 import { createSyncQueue } from '../../../sync/queue';
 import {
   SyncErrorNotice,
   SyncStatus,
   unfinishedOperations,
 } from '../../../sync/SyncStatus';
-import { createSyncWorker } from '../../../sync/worker';
+import { getSharedSyncLifecycle } from '../../../sync/lifecycle';
 import { useTheme } from '../../../theme/provider';
 import { spacing, typography } from '../../../theme/tokens';
 import { Button } from '../../../ui/Button';
@@ -46,18 +45,13 @@ interface ScreenNotice {
 
 export default function SyncScreen() {
   const auth = useAuth();
+  const chat = useChat();
+  // Context values change on every store update. Depend on the stable owner
+  // methods/session, not the context object, to avoid refresh/effect loops.
+  const session = chat?.session;
+  const getConversation = chat?.getConversation;
   const { tokens } = useTheme();
 
-  // Task 17: profile rows with a staged image must go through the profile
-  // send pipeline (upload → command, 409 capture) even when this screen or
-  // a 内容確認 resend triggers the pump — the raw command port would send
-  // the client-only `avatar_staged` key straight at the server.
-  const api = useMemo<CommandApi>(() => {
-    const base = createCommandApi();
-    return auth.storage !== null
-      ? createDeviceProfileSendApi(base, auth.storage)
-      : base;
-  }, [auth.storage]);
   const bindings = useMemo(() => {
     if (auth.accountId === null || auth.storage === null) return null;
     const queue = createSyncQueue({
@@ -65,9 +59,8 @@ export default function SyncScreen() {
       clock: { now: () => Date.now() },
       random: Math.random,
     });
-    const worker = createSyncWorker({ queue, api, accountId: auth.accountId });
-    return { queue, worker };
-  }, [auth.accountId, auth.storage, api]);
+    return { queue };
+  }, [auth.accountId, auth.storage]);
 
   const [operations, setOperations] = useState<OutboxRecord[] | null>(null);
   const [loadError, setLoadError] = useState<'offline' | 'network' | null>(null);
@@ -87,24 +80,29 @@ export default function SyncScreen() {
       setOperations([]);
       return;
     }
+    if (session && !await session.active()) { if (mountedRef.current) setOperations([]); return; }
     // Reconcile first: a 24-hour overdue 送信待ち row becomes 確認が必要
     // (never auto-executed) and a dropped claim becomes 結果確認中 before
     // anything on screen can act on stale states.
     try {
-      await bindings.queue.reconcile(accountId);
+      if (session) await session.commit(session.token(), null, async tx => {
+        await createSyncQueue({ store: tx, clock: { now: () => Date.now() }, random: Math.random }).reconcile(accountId);
+        return true;
+      });
+      else await bindings.queue.reconcile(accountId);
     } catch {
       // The listing below still reports the stored truth.
     }
     try {
       const rows = await listOperations(storage, accountId);
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || (session && !await session.active())) return;
       setOperations(unfinishedOperations(rows));
       setLoadError(null);
     } catch {
       if (!mountedRef.current) return;
       setLoadError(defaultIsOnline() ? 'network' : 'offline');
     }
-  }, [auth, bindings]);
+  }, [auth, bindings, session]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -122,11 +120,16 @@ export default function SyncScreen() {
     async (operation: OutboxRecord): Promise<void> => {
       const { accountId } = auth;
       if (accountId === null || bindings === null) return;
+      if (session && !await session.active()) return;
+      if (operation.kind === 'send_message' && (!session || !getConversation || !operation.orderingKey)) return;
       if (busyRef.current.has(operation.operationId)) return;
       busyRef.current.add(operation.operationId);
       setBusy();
       try {
-        const cancelled = await bindings.queue.cancelUnsent(accountId, operation.operationId);
+        const cancelled = operation.kind === 'send_message'
+          ? await getConversation!(operation.orderingKey!).cancelUnsent(operation.operationId)
+          : await bindings.queue.cancelUnsent(accountId, operation.operationId);
+        if (!mountedRef.current || (session && !await session.active())) return;
         setNotice(
           cancelled
             ? { tone: 'info', title: '送信待ちの操作を取り消しました', testID: 'sync-cancelled' }
@@ -138,46 +141,60 @@ export default function SyncScreen() {
               },
         );
         await refresh();
+      } catch {
+        if (mountedRef.current && (!session || await session.active())) setNotice({
+          tone: 'warning', title: '取りやめできませんでした',
+          message: '最新の送信状況を確認してください。', testID: 'sync-cancel-failed',
+        });
       } finally {
         busyRef.current.delete(operation.operationId);
         setBusy();
       }
     },
-    [auth, bindings, refresh, setBusy],
+    [auth, bindings, refresh, setBusy, session, getConversation],
   );
 
   const onRetryAsNew = useCallback(
     async (operation: OutboxRecord): Promise<void> => {
       const { accountId } = auth;
       if (accountId === null || bindings === null) return;
+      if (session && !await session.active()) return;
       if (busyRef.current.has(operation.operationId)) return;
       busyRef.current.add(operation.operationId);
       setBusy();
       try {
         // NEW operation id, SAME stored payload — the old request_id is
         // never replaced with a newer one (確認してからの再送).
-        await bindings.queue.retryAsNew({
-          accountId,
-          operationId: operation.operationId,
-        });
+        const isChat = operation.kind === 'send_message';
+        if (isChat) {
+          if (!session || !getConversation || !operation.orderingKey) throw new Error('Chat owner unavailable.');
+          const peer = getConversation(operation.orderingKey);
+          if (!await peer.loadInitial()) throw new Error('Chat relationship unavailable.');
+          await peer.retryConfirmed(operation.operationId);
+        } else await bindings.queue.retryAsNew({ accountId, operationId: operation.operationId });
+        if (!mountedRef.current || (session && !await session.active())) return;
         setNotice({
           tone: 'info',
           title: '新しい操作として送り直しました',
-          message: '以前の操作は履歴に残っています。',
+          message: isChat ? '元の待ち順で送信を待っています。' : '以前の操作は履歴に残っています。',
           testID: 'sync-retried',
         });
         await refresh();
         try {
-          await bindings.worker.runUntilIdle();
+          // The provider wakes the ONE shared chat sender. Do not create a
+          // second pump with a different account lifetime from this screen.
+          if (!isChat) await getSharedSyncLifecycle().drain('foreground');
         } catch {
           // Transport failure: the fresh operation stays 送信待ち.
         }
         await refresh();
       } catch (cause) {
+        if (!mountedRef.current || (session && !await session.active())) return;
         setNotice({
           tone: 'error',
           title: '送り直せませんでした',
-          message: cause instanceof Error ? cause.message : String(cause),
+          message: operation.kind === 'send_message' ? '現在この相手には送信できません。最新の状態を確認してください。'
+            : cause instanceof Error ? cause.message : String(cause),
           testID: 'sync-retry-failed',
         });
         await refresh();
@@ -186,7 +203,7 @@ export default function SyncScreen() {
         setBusy();
       }
     },
-    [auth, bindings, refresh, setBusy],
+    [auth, bindings, refresh, setBusy, session, getConversation],
   );
 
   const busyKeySet = useMemo(() => new Set(busyIds), [busyIds]);
