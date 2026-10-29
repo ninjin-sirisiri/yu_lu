@@ -40,6 +40,10 @@ SDK 58への更新と更新後の検証範囲は§5.5に記録する。上記の
 
 すべてリポジトリルートで実行。
 
+Google OAuthが有効な構成では、ルートの `.env` に `SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_SECRET` と
+`SUPABASE_AUTH_EXTERNAL_GOOGLE_REDIRECT_URI` を用意する。後者はシミュレータ用なら
+`http://127.0.0.1:54321/auth/v1/callback`、iPhone実機用は[認証コールバック専用HTTPSトンネル](docs/operations/iphone-local-oauth.md)を使う。
+
 ```sh
 # 初回 / Docker イメージ取得後
 npx supabase start
@@ -128,6 +132,10 @@ anon keyは同じローカルプロジェクトのものを使う。アプリの
 Metroの `8081` とSupabaseの `54321` は別の接続先であり、両方への通信が必要。
 Metroだけをトンネル化してもローカルSupabaseは公開されない。DB・Studioやサービス資格をインターネットへ公開しない。
 OAuthの許可済みリダイレクト・プロバイダーcallbackも対象環境に合っている必要がある（次節）。
+
+iPhoneのUSB接続は `127.0.0.1` をMacへ転送しない。Googleログイン直後に同じ接続エラーへ戻る場合は、
+アプリのAPI URLとは別に[GoogleからSupabaseへの戻り先](docs/operations/iphone-local-oauth.md)を設定する。
+認証専用トンネルは `app/` で `npm run tunnel` を実行するとプロキシとまとめて起動できる（終了は `Ctrl+C`）。
 
 ### 2.3 ホーム・チャットの手動確認
 

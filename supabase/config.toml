@@ -350,6 +350,9 @@ email_optional = false
 enabled = true
 client_id = "292589751423-ljrmm7rq610puncnt5in8gb6orodb8o0.apps.googleusercontent.com"
 secret = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_SECRET)"
+# Local .env: use the temporary HTTPS callback for physical iPhones, or
+# http://127.0.0.1:54321/auth/v1/callback for simulator-only development.
+redirect_uri = "env(SUPABASE_AUTH_EXTERNAL_GOOGLE_REDIRECT_URI)"
 skip_nonce_check = false
 
 # Allow Solana wallet holders to sign in to your project via the Sign in with Solana (SIWS, EIP-4361) standard.
