@@ -125,7 +125,11 @@ export function createConversationRepository(deps: {
     // Recovery is not a user navigation. Do not let a read acknowledgement or
     // Realtime refresh revoke the destination of an explicit latest jump.
     if (anchor === 'first_unread' && latestPending > 0) return false;
-    if (anchor === 'first_unread' || anchor === 'latest') { generation++; live = false; }
+    // Refreshing history is not a relationship revocation. Keep the confirmed
+    // epoch usable for offline reservation/composing while IO is in flight;
+    // snapshot/enqueue still check the current relationship against liveEpoch.
+    // A fresh repository has no such capability until its first accepted load.
+    if (anchor === 'first_unread' || anchor === 'latest') generation++;
     const g = generation;
     const token = session.token();
     if (!await session.active()) return false;

@@ -67,6 +67,8 @@ export function createChatStore(deps: ChatStoreDeps) {
   let outboxRequested = false;
   let fetchAttempt = 0;
   let readAttempt = 0;
+  let overdueDrawDay: string | null = null;
+  let overdueDrawAttempt = 0;
   type Timer = ReturnType<typeof setTimeout>;
   let fetchTimer: Timer | null = null;
   let readTimer: Timer | null = null;
@@ -126,9 +128,22 @@ export function createChatStore(deps: ChatStoreDeps) {
       void publish().catch(() => {}); refresh();
     }, boundary > 0 ? boundary : 1_000);
     const draw = remaining(home.draw_deadline);
-    if (home.participation === 'checking' && Number.isFinite(draw)) drawTimer = timer(() => {
-      drawTimer = null; refresh();
-    }, draw > 0 ? draw : 1_000);
+    if (home.participation === 'checking' && Number.isFinite(draw)) {
+      if (overdueDrawDay !== home.daily_key || draw > 0) {
+        overdueDrawDay = home.daily_key; overdueDrawAttempt = 0;
+      }
+      // Check a slow/overdue response promptly once, but an unrun or delayed
+      // server job must not put the whole chat UI into a 1 Hz refresh loop.
+      // Keep checking with bounded backoff; only the server finalizes the draw.
+      let delay = draw;
+      if (draw <= 0) {
+        const attempt = overdueDrawAttempt++;
+        delay = attempt === 0 ? 1_000 : backoffDelay(attempt, deps.random ?? Math.random);
+      }
+      drawTimer = timer(() => { drawTimer = null; refresh(); }, delay);
+    } else {
+      overdueDrawDay = null; overdueDrawAttempt = 0;
+    }
   }
   function requestFetch() {
     if (stopped) return;

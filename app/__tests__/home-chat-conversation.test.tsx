@@ -24,7 +24,7 @@ import type { ChatImageDeps } from '../src/media/chatImages';
 import { ThemeProvider } from '../src/theme/provider';
 import { listReadIntents, readChatDraft } from '../src/storage/chat';
 import { getOperation, listOperations } from '../src/storage/outbox';
-import { A, B, C, api, home, summary, key, message, page } from '../src/messages/repositoryTestSupport';
+import { A, B, C, api, home, summary, key, message, page, deferred } from '../src/messages/repositoryTestSupport';
 
 let mockAuth: any = { status: 'ready', accountId: A, registration: 'registered' };
 jest.mock('../src/auth/provider', () => ({ useAuth: () => mockAuth }));
@@ -142,6 +142,34 @@ it('keeps native viewability configuration stable across rerenders and avoids fi
   expect(list.props.viewabilityConfig).toBe(config);
   expect(list.props.onViewableItemsChanged).toBe(callback);
   expect(list.props.initialScrollIndex).toBeUndefined();
+});
+
+it('keeps an established empty conversation editable while history is being refreshed', async () => {
+  const empty = page([], { conversation_id: null, first_unread_sequence: null, latest_sequence: 0,
+    before_cursor: null, after_cursor: null });
+  jest.mocked(client.getMessages).mockResolvedValue(empty);
+  await render(<Harness><ConversationPanel peerId={B} /></Harness>);
+  await waitFor(() => expect(screen.getByLabelText('メッセージ').props.editable).toBe(true));
+  await waitFor(() => expect(store.getSnapshot().refreshPending).toBe(false));
+  await fireEvent.changeText(screen.getByLabelText('メッセージ'), '書きかけ');
+  await waitFor(async () => expect((await readChatDraft(db, A, B))?.body).toBe('書きかけ'));
+  const response = deferred<ReturnType<typeof page>>();
+  const requested = deferred<void>();
+  jest.mocked(client.getMessages).mockImplementationOnce(() => { requested.resolve(); return response.promise; });
+  try {
+    await act(async () => {
+      store.refresh();
+      await requested.promise;
+      // Home/read-state publication can finish before the history HTTP call.
+      await store.homeRepository.refreshHome();
+    });
+    expect(screen.getByLabelText('メッセージ').props.editable).toBe(true);
+    await fireEvent.changeText(screen.getByLabelText('メッセージ'), '書きかけの続き');
+    await waitFor(async () => expect((await readChatDraft(db, A, B))?.body).toBe('書きかけの続き'));
+  } finally {
+    await act(async () => { response.resolve(empty); });
+  }
+  expect(screen.getByLabelText('メッセージ').props.value).toBe('書きかけの続き');
 });
 
 it('preserves paging cursors and uses only the explicitly fetched latest bound', async () => {

@@ -292,6 +292,32 @@ it('rechecks an overdue draw response instead of waiting until the next day afte
   expect(store.getSnapshot().home?.home?.participation).toBe('draw_failed');
 });
 
+it('backs off an overdue draw that remains checking instead of refreshing every second', async () => {
+  jest.useFakeTimers({ doNotFake: ['setImmediate'] });
+  const initial = home({ daily_key: '2026-10-29', server_now: '2026-10-28T19:06:00Z', deadline: '2026-10-29T19:00:00Z',
+    draw_deadline: '2026-10-28T19:05:00Z', participation: 'checking', draw_state: 'not_started', targets: [] });
+  data(initial); store.start(); await settle();
+  expect(client.getHome).toHaveBeenCalledTimes(1);
+  async function advance(ms: number) { elapsed += ms; jest.advanceTimersByTime(ms); await settle(); }
+  await advance(1_000);
+  expect(client.getHome).toHaveBeenCalledTimes(2); // One prompt cutoff recheck.
+  await advance(4_000);
+  expect(client.getHome).toHaveBeenCalledTimes(2);
+  await advance(1_000);
+  expect(client.getHome).toHaveBeenCalledTimes(3);
+  await advance(9_000);
+  expect(client.getHome).toHaveBeenCalledTimes(3);
+  await advance(1_000);
+  expect(client.getHome).toHaveBeenCalledTimes(4);
+  expect(store.getSnapshot().home?.home?.participation).toBe('checking'); // Never infer server failure locally.
+  data({ ...initial, participation: 'draw_failed', draw_state: 'failed' });
+  store.refresh(); await settle();
+  expect(store.getSnapshot().home?.home?.participation).toBe('draw_failed');
+  const completedCalls = jest.mocked(client.getHome).mock.calls.length;
+  await advance(60_000);
+  expect(client.getHome).toHaveBeenCalledTimes(completedCalls);
+});
+
 it('keeps the 04:05 check independent of transient refresh failures and cancels it on stop', async () => {
   jest.useFakeTimers({ doNotFake: ['setImmediate'] });
   jest.setSystemTime(new Date('2040-01-01T00:00:00Z')); // No device-calendar draw math.
