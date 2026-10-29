@@ -104,6 +104,7 @@ export function createConversationRepository(deps: {
   let live = false;
   let liveEpoch: string | null = null;
   let loadedOnce = false;
+  let latestPending = 0;
   const valid = (g: number) => !disposed && g === generation;
   const queue = (tx: Storage) => createSyncQueue({ store: tx, clock: { now }, random: Math.random });
   async function localAction<T>(id: string, action: (tx: Storage, row: OutboxRecord) => Promise<T>): Promise<T> {
@@ -121,6 +122,9 @@ export function createConversationRepository(deps: {
 
   async function load(anchor: ChatAnchor): Promise<boolean> {
     if (disposed) return false;
+    // Recovery is not a user navigation. Do not let a read acknowledgement or
+    // Realtime refresh revoke the destination of an explicit latest jump.
+    if (anchor === 'first_unread' && latestPending > 0) return false;
     if (anchor === 'first_unread' || anchor === 'latest') { generation++; live = false; }
     const g = generation;
     const token = session.token();
@@ -175,7 +179,11 @@ export function createConversationRepository(deps: {
 
   return {
     loadInitial: () => load('first_unread'), loadBefore: () => load('before'),
-    loadAfter: () => load('after'), jumpLatest: () => load('latest'),
+    loadAfter: () => load('after'), async jumpLatest() {
+      latestPending++;
+      try { return await load('latest'); }
+      finally { latestPending--; }
+    },
     dispose() { disposed = true; live = false; generation++; },
     async snapshot(): Promise<ConversationSnapshot> {
       if (disposed || !await session.active()) return { messages: [], pending: [], cancelled: [], metadata: null, canSend: false };

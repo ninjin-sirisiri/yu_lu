@@ -97,6 +97,26 @@ it('records only visible incoming IDs and fixes jump bound at the fetched destin
   expect((await listReadIntents(db, A)).some(i => i.throughSequence === 9)).toBe(false);
 });
 
+it('does not let an automatic recovery discard an in-flight explicit latest-read destination', async () => {
+  const { repo, client } = setup(); await repo.loadInitial();
+  const destination = deferred<ReturnType<typeof page>>();
+  const requested = deferred<void>();
+  (client.getMessages as jest.Mock).mockImplementationOnce(async () => {
+    requested.resolve(); return destination.promise;
+  });
+  const jumping = repo.jumpLatest();
+  await requested.promise;
+  // Realtime/read acknowledgements can request recovery during this HTTP call.
+  await repo.loadInitial();
+  destination.resolve(page([message(8)], { latest_sequence: 8, after_cursor: null }));
+  expect(await jumping).toBe(true);
+  expect((await listReadIntents(db, A)).map(i => i.throughSequence)).toEqual([8]);
+  (client.getMessages as jest.Mock).mockResolvedValueOnce(page([message(9)], { latest_sequence: 9 }));
+  await repo.loadInitial();
+  expect((await repo.snapshot()).messages.map(m => m.sequence)).toContain(9);
+  expect((await listReadIntents(db, A)).map(i => i.throughSequence)).toEqual([8]);
+});
+
 it('reopens cached history without granting stale relationship permission', async () => {
   const { repo } = setup(); await repo.loadInitial();
   const reopened = setup().repo;

@@ -5,6 +5,10 @@
 検証記録は `docs/testing/app-foundation-friends-ui.md` を参照。この README は
 **起動方法と環境変数**のみをまとめた入口。
 
+ホーム・チャットの追加分: [検証結果と実機の未完了項目](docs/testing/home-chat.md) /
+[日次ジョブ・サービス認証・復旧手順](docs/operations/home-chat.md)。旧計画の記録は上書きしない。
+Task22は実機・本人認証後の手動確認が未完了のため **BLOCKED**。Docker不応答は復旧済み。自動回帰の実結果は検証記録を参照。本番デプロイ・外部ジョブ登録は未実施。
+
 ## 構成
 
 | ディレクトリ | 内容 |
@@ -34,8 +38,8 @@ npx supabase start
 # キーは表示・コピペせず、テストランナーはこの出力をメモリ内でのみ使う)
 npx supabase status --output json
 
-# ローカル DB を作り直す (ローカル検証データを消す。remote/linked の reset は使わない)
-npx supabase db reset --local --no-seed
+# 追加migrationを適用する（既存データを消すresetは通常検証で使わない）
+npx supabase migration up --local
 ```
 
 ローカルポート (既定): API `54321` / DB `54322` / Studio `54323` / Mailpit `54324`。
@@ -170,11 +174,12 @@ Apple Team ID / Service ID / `.p8`、Google OAuth Client ID・Secret、
 ## 5. 検証コマンド (全体回帰)
 
 ```sh
-npm --prefix app test -- --runInBand
+npm --prefix app test -- --runInBand --testPathIgnorePatterns home-chat-journey.test.tsx
 npm --prefix app run typecheck
 npx supabase test db
 npx deno test --allow-env --allow-net --config supabase/functions/deno.json supabase/functions/tests
 node scripts/test-local-backend.mjs --suite all   # 個別: command-boundary / registration / requests / discovery / invitations / profile-publication / notifications
+node scripts/test-chat-backend.mjs --suite all    # 新chat backend + journeyを専用5532xスタックで両方実行
 node --test scripts/invite-web.test.mjs
 node scripts/check-native-config.mjs --dev        # ローカル設定 (exit 0 が正常)
 node scripts/check-native-config.mjs              # 配布準備 (6入力提供まで exit 2 が正常な失敗)
@@ -183,3 +188,8 @@ git diff --check
 
 `scripts/test-local-backend.mjs` は `supabase status --output json` から接続情報を取得し、
 実 Auth ユーザーを作って実 Edge Functions を叩く。キー類はメモリ内のみで、出力はすべてマスクされる。
+
+通常Jestの既存 `app-journey` は通常ローカル環境と一致する公開URL/anon keyが必要。
+`app/.env` が無い場合はstatusから実値を子プロセス環境に供給し、ファイルを編集しない
+（[検証記録](docs/testing/home-chat.md)参照）。新chat journeyへ通常資格を渡したり、
+専用資格で旧テストを動かしたりしない。通常Jestから除外した新journeyは最後の専用 `--suite all` で必ず実行する。
