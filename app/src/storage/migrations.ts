@@ -156,6 +156,26 @@ CREATE INDEX chat_image_cache_lru ON chat_image_cache (account_id, last_accessed
 `);
     },
   },
+  {
+    version: 3,
+    description: 'minimal appearance celebration ledger keyed by account, kind and internal subject',
+    async up(tx: Storage): Promise<void> {
+      // Deliberately contains no name, User ID text, body or image column:
+      // subject_id is an internal peer UUID (or the literal 'self' for the
+      // personal streak) used only to distinguish subjects, never display.
+      await tx.execAsync(`
+CREATE TABLE appearance_celebrations (
+  account_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('chat', 'streak')),
+  subject_id TEXT NOT NULL,
+  baseline_days INTEGER NOT NULL CHECK (baseline_days >= 0),
+  consumed_milestone INTEGER NOT NULL DEFAULT 0
+    CHECK (consumed_milestone IN (0, 1, 7, 30, 60, 100)),
+  PRIMARY KEY (account_id, kind, subject_id)
+);
+`);
+    },
+  },
 ];
 
 export const SCHEMA_VERSION = schemaMigrations[schemaMigrations.length - 1].version;

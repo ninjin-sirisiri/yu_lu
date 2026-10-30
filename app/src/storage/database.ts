@@ -258,10 +258,19 @@ export interface DeleteAccountDataOptions {
 }
 
 /**
- * Removes every account-owned row and file for `accountId`: cache, drafts,
- * outbox queue/counters, chat history/drafts/read intents, attachment/cache
- * references, pending invitations, account settings and copied images.
- * Device-scoped `device_settings` rows (theme, 端末設定) are left untouched.
+ * Removes every normal account-owned row and file for `accountId`: cache,
+ * drafts, outbox queue/counters, chat history/drafts/read intents,
+ * attachment/cache references, pending invitations, account settings and
+ * copied images.
+ *
+ * Explicit exceptions that survive logout:
+ * - `device_settings` rows with a NULL `account_id` (theme and 端末設定,
+ *   including `appearance.preferences`), which are device-scoped by design.
+ * - `appearance_celebrations` rows for the account. This is the minimal
+ *   device-local ledger (account, kind, internal subject, baseline, consumed
+ *   milestone) that prevents replaying already-seen milestones after a
+ *   re-login. It contains no names, User ID text, bodies or images, and no
+ *   other account can reference it through the app.
  *
  * Row removal is transactional; the image directory is removed afterwards, so
  * a file failure can only leave unreferenced orphan files, never references
@@ -284,7 +293,10 @@ export async function deleteAccountData(
     await tx.runAsync('DELETE FROM drafts WHERE account_id = ?', [accountId]);
     await tx.runAsync('DELETE FROM outbox WHERE account_id = ?', [accountId]);
     await tx.runAsync('DELETE FROM pending_invitation WHERE account_id = ?', [accountId]);
+    // Only account-scoped settings: NULL (device) rows survive intentionally.
     await tx.runAsync('DELETE FROM device_settings WHERE account_id = ?', [accountId]);
+    // NOTE: appearance_celebrations is intentionally NOT deleted (see above).
+    // It is the only account-keyed exception and holds no display data.
   });
   if (options.images) {
     await options.images.removeAccountImages(accountId);

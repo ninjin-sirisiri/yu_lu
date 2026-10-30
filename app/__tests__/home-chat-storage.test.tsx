@@ -42,7 +42,7 @@ it('migrates v1 without changing opaque payloads, states, deadlines or old draft
   }
   await old.close();
   const db = await open();
-  expect(await db.schemaVersion()).toBe(2);
+  expect(await db.schemaVersion()).toBe(SCHEMA_VERSION);
   expect((await readDraft(db, 'alice', 'profile'))?.body).toEqual({ displayName: '夢' });
   const rows = await listOperations(db, 'alice');
   expect(rows.map(r => [r.operationId, r.state, r.queueSequence])).toEqual([

@@ -9,9 +9,15 @@ import { renderRouter } from 'expo-router/testing-library';
 import { readPendingLogoutMarker } from '../src/auth/logout';
 import { getOwnPublication, type ProfilePublication } from '../src/backend/profile';
 import { REGISTRATION_SETTING_KEY } from '../src/notify/registration';
+import {
+  baselineCelebration,
+  readAppearancePreferences,
+  readCelebration,
+  updateAppearancePreferences,
+} from '../src/storage/appearance';
 import { openAppDatabase, type AppStorage } from '../src/storage/database';
 import { listOperations } from '../src/storage/outbox';
-import { writeAccountSetting } from '../src/storage/settings';
+import { readAccountSetting, writeAccountSetting } from '../src/storage/settings';
 import { NodeSqliteDriver } from '../src/storage/testSupport/nodePorts';
 import { createSyncQueue } from '../src/sync/queue';
 
@@ -321,6 +327,13 @@ it('runs the ordered logout with stopWorker/resumeWorker wired to the shared lif
     if (storage === null) throw new Error('storage missing');
     await seedOutbox(storage);
     await seedDeviceRegistration(storage);
+    await baselineCelebration(storage, {
+      accountId: ACCOUNT,
+      kind: 'chat',
+      subjectId: 'peer-logout',
+      days: 7,
+    });
+    await updateAppearancePreferences(storage, { vibrancy: 'subtle' }, { bumpResume: ['chat'] });
 
     await renderMypage();
     await fireEvent.press(await screen.findByTestId('mypage-logout'));
@@ -346,6 +359,17 @@ it('runs the ordered logout with stopWorker/resumeWorker wired to the shared lif
       expect(await readPendingLogoutMarker(storage)).toBeNull();
     });
     expect(await listOperations(storage, ACCOUNT)).toHaveLength(0);
+    // Normal account rows (including the registration setting) were purged,
+    // but the explicit exceptions survive the real logout purge: the minimal
+    // celebration ledger and the device-scoped appearance preferences.
+    expect(await readAccountSetting(storage, ACCOUNT, REGISTRATION_SETTING_KEY)).toBeNull();
+    expect(
+      await readCelebration(storage, { accountId: ACCOUNT, kind: 'chat', subjectId: 'peer-logout' }),
+    ).toMatchObject({ baselineDays: 7, consumedMilestone: 7 });
+    expect(await readAppearancePreferences(storage)).toMatchObject({
+      vibrancy: 'subtle',
+      chatResumeGeneration: 1,
+    });
     await waitFor(() => expect(authProviderModule.__refreshMock).toHaveBeenCalledTimes(1));
   });
 });

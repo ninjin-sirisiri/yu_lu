@@ -28,7 +28,8 @@ import {
 //      the session discard),
 //   4. セッション破棄 (local session discard),
 //   5. アカウント保存領域消去 (deleteAccountData — device-scoped rows such as
-//      the theme survive by construction).
+//      the theme/preferences and the minimal appearance celebration ledger
+//      survive the purge as explicit exceptions).
 //
 // Crash/offline safety: a device-scoped `logout.pending` marker is written
 // right after the worker stops and cleared only after the purge. Any drain
@@ -258,7 +259,8 @@ export interface LogoutDeps {
   getSessionFingerprint?(): Promise<string | null>;
   /** Step 4: discard the local session. */
   discardSession(): Promise<void> | void;
-  /** Step 5: purge account-scoped storage (device-scoped theme survives). */
+  /** Step 5: purge account-scoped storage (device settings and the minimal
+   * appearance celebration ledger survive). */
   purgeAccountData(): Promise<void> | void;
   /** Defaults to {@link countUnsentOperations} over deps.storage. */
   countUnsent?(): Promise<UnsentSummary>;
