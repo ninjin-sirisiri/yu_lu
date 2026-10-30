@@ -17,6 +17,9 @@ SDK 58への更新と更新後の検証範囲は§5.5に記録する。上記の
 
 詳細: [ホーム・チャット検証記録](docs/testing/home-chat.md) /
 [日次ジョブ・復旧手順](docs/operations/home-chat.md)。
+成長する見た目（Task 17）は[検証記録](docs/testing/sns-identity.md) /
+[移行・運用runbook](docs/operations/sns-identity.md)を参照。両OSの見た目・読み上げ・動き軽減・性能は
+Task 18で未確認であり、このREADMEの既存証拠へ流用しない。
 既存基盤の[運用](docs/operations/app-foundation-friends-ui.md)・[検証記録](docs/testing/app-foundation-friends-ui.md)は別に保持する。
 
 ## 構成
@@ -311,6 +314,13 @@ EXPO_NO_DOTENV=1 node --test scripts/invite-web.test.mjs
 node scripts/check-native-config.mjs --dev        # ローカル設定 (exit 0 が正常)
 git diff --check
 ```
+
+成長・外観（Task 17）の全自動回帰は、通常Jestから実バックエンドの3 journey
+(`app-journey`・`home-chat-journey`・`appearance-journey`) だけを除外し、
+専用runnerの `all` で必ず再実行する。実測件数・実行時刻・cleanup証拠は
+[検証記録](docs/testing/sns-identity.md)、適用順序・検証SQL・停止条件は
+[移行・運用runbook](docs/operations/sns-identity.md)を参照する。§5.3の記録は当時の証拠として
+書き換えない。
 
 ストア配布まで確認する場合だけ、§4.2の6入力を用意して `node scripts/check-native-config.mjs` を別途実行する。
 配布入力が不足している場合のexit 2は、ローカル動作の不合格とは区別する（配布準備は未完了）。
