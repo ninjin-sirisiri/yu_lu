@@ -10,6 +10,7 @@ import { fork } from 'node:child_process';
 import backend from './lib/local-backend.cjs';
 import stack from './lib/chat-test-stack.cjs';
 import fixtures from './lib/chat-fixtures.cjs';
+import { assertDedicatedStatus, runLegacyHttpSuites } from './test-local-backend.mjs';
 
 const log = text => console.log(backend.redact(text));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -303,26 +304,36 @@ async function backendSuite(ctx) {
 
 async function journeySuite(ctx) {
   const tests = ['__tests__/chat-env.test.ts', '__tests__/home-chat-journey.test.tsx'];
-  for (const test of tests) await fs.access(path.join(backend.REPO_ROOT, 'app', test));
   const f = await fixtures.createChatFixtures(ctx);
   const config = { project: stack.PROJECT_ID, url: ctx.status.API_URL, anonKey: ctx.status.ANON_KEY, a: f.a, b: f.b };
+  await runJest(ctx, tests, { ...backend.localCliEnv(ctx.workdir), CHAT_JOURNEY_CONFIG: JSON.stringify(config) }, {
+    onMessage: async (message, child) => {
+      if (message?.type !== 'chat-relationship-fixture') return;
+      try { await fixtures.changeJourneyRelationship(f, message.action); child.send({ id: message.id, ok: true }); }
+      catch { child.send({ id: message.id, ok: false }); }
+    },
+  });
+  log('PASS real screen journey and dedicated clients closed');
+}
+
+// Forkjest, redact output and always reap the child. Message handling is
+// serialized so fixture calls never race each other.
+async function runJest(ctx, tests, env, { onMessage = null } = {}) {
+  for (const test of tests) await fs.access(path.join(backend.REPO_ROOT, 'app', test));
+  let tail = Promise.resolve();
   await new Promise((resolve, reject) => {
     const child = fork(path.join(backend.REPO_ROOT, 'app/node_modules/jest/bin/jest.js'),
       ['--runInBand', '--detectOpenHandles', '--runTestsByPath', ...tests], {
         cwd: path.join(backend.REPO_ROOT, 'app'),
-        env: { ...backend.localCliEnv(ctx.workdir), CHAT_JOURNEY_CONFIG: JSON.stringify(config) },
+        env,
         stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       });
     // Never stream credentials/SDK error objects unredacted.
     child.stdout.on('data', bytes => process.stdout.write(backend.redact(bytes.toString())));
     child.stderr.on('data', bytes => process.stderr.write(backend.redact(bytes.toString())));
-    let tail = Promise.resolve();
     child.on('message', message => {
-      if (message?.type !== 'chat-relationship-fixture') return;
-      tail = tail.then(async () => {
-        try { await fixtures.changeJourneyRelationship(f, message.action); child.send({ id: message.id, ok: true }); }
-        catch { child.send({ id: message.id, ok: false }); }
-      });
+      if (onMessage === null) return;
+      tail = tail.then(() => onMessage(message, child));
     });
     const timeout = setTimeout(() => { child.kill('SIGTERM'); }, 240_000);
     ctx.defer(async () => {
@@ -336,11 +347,73 @@ async function journeySuite(ctx) {
       if (code === 0) resolve(); else reject(new Error(`dedicated screen journey failed (${code})`));
     });
   });
-  log('PASS real screen journey and dedicated clients closed');
 }
 
-export const SUITE_NAMES = ['db', 'journey', 'backend'];
-const SUITE_RUNNERS = { db: dbSuite, journey: journeySuite, backend: backendSuite };
+/**
+ * The legacy journey receives ONLY the explicit dedicated stack config. No
+ * normal app/.env path and no normal status is ever forwarded.
+ */
+export function legacyJourneyEnv({ status, workdir, project } = {}, { env = process.env } = {}) {
+  if (status === null || typeof status !== 'object' || typeof status.API_URL !== 'string') {
+    throw new Error('legacy journey requires an explicit dedicated status');
+  }
+  if (typeof workdir !== 'string' || workdir.trim() === '') {
+    throw new Error('legacy journey requires a dedicated workdir');
+  }
+  if (project !== stack.PROJECT_ID) {
+    throw new Error(`legacy journey requires project ${stack.PROJECT_ID}`);
+  }
+  if (status.API_URL !== 'http://127.0.0.1:55321') {
+    throw new Error('legacy journey requires the dedicated API URL http://127.0.0.1:55321');
+  }
+  if (typeof status.ANON_KEY !== 'string' || status.ANON_KEY === '') {
+    throw new Error('legacy journey requires the dedicated anon key');
+  }
+  const resolved = path.resolve(workdir);
+  const relative = path.relative(backend.REPO_ROOT, resolved);
+  if (resolved === backend.REPO_ROOT || relative === '' ||
+      (!relative.startsWith('..') && !path.isAbsolute(relative))) {
+    throw new Error('legacy journey workdir must be outside the normal checkout');
+  }
+  const inherited = backend.localCliEnv(resolved, env);
+  for (const key of Object.keys(inherited)) {
+    if (key.startsWith('SUPABASE_') || key.startsWith('LEGACY_JOURNEY_') ||
+        key.startsWith('EXPO_PUBLIC_SUPABASE_') || key === 'CHAT_JOURNEY_CONFIG' || key === 'EXPO_NO_DOTENV') {
+      delete inherited[key];
+    }
+  }
+  return {
+    ...inherited,
+    EXPO_NO_DOTENV: '1',
+    EXPO_PUBLIC_SUPABASE_URL: status.API_URL,
+    EXPO_PUBLIC_SUPABASE_ANON_KEY: status.ANON_KEY,
+    LEGACY_JOURNEY_WORKDIR: resolved,
+    LEGACY_JOURNEY_PROJECT: project,
+    LEGACY_JOURNEY_USE_SHARED_GATEWAY: '1',
+    LEGACY_JOURNEY_EXPECTED_API_URL: status.API_URL,
+  };
+}
+
+// Task 15: old HTTP suites + old real-data journey, sequentially, inside the
+// caller-owned dedicated stack lifetime.
+async function legacySuite(ctx) {
+  assertDedicatedStatus(ctx.status, { workdir: ctx.workdir, project: stack.PROJECT_ID });
+  const http = await runLegacyHttpSuites({ status: ctx.status, suite: 'all', log });
+  log(`PASS legacy HTTP suites (${http.passed} passed, ${http.failed} failed)`);
+  await runJest(ctx, ['__tests__/app-journey.test.tsx'], legacyJourneyEnv({
+    status: ctx.status, workdir: ctx.workdir, project: stack.PROJECT_ID,
+  }));
+  log('PASS legacy real-data journey with the caller-owned gateway');
+}
+
+export const SUITE_NAMES = ['db', 'legacy', 'journey', 'backend'];
+const SUITE_RUNNERS = { db: dbSuite, legacy: legacySuite, journey: journeySuite, backend: backendSuite };
+
+/** Parses `--suite <name>`; null means the CLI must print usage and exit 2. */
+export function parseSuiteArg(argv = []) {
+  if (!Array.isArray(argv) || argv.length !== 2 || argv[0] !== '--suite') return null;
+  return argv[1] === 'all' || SUITE_NAMES.includes(argv[1]) ? argv[1] : null;
+}
 
 // `all` deliberately gives every suite its own withChatTestStack lifetime and
 // continues after a failure so one broken suite cannot hide another. Each
@@ -355,9 +428,9 @@ export async function runSuites(suite, { withStack = stack.withChatTestStack, ru
 }
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-const suite = process.argv[3];
-if (isMain && (process.argv[2] !== '--suite' || !['backend', 'journey', 'db', 'all'].includes(suite) || process.argv.length !== 4)) {
-  console.error('Usage: node scripts/test-chat-backend.mjs --suite backend|journey|db|all');
+const suite = parseSuiteArg(process.argv.slice(2));
+if (isMain && suite === null) {
+  console.error('Usage: node scripts/test-chat-backend.mjs --suite backend|journey|db|legacy|all');
   process.exitCode = 2;
 } else if (isMain) {
   let before;

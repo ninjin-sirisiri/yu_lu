@@ -78,7 +78,9 @@
 // (notifications).
 
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 
 import localBackend from './lib/local-backend.cjs';
 
@@ -90,6 +92,7 @@ import localBackend from './lib/local-backend.cjs';
 // helper is CommonJS because jest requires the same file without an ESM
 // transform. Redaction still wraps every line this script prints.
 const {
+  REPO_ROOT,
   redact,
   readSupabaseStatus,
   adminCreateUser,
@@ -103,6 +106,11 @@ const {
   postFunction,
   postRest,
 } = localBackend;
+
+// Task 15: the dedicated runner owns one stack whose identity is fixed. The
+// legacy entry must refuse anything the normal checkout uses.
+const DEDICATED_PROJECT = 'daily-chat-home-chat-test';
+const DEDICATED_API_URL = 'http://127.0.0.1:55321';
 
 function log(message) {
   console.log(redact(message));
@@ -4770,6 +4778,140 @@ const SUITES = {
   },
 };
 
+export const LEGACY_SUITE_NAMES = Object.keys(SUITES);
+export { DEDICATED_API_URL, DEDICATED_PROJECT };
+
+// ---------------------------------------------------------------------------
+// Dedicated entry guards and injectable execution (Task 15)
+// ---------------------------------------------------------------------------
+
+/**
+ * Refuses any status/workdir that points at the normal development checkout.
+ * Pure (no filesystem/CLI access) so the dedicated runner and Node tests can
+ * call it before touching a stack.
+ */
+export function assertDedicatedStatus(
+  status,
+  { workdir, project = DEDICATED_PROJECT } = {},
+) {
+  if (project !== DEDICATED_PROJECT) {
+    throw new Error(
+      `dedicated status must use project ${DEDICATED_PROJECT}, got ${String(project)}`,
+    );
+  }
+  if (status === null || typeof status !== 'object' || status.API_URL !== DEDICATED_API_URL) {
+    throw new Error(
+      `dedicated status must use ${DEDICATED_API_URL} (got ${String(status?.API_URL)})`,
+    );
+  }
+  for (const key of ['ANON_KEY', 'SERVICE_ROLE_KEY', 'JWT_SECRET']) {
+    if (typeof status[key] !== 'string' || status[key].length === 0) {
+      throw new Error(`dedicated status is missing ${key}`);
+    }
+  }
+  if (typeof workdir !== 'string' || workdir.trim() === '') {
+    throw new Error('dedicated status requires an owned workdir');
+  }
+  const resolved = path.resolve(workdir);
+  const relative = path.relative(REPO_ROOT, resolved);
+  if (resolved === REPO_ROOT || relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) {
+    throw new Error('dedicated status workdir must be outside the normal checkout');
+  }
+  return { workdir: resolved, project };
+}
+
+/**
+ * Normal CLI behavior: read the normal checkout status only when the caller
+ * did not inject one. The reader is injectable so Node tests never touch a
+ * real stack.
+ */
+export function resolveLegacyStatus({ status, read = readSupabaseStatus } = {}) {
+  return status ?? read();
+}
+
+/**
+ * Runs the legacy HTTP suites against an EXPLICIT status. It owns only the
+ * Auth users it creates, never starts/stops a gateway (the caller owns it),
+ * never calls process.exit, and throws with `.result` when an assertion
+ * fails so callers can aggregate counts.
+ */
+export async function runLegacyHttpSuites({ status, suite = 'all', log: write = log } = {}) {
+  if (status === null || typeof status !== 'object' || typeof status.API_URL !== 'string') {
+    throw new Error('runLegacyHttpSuites requires an explicit dedicated status');
+  }
+  if (suite !== 'all' && !SUITES[suite]) {
+    throw new Error(
+      `unknown suite "${suite}" (available: ${LEGACY_SUITE_NAMES.join(', ')}, all)`,
+    );
+  }
+
+  const runId = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`;
+  const suiteNames = suite === 'all' ? LEGACY_SUITE_NAMES : [suite];
+  const definitions = suiteNames.flatMap((name) => SUITES[name].definitions(runId));
+
+  const users = {};
+  const createdIds = [];
+  const tests = [];
+  let passed = 0;
+  let failed = 0;
+
+  try {
+    write(`creating ${definitions.length} local Auth users...`);
+    for (const def of definitions) {
+      const password = `${randomUUID()}aA1!`;
+      const id = await adminCreateUser(status, def.email, password);
+      createdIds.push(id);
+      const token = await mintUserToken(status, id);
+      users[def.key] = { id, token };
+    }
+    write(`  created ${createdIds.length} users`);
+
+    const selected = [];
+    for (const name of suiteNames) {
+      selected.push(...SUITES[name].build(status, users).map((t) => ({ ...t, suite: name })));
+    }
+
+    const context = {};
+    write(`running suite "${suite}" (${selected.length} tests):`);
+    for (const test of selected) {
+      try {
+        await test.run(context);
+        passed++;
+        tests.push({ suite: test.suite, name: test.name, ok: true });
+        write(`  ok    ${test.name}`);
+      } catch (error) {
+        failed++;
+        const message = error instanceof Error ? error.message : String(error);
+        tests.push({ suite: test.suite, name: test.name, ok: false, error: redact(message) });
+        write(`  FAIL  ${test.name}`);
+        write(`        ${message}`);
+      }
+    }
+  } catch (error) {
+    failed++;
+    const message = error instanceof Error ? error.message : String(error);
+    tests.push({ suite: 'runner', name: 'runner setup', ok: false, error: redact(message) });
+    write(`  FAIL  runner setup: ${message}`);
+  } finally {
+    for (const id of createdIds) {
+      try {
+        await adminDeleteUser(status, id);
+      } catch (error) {
+        write(`  warn  cleanup: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    write(`deleted ${createdIds.length} local Auth users`);
+  }
+
+  const result = { passed, failed, tests };
+  if (failed > 0) {
+    const error = new Error(`legacy HTTP suites: ${passed} passed, ${failed} failed`);
+    error.result = result;
+    throw error;
+  }
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -4800,77 +4942,42 @@ async function main() {
   log('reading local Supabase connection info (secrets stay in memory)...');
   let status;
   try {
-    status = readSupabaseStatus();
+    status = resolveLegacyStatus();
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   }
   log(`  api: ${status.API_URL}`);
 
-  const runId = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`;
-  const suiteNames = suite === 'all' ? Object.keys(SUITES) : [suite];
-  const definitions = suiteNames.flatMap((name) => SUITES[name].definitions(runId));
-
-  const users = {};
-  const createdIds = [];
   let serve = null;
-  let passed = 0;
-  let failed = 0;
-
+  let result = { passed: 0, failed: 0, tests: [] };
   try {
-    log(`creating ${definitions.length} local Auth users...`);
-    for (const def of definitions) {
-      const password = `${randomUUID()}aA1!`;
-      const id = await adminCreateUser(status, def.email, password);
-      createdIds.push(id);
-      const token = await mintUserToken(status, id);
-      users[def.key] = { id, token };
-    }
-    log(`  created ${createdIds.length} users`);
-
     log('starting functions serve (separate process)...');
     serve = startFunctionsServe();
     await waitForGateway(status, serve, 90_000);
     log('  gateway ready');
 
-    const selected = [];
-    if (suite === 'all') {
-      for (const [name, definition] of Object.entries(SUITES)) {
-        selected.push(...definition.build(status, users).map((t) => ({ ...t, suite: name })));
-      }
-    } else {
-      selected.push(...SUITES[suite].build(status, users).map((t) => ({ ...t, suite })));
-    }
-
-    const context = {};
-    log(`running suite "${suite}" (${selected.length} tests):`);
-    for (const test of selected) {
-      try {
-        await test.run(context);
-        passed++;
-        log(`  ok    ${test.name}`);
-      } catch (error) {
-        failed++;
-        log(`  FAIL  ${test.name}`);
-        log(`        ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
+    result = await runLegacyHttpSuites({ status, suite });
   } catch (error) {
-    failed++;
-    log(`  FAIL  runner setup: ${error instanceof Error ? error.message : String(error)}`);
+    if (error && typeof error === 'object' && error.result) {
+      result = error.result;
+    } else {
+      result = {
+        ...result,
+        failed: result.failed + 1,
+        tests: [...result.tests, { suite: 'runner', name: 'runner setup', ok: false }],
+      };
+      log(`  FAIL  runner setup: ${error instanceof Error ? error.message : String(error)}`);
+    }
   } finally {
     if (serve) await stopFunctionsServe(serve);
-    for (const id of createdIds) {
-      try {
-        await adminDeleteUser(status, id);
-      } catch (error) {
-        log(`  warn  cleanup: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-    log(`deleted ${createdIds.length} local Auth users`);
   }
 
-  log(`${suite}: ${passed} passed, ${failed} failed`);
-  process.exit(failed > 0 ? 1 : 0);
+  log(`${suite}: ${result.passed} passed, ${result.failed} failed`);
+  process.exit(result.failed > 0 ? 1 : 0);
 }
 
-await main();
+const isMain =
+  process.argv[1] !== undefined &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isMain) await main();

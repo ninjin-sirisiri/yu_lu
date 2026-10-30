@@ -14,6 +14,11 @@
 // app/.env.example). It is the source of truth for the real-data journey:
 // this file never invents a value — with no file and no pre-set variables
 // the caller fails its own "backend not configured" check instead.
+//
+// Task 15: the dedicated runner owns a separate stack and supplies the two
+// EXPO_PUBLIC_* values explicitly. When LEGACY_JOURNEY_WORKDIR is set this
+// module MUST NOT read app/.env — otherwise a normal checkout's config could
+// silently retarget the journey.
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -22,6 +27,9 @@ import * as path from 'node:path';
 export const APP_ENV_PATH = path.resolve(__dirname, '..', '.env');
 
 const JOURNEY_KEYS = ['EXPO_PUBLIC_SUPABASE_URL', 'EXPO_PUBLIC_SUPABASE_ANON_KEY'] as const;
+
+/** Set only by the dedicated legacy-journey runner (`scripts/test-chat-backend.mjs`). */
+export const LEGACY_JOURNEY_WORKDIR_ENV = 'LEGACY_JOURNEY_WORKDIR';
 
 /** Parses `KEY=VALUE` lines; quoted values and `#` comments are tolerated. */
 export function parseEnvFile(contents: string): Record<string, string> {
@@ -70,5 +78,24 @@ export function missingJourneyEnv(env: NodeJS.ProcessEnv = process.env): string[
   return JOURNEY_KEYS.filter((key) => (env[key] ?? '').trim() === '').map(String);
 }
 
+/** True when the dedicated runner owns the connection (never read app/.env). */
+export function isDedicatedJourneyEnv(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env[LEGACY_JOURNEY_WORKDIR_ENV] ?? '').trim() !== '';
+}
+
+/**
+ * Applies the journey environment. Dedicated mode keeps exactly the values
+ * the runner supplied and never opens app/.env; normal mode preserves the
+ * historical file-wins behavior. Returns which source was selected.
+ */
+export function loadJourneyEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  file: string = APP_ENV_PATH,
+): 'dedicated' | 'file' {
+  if (isDedicatedJourneyEnv(env)) return 'dedicated';
+  loadLocalEnvFile(file, env);
+  return 'file';
+}
+
 // Intentional side effect (see the header): runs at import time.
-loadLocalEnvFile();
+loadJourneyEnv();

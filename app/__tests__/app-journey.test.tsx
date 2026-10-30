@@ -56,14 +56,14 @@ import { createCommandApi, type CommandApi, type CommandEnvelope } from '../src/
 import { createSyncLifecycle } from '../src/sync/lifecycle';
 import { createSyncQueue, type SyncQueue } from '../src/sync/queue';
 import { createSyncWorker } from '../src/sync/worker';
-import { missingJourneyEnv } from '../testSupport/localEnv';
+import { missingJourneyEnv, isDedicatedJourneyEnv } from '../testSupport/localEnv';
 
 // Shared helpers: the SAME module scripts/test-local-backend.mjs imports.
 // Required (not imported) because jest does not transform `.mjs` — the
 // helper is CommonJS precisely so both runtimes load ONE implementation.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const localBackend = require('../../scripts/lib/local-backend.cjs') as {
-  readSupabaseStatus(): LocalStatus;
+  readSupabaseStatus(workdir?: string): LocalStatus;
   adminCreateUser(status: LocalStatus, email: string, password: string): Promise<string>;
   adminDeleteUser(status: LocalStatus, userId: string): Promise<void>;
   mintUserToken(status: LocalStatus, userId: string): Promise<string>;
@@ -71,6 +71,17 @@ const localBackend = require('../../scripts/lib/local-backend.cjs') as {
   waitForGateway(status: LocalStatus, serve: FunctionsServe, timeoutMs: number): Promise<void>;
   stopFunctionsServe(serve: FunctionsServe): Promise<void>;
 };
+
+// Task 15: the dedicated runner owns the stack and the gateway. Its values
+// are the ONLY connection source in this mode; app/.env was not loaded by
+// testSupport/localEnv.
+const DEDICATED_PROJECT = 'daily-chat-home-chat-test';
+const DEDICATED_API_URL = 'http://127.0.0.1:55321';
+const dedicated = isDedicatedJourneyEnv();
+const dedicatedWorkdir = (process.env.LEGACY_JOURNEY_WORKDIR ?? '').trim();
+const dedicatedProject = (process.env.LEGACY_JOURNEY_PROJECT ?? '').trim();
+const dedicatedExpectedUrl = (process.env.LEGACY_JOURNEY_EXPECTED_API_URL ?? '').trim();
+const sharedGateway = process.env.LEGACY_JOURNEY_USE_SHARED_GATEWAY === '1';
 
 interface LocalStatus {
   API_URL: string;
@@ -161,31 +172,103 @@ beforeAll(async () => {
   const missing = missingJourneyEnv();
   if (missing.length > 0) {
     throw new Error(
-      `the real-data journey needs ${missing.join(' and ')} — copy app/.env.example ` +
-        'to app/.env with the local Supabase values (`npx supabase status`). ' +
-        'No value is invented here.',
+      dedicated
+        ? `the dedicated journey needs the runner to supply ${missing.join(' and ')} for ` +
+            `${DEDICATED_API_URL}. No value is invented here.`
+        : `the real-data journey needs ${missing.join(' and ')} — copy app/.env.example ` +
+            'to app/.env with the local Supabase values (`npx supabase status`). ' +
+            'No value is invented here.',
     );
   }
 
   let status: LocalStatus;
-  try {
-    status = localBackend.readSupabaseStatus();
-  } catch (cause) {
-    throw new Error(
-      `local Supabase is not reachable — start it with \`npx supabase start\` ` +
-        `(\`${cause instanceof Error ? cause.message : String(cause)}\`).`,
-    );
+  if (dedicated) {
+    // Strict dedicated mode: the runner must have selected the owned
+    // project/port/workdir and must own the gateway. Never fall back to the
+    // normal checkout, app/.env or a second functions serve.
+    if (!sharedGateway) {
+      throw new Error(
+        'the dedicated journey requires LEGACY_JOURNEY_USE_SHARED_GATEWAY=1 ' +
+          '(the runner owns the functions serve)',
+      );
+    }
+    if (process.env.EXPO_NO_DOTENV !== '1') {
+      throw new Error('the dedicated journey requires EXPO_NO_DOTENV=1 (the runner supplies config)');
+    }
+    if (dedicatedProject !== DEDICATED_PROJECT) {
+      throw new Error(
+        `the dedicated journey requires project ${DEDICATED_PROJECT}, got ` +
+          `${dedicatedProject === '' ? '(missing)' : dedicatedProject}`,
+      );
+    }
+    if (dedicatedExpectedUrl !== DEDICATED_API_URL) {
+      throw new Error(
+        `the dedicated journey requires expected API URL ${DEDICATED_API_URL}, got ` +
+          `${dedicatedExpectedUrl === '' ? '(missing)' : dedicatedExpectedUrl}`,
+      );
+    }
+    const repoRoot = path.resolve(__dirname, '..', '..');
+    const resolvedWorkdir = path.resolve(dedicatedWorkdir);
+    const relative = path.relative(repoRoot, resolvedWorkdir);
+    if (
+      resolvedWorkdir === repoRoot ||
+      relative === '' ||
+      (!relative.startsWith('..') && !path.isAbsolute(relative))
+    ) {
+      throw new Error(
+        `the dedicated journey workdir must be outside the normal checkout, got ${resolvedWorkdir}`,
+      );
+    }
+    const configPath = path.join(resolvedWorkdir, 'supabase', 'config.toml');
+    let config: string;
+    try {
+      config = fs.readFileSync(configPath, 'utf8');
+    } catch (cause) {
+      throw new Error(
+        `the dedicated journey workdir has no supabase/config.toml (${cause instanceof Error ? cause.message : String(cause)})`,
+      );
+    }
+    if (!new RegExp(`^project_id = "${DEDICATED_PROJECT}"$`, 'm').test(config)) {
+      throw new Error(`the dedicated journey workdir is not project ${DEDICATED_PROJECT}`);
+    }
+    if (!/^\s*port = 55321$/m.test(config)) {
+      throw new Error(`the dedicated journey workdir is not on the dedicated port 55321`);
+    }
+    try {
+      status = localBackend.readSupabaseStatus(resolvedWorkdir);
+    } catch (cause) {
+      throw new Error(
+        `the dedicated legacy stack is not reachable — the runner must start it ` +
+          `(\`${cause instanceof Error ? cause.message : String(cause)}\`).`,
+      );
+    }
+    if (status.API_URL !== DEDICATED_API_URL) {
+      throw new Error(
+        `the dedicated journey must use ${DEDICATED_API_URL}, got ${status.API_URL}`,
+      );
+    }
+  } else {
+    try {
+      status = localBackend.readSupabaseStatus();
+    } catch (cause) {
+      throw new Error(
+        `local Supabase is not reachable — start it with \`npx supabase start\` ` +
+          `(\`${cause instanceof Error ? cause.message : String(cause)}\`).`,
+      );
+    }
   }
   state.status = status;
 
-  // The journey must hit EXACTLY the stack the app is configured for —
-  // a different URL/key would silently turn this into evidence for
-  // something else.
+  // The journey must hit EXACTLY the stack the app is configured for — a
+  // different URL/key would silently turn this into evidence for something
+  // else. In dedicated mode the comparison target is the CHOSEN dedicated
+  // status, never the normal checkout.
   const envUrl = (process.env[SUPABASE_URL_ENV] ?? '').trim();
   const envAnon = (process.env[SUPABASE_ANON_KEY_ENV] ?? '').trim();
   if (envUrl !== status.API_URL || envAnon !== status.ANON_KEY) {
     throw new Error(
-      'app/.env does not match the local Supabase status output ' +
+      `${dedicated ? 'the dedicated runner environment' : 'app/.env'} does not match the ` +
+        `selected Supabase status output ` +
         `(URL ${envUrl === status.API_URL ? 'ok' : 'DIFFERENT'}, ` +
         `anon key ${envAnon === status.ANON_KEY ? 'ok' : 'DIFFERENT'}). ` +
         'The journey refuses to run against a different backend.',
@@ -212,9 +295,12 @@ beforeAll(async () => {
     throw new Error('journey users were not created');
   }
 
-  // The Edge Functions gateway (same lifecycle as the suite runner).
-  state.serve = localBackend.startFunctionsServe();
-  await localBackend.waitForGateway(status, state.serve, 90_000);
+  // Normal CLI mode owns its gateway. Dedicated mode uses the runner's
+  // already-ready serve and must never start or stop a second one.
+  if (!dedicated) {
+    state.serve = localBackend.startFunctionsServe();
+    await localBackend.waitForGateway(status, state.serve, 90_000);
+  }
 
   state.clientA = await createJourneyClient(state.userA.token);
   state.clientB = await createJourneyClient(state.userB.token);
