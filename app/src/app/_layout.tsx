@@ -6,6 +6,8 @@ import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-c
 
 import { AppearancePreferencesProvider } from '../appearance/preferences';
 import { AppearanceProvider } from '../appearance/provider';
+import { CelebrationHost } from '../appearance/CelebrationHost';
+import { VisibilityProvider } from '../appearance/visibility';
 import { AuthProvider } from '../auth/provider';
 import { AvatarProbeHost } from '../media/avatarProbe';
 import { AuthenticatedChatProvider } from '../messages/provider';
@@ -80,6 +82,9 @@ function ThemedRoot() {
           notification actually arrives, so routes/tests are unaffected. */}
       <NotificationHost />
       <ChatArrivalHost />
+      {/* Task 14: ONE non-modal celebration host. It reads the visibility port
+          and the device/appearance providers above; nested hosts render null. */}
+      <CelebrationHost />
     </View>
   );
 }
@@ -104,7 +109,11 @@ export default function RootLayout() {
                   and theme/preference providers. It decorates nothing by
                   itself; only explicit authenticated scopes apply a visual. */}
               <AppearanceProvider>
-                <ThemedRoot />
+                {/* Task 14: the one route/foreground/confirmation port. The
+                    celebration host (inside ThemedRoot) reads only this. */}
+                <VisibilityProvider>
+                  <ThemedRoot />
+                </VisibilityProvider>
               </AppearanceProvider>
             </AppearancePreferencesProvider>
           </ThemeProvider>

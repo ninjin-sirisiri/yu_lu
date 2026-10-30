@@ -5,6 +5,7 @@ import { StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
 import { createDeviceLogoutPorts, performLogout, type UnsentSummary } from '../../../auth/logout';
 import { useAuth } from '../../../auth/provider';
 import { useAppearanceScope } from '../../../appearance/provider';
+import { useImportantConfirmation } from '../../../appearance/visibility';
 import { getOwnPublication, type ProfilePublication } from '../../../backend/profile';
 import { defaultIsOnline } from '../../../discovery/searchController';
 import { subscribeAppResume } from '../../../requests/friendsRepository';
@@ -141,6 +142,9 @@ export default function MypageScreen() {
   const [logoutBusy, setLogoutBusy] = useState(false);
   const [logoutNotice, setLogoutNotice] = useState<LogoutNotice | null>(null);
   const confirmResolver = useRef<((confirmed: boolean) => void) | null>(null);
+  // Task 14: the logout confirmation is a destructive decision; block 演出
+  // while it is open (and release the registration on unmount).
+  useImportantConfirmation(logoutSummary !== null);
 
   const confirmUnsent = useCallback((summary: UnsentSummary): Promise<boolean> => {
     setLogoutSummary(summary);

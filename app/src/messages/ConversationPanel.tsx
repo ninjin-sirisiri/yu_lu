@@ -132,6 +132,17 @@ function OwnedConversationPanel({ peerId, active = true, onBack, loadImage: inje
   const owner = chat.session;
   const selectPeer = chat.selectPeer;
   useEffect(() => { if (active) selectPeer(peerId); }, [selectPeer, peerId, active]);
+  // The panel OWNS the displayed selection while it is mounted. A standalone
+  // route must never leave a stale active peer behind; a split selection is
+  // cleared only when this panel still owns it (a later selection already
+  // changed the store first).
+  useEffect(() => {
+    const getSnapshot = chat.getSnapshot;
+    const select = chat.selectPeer;
+    return () => {
+      if (getSnapshot().activePeerId === peerId) select(null);
+    };
+  }, [chat.session, chat.getSnapshot, chat.selectPeer, peerId]);
   const snapshot = chat.activePeerId === peerId ? chat.conversation : null;
   const messages = snapshot?.messages ?? [];
   const metadata = snapshot?.metadata;

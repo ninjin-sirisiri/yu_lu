@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
+import { useImportantConfirmation } from '../appearance/visibility';
 import type { Storage } from '../storage/database';
 import { listOperations, type OutboxRecord } from '../storage/outbox';
 import { useTheme } from '../theme/provider';
@@ -152,6 +153,8 @@ export function SyncStatus({
 }: SyncStatusProps) {
   const { tokens } = useTheme();
   const [confirming, setConfirming] = useState<string | null>(null);
+  // Task 14: an open retry confirmation blocks starting/continuing 演出.
+  useImportantConfirmation(confirming !== null);
 
   const isBusy = (operationId: string): boolean => busyIds?.has(operationId) === true;
 

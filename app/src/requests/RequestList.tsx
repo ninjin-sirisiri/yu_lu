@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { useImportantConfirmation } from '../appearance/visibility';
 import type { RequestEntry, RequestStatus } from '../backend/queries';
 import { useTheme } from '../theme/provider';
 import { controls, radius, spacing, typography } from '../theme/tokens';
@@ -131,6 +132,8 @@ export function RequestList({
 }: RequestListProps) {
   const { tokens } = useTheme();
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  // Task 14: reject/cancel confirmation blocks 演出 start/continuation.
+  useImportantConfirmation(confirm !== null);
 
   const isBusy = (key: string): boolean => busyKeys?.has(key) === true;
 

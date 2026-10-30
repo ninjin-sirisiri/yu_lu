@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '../../../auth/provider';
+import { useImportantConfirmation } from '../../../appearance/visibility';
 import { profileImageUrl } from '../../../backend/profile';
 import { defaultIsOnline } from '../../../discovery/searchController';
 import { AvatarPicker } from '../../../media/AvatarPicker';
@@ -70,6 +71,8 @@ export default function ProfileEditScreen() {
 
   const [view, setView] = useState<ProfileEditorView | null>(null);
   const [displayName, setDisplayName] = useState('');
+  // Task 14: an unresolved profile conflict is an important decision surface.
+  useImportantConfirmation(view !== null && view.conflict !== null);
   const [introduction, setIntroduction] = useState('');
   const [publishedUri, setPublishedUri] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<LoadError | null>(null);

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '../../../auth/provider';
+import { useImportantConfirmation } from '../../../appearance/visibility';
 import { defaultIsOnline } from '../../../discovery/searchController';
 import { subscribeAppResume } from '../../../requests/friendsRepository';
 import {
@@ -78,6 +79,9 @@ export default function ProfileConflictScreen() {
 
   const [view, setView] = useState<ProfileEditorView | null>(null);
   const [selection, setSelection] = useState<ConflictSelection>({});
+  // Task 14: an unresolved conflict is an important decision surface; a
+  // resolved/empty screen no longer blocks 演出.
+  useImportantConfirmation(view !== null && view.conflict !== null);
   const [loadError, setLoadError] = useState<'offline' | 'network' | null>(null);
   const [notice, setNotice] = useState<ScreenNotice | null>(null);
   const [resolved, setResolved] = useState(false);

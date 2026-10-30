@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Image, Modal, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { useImportantConfirmation } from '../appearance/visibility';
 import { useTheme } from '../theme/provider';
 import { spacing } from '../theme/tokens';
 import { Button } from '../ui/Button';
@@ -12,6 +13,9 @@ export function ImageViewer({ peerId, image, loadImage, onClose }: {
 }) {
   const { tokens } = useTheme();
   const { width, height } = useWindowDimensions();
+  // A full-screen image is an important confirmation-like surface: never start
+  // a celebration behind it, and end anything already playing.
+  useImportantConfirmation(image !== null);
   const [uri, setUri] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);

@@ -27,6 +27,7 @@ import * as Clipboard from 'expo-clipboard';
 import Svg, { Path, Rect } from 'react-native-svg';
 
 import { getInvitationStatus, type OwnInvitationStatus } from '../backend/queries';
+import { useImportantConfirmation } from '../appearance/visibility';
 import { defaultIsOnline } from '../discovery/searchController';
 import { readCache, writeCache } from '../storage/cache';
 import type { Storage } from '../storage/database';
@@ -158,6 +159,8 @@ export function InvitationPanel({
 
   const [state, setState] = useState<PanelState>({ kind: 'loading' });
   const [confirmReissue, setConfirmReissue] = useState(false);
+  // Task 14: reissue invalidates a live link; block 演出 while it is open.
+  useImportantConfirmation(confirmReissue);
   const [copied, setCopied] = useState(false);
   const [attempt, setAttempt] = useState(0);
   // Synchronous double-tap guard: written BEFORE the first await so two
