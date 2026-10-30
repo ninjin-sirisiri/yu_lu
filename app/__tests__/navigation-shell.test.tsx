@@ -32,6 +32,19 @@ jest.mock('../src/auth/provider', () => {
   };
 });
 
+// Task 9: the shell test has no usable device database. The appearance
+// settings provider must degrade to `unavailable` (playback off) instead of
+// crashing the whole route tree.
+jest.mock('../src/storage/database', () => {
+  const actual = jest.requireActual('../src/storage/database');
+  return {
+    ...actual,
+    openAppDatabase: async () => {
+      throw new Error('navigation-shell test: storage unavailable');
+    },
+  };
+});
+
 // Task 12 replaced the friends placeholders with the real list/search
 // screens; this shell test mocks only the read boundary (server contract
 // itself is covered by the backend suites) so navigation stays
@@ -146,5 +159,17 @@ describe('navigation shell', () => {
     expect(screen.getByText('自分')).toBeTruthy();
     expect(screen.getByTestId('mypage-edit-entry')).toBeTruthy();
     expect(screen.queryByText(/変更しました|保存しました/)).toBeNull();
+
+    // Task 9: 見た目 lives inside the マイページ stack (no fifth tab) and the
+    // missing device storage degrades to an explicit unavailable state.
+    expect(screen.getByTestId('mypage-appearance-entry')).toBeTruthy();
+    await fireEvent.press(screen.getByTestId('mypage-appearance-entry'));
+    await waitFor(() => expect(app.getPathname()).toBe('/mypage/appearance'));
+    expect(screen.getByTestId('appearance-settings-screen')).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByTestId('appearance-unavailable')).toBeTruthy(),
+    );
+    expect(screen.queryByTestId('tab-appearance')).toBeNull();
+    expect(screen.getByTestId('tab-mypage')).toBeTruthy();
   });
 });

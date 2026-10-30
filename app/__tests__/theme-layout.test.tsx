@@ -890,6 +890,117 @@ describe('theme settings screen', () => {
 });
 
 // ---------------------------------------------------------------------------
+// G2. route level: マイページ → 見た目 (Task 9, real device_settings SQLite)
+// ---------------------------------------------------------------------------
+
+describe('appearance settings screen', () => {
+  beforeEach(async () => {
+    await installStorage('appearance-ui');
+    clearRememberedDestination();
+  });
+
+  afterEach(() => {
+    mockStorage = null;
+  });
+
+  interface StoredAppearance {
+    vibrancy: string;
+    chatEnabled: boolean;
+    streakEnabled: boolean;
+    chatResumeGeneration: number;
+    streakResumeGeneration: number;
+  }
+
+  /** Same act-free barrier as the theme screen tests above. */
+  const expectAppearance = async (
+    check: (value: StoredAppearance) => void,
+  ): Promise<void> => {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const raw = await readDeviceSetting(mockStorage!, 'appearance.preferences');
+      if (raw !== null) {
+        check(JSON.parse(raw) as StoredAppearance);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    throw new Error('appearance preferences were never persisted');
+  };
+
+  it('opens from マイページ and persists vibrancy plus kind switches device-locally', async () => {
+    const { app } = await renderApp('/mypage');
+    await waitFor(() => expect(app.getPathname()).toBe('/mypage'));
+    await waitFor(() => expect(screen.getByTestId('mypage-appearance-entry')).toBeTruthy());
+
+    await fireEvent.press(screen.getByTestId('mypage-appearance-entry'));
+    await waitFor(() => expect(app.getPathname()).toBe('/mypage/appearance'));
+    expect(screen.getByTestId('appearance-settings-screen')).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByTestId('appearance-vibrancy-flashy').props.accessibilityState).toMatchObject({
+        selected: true,
+      }),
+    );
+    expect(screen.getByText(/ログアウトしても残ります/)).toBeTruthy();
+    expect(screen.getByText(/同期されません/)).toBeTruthy();
+    // Still exactly the four tabs; the screen lives in the mypage stack.
+    expect(screen.getByTestId('tab-mypage')).toBeTruthy();
+    expect(screen.queryByTestId('tab-appearance')).toBeNull();
+    // The default is a code default, not a written row.
+    expect(await readDeviceSetting(mockStorage!, 'appearance.preferences')).toBeNull();
+
+    await fireEvent.press(screen.getByTestId('appearance-vibrancy-subtle'));
+    await waitFor(() =>
+      expect(screen.getByTestId('appearance-vibrancy-subtle').props.accessibilityState).toMatchObject({
+        selected: true,
+      }),
+    );
+    await expectAppearance((value) => {
+      expect(value.vibrancy).toBe('subtle');
+      expect(value.chatEnabled).toBe(true);
+      expect(value.streakEnabled).toBe(true);
+    });
+
+    const chatToggle = () => screen.getByTestId('appearance-chat-toggle');
+    expect(chatToggle().props.accessibilityState).toMatchObject({ checked: true });
+    await fireEvent.press(chatToggle());
+    await waitFor(() => expect(chatToggle().props.accessibilityState).toMatchObject({ checked: false }));
+    await expectAppearance((value) => {
+      expect(value.chatEnabled).toBe(false);
+      expect(value.chatResumeGeneration).toBe(0);
+    });
+
+    // Re-enabling is the only transition that bumps that kind's generation.
+    await fireEvent.press(chatToggle());
+    await waitFor(() => expect(chatToggle().props.accessibilityState).toMatchObject({ checked: true }));
+    await expectAppearance((value) => {
+      expect(value.chatResumeGeneration).toBe(1);
+      expect(value.streakResumeGeneration).toBe(0);
+    });
+
+    // Changing the appearance never writes the independent theme setting.
+    expect(await readDeviceSetting(mockStorage!, 'theme.mode')).toBeNull();
+  });
+
+  it('keeps the light/dark theme choice independent of the appearance setting', async () => {
+    await writeDeviceSetting(mockStorage!, 'theme.mode', 'dark');
+    const { app } = await renderApp('/mypage/appearance');
+    await waitFor(() => expect(app.getPathname()).toBe('/mypage/appearance'));
+    await waitFor(() => expect(screen.getByTestId('appearance-vibrancy-flashy')).toBeTruthy());
+
+    await fireEvent.press(screen.getByTestId('appearance-vibrancy-off'));
+    await expectAppearance((value) => expect(value.vibrancy).toBe('off'));
+
+    // The device theme remains dark; the two providers own separate rows.
+    expect(await readDeviceSetting(mockStorage!, 'theme.mode')).toBe('dark');
+    expect(await readDeviceSetting(mockStorage!, 'theme.schedule')).toBeNull();
+    // Off still keeps both celebration kinds on (they are simply not shown).
+    await expectAppearance((value) => {
+      expect(value.chatEnabled).toBe(true);
+      expect(value.streakEnabled).toBe(true);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // H. shell: wide → left navigation (no iOS SplitView), narrow → bottom tabs
 // ---------------------------------------------------------------------------
 

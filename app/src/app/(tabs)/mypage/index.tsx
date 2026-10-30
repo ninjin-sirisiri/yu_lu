@@ -298,6 +298,14 @@ export default function MypageScreen() {
           style={styles.entry}
         />
         <Button
+          label="見た目"
+          variant="secondary"
+          testID="mypage-appearance-entry"
+          accessibilityHint="派手さと種類別の節目演出を設定します"
+          onPress={() => router.push('/mypage/appearance')}
+          style={styles.entry}
+        />
+        <Button
           label={logoutBusy ? 'ログアウト中…' : 'ログアウト'}
           variant="secondary"
           testID="mypage-logout"

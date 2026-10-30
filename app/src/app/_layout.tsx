@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { Dimensions, View } from 'react-native';
 import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
 
+import { AppearancePreferencesProvider } from '../appearance/preferences';
 import { AuthProvider } from '../auth/provider';
 import { AvatarProbeHost } from '../media/avatarProbe';
 import { AuthenticatedChatProvider } from '../messages/provider';
@@ -94,7 +95,12 @@ export default function RootLayout() {
       <AuthProvider>
         <AuthenticatedChatProvider>
           <ThemeProvider>
-            <ThemedRoot />
+            {/* Task 9: device-local appearance settings live INSIDE the
+                theme provider (independent state) and above the router, so
+                they never remount the current screen. */}
+            <AppearancePreferencesProvider>
+              <ThemedRoot />
+            </AppearancePreferencesProvider>
           </ThemeProvider>
         </AuthenticatedChatProvider>
       </AuthProvider>
