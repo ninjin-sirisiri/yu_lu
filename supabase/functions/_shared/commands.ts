@@ -24,6 +24,7 @@ import { validateProfileCommandPayload } from './profile-commands.ts';
 import { validateRequestCommandPayload } from './request-commands.ts';
 import type { MediaBackend } from './chat-media.ts';
 import { validateChatCommandPayload } from './chat-commands.ts';
+import { validateAppearanceCommandPayload } from './appearance-commands.ts';
 
 export interface CommandRequest {
   operationId: string;
@@ -207,6 +208,9 @@ export async function executeCommand(
     parsed.value.kind,
     parsed.value.payload,
   ) ?? validateChatCommandPayload(
+    parsed.value.kind,
+    parsed.value.payload,
+  ) ?? validateAppearanceCommandPayload(
     parsed.value.kind,
     parsed.value.payload,
   );
