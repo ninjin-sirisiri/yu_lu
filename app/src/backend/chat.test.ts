@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createChatClient } from './chat';
-import { A, B, home, page } from '../messages/repositoryTestSupport';
+import { A, B, home, page, message } from '../messages/repositoryTestSupport';
 
 const account = A;
 function result(op: string) {
@@ -49,4 +49,31 @@ it('preserves HTTP errors and rejects unsafe revision tokens', async () => {
     .rejects.toMatchObject({ status: 403, message: 'not registered' });
   const malformed = jest.fn(async () => ({ data: { op: 'get_home', result: { revision: Number.MAX_SAFE_INTEGER + 1 } }, error: null }));
   await expect(createChatClient({ client: client(malformed), accountId: account }).getHome()).rejects.toThrow(/response/i);
+});
+
+it('keeps core messages and peer data when appearance fields are broken', async () => {
+  const broken = page([message(2), message(3)], {
+    appearance: { growth_days: -1, auto_preset_id: 'b-pop', selected_preset_id: null,
+      effective_preset_id: 'b-pop', catalog_version: 1, settings_revision: 0, can_change: true } as any,
+    streak_appearance: { current_streak: 2, earned_days: 101, appearance_version: 1 } as any,
+  });
+  const invoke = jest.fn(async (_name: string, options: any) => ({
+    data: { op: options.body.op, result: broken }, error: null,
+  }));
+  const resolved = await createChatClient({ client: client(invoke), accountId: account })
+    .getMessages(B, 'latest');
+  expect(resolved.items.map(item => item.body)).toEqual(['m2', 'm3']);
+  expect(resolved.peer.display_name).toBe('Bob');
+  expect(resolved.appearance).toMatchObject({ growth_days: -1 });
+});
+
+it('leaves valid appearance and streak fields intact on resolved responses', async () => {
+  const api = createChatClient({ client: client(), accountId: account });
+  const messages = await api.getMessages(B, 'latest');
+  expect(messages.appearance).toEqual({
+    growth_days: 3, auto_preset_id: 'b-pop', selected_preset_id: null, effective_preset_id: 'b-pop',
+    catalog_version: 1, settings_revision: 0, can_change: true,
+  });
+  expect(messages.streak_appearance).toEqual({ current_streak: 2, earned_days: 29, appearance_version: 1 });
+  expect((await api.getHome()).streak_appearance).toEqual({ current_streak: 2, earned_days: 29, appearance_version: 1 });
 });

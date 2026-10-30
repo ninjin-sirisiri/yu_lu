@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { ChatAppearanceWire, StreakAppearanceWire } from '../appearance/contracts';
 import { QueryError } from './queries';
 
 // Wire DTOs mirror Task 8/9's closed app-query boundary. Deliberately no global
@@ -8,6 +9,8 @@ export interface ChatPeer {
   peer_id: string; conversation_id: string | null;
   peer: { display_name: string; avatar_path: string | null };
   can_send: boolean; friendship_epoch: string | null;
+  /** Absent in old caches; never required for the core chat response. */
+  appearance?: ChatAppearanceWire;
 }
 export interface ChatMessage {
   message_id: string; conversation_id: string; sequence: number;
@@ -28,7 +31,8 @@ export interface HomeResult {
   revision: number; server_now: string; daily_key: string; deadline: string; draw_deadline: string;
   draw_state: 'not_started' | 'pending' | 'running' | 'succeeded' | 'failed'; draw_finalized_at: string | null;
   participation: 'checking' | 'draw_failed' | 'no_friends' | 'waiting_next_cycle' | 'eligible';
-  streak: number; send_completed: boolean | null; reply_completed: number; reply_total: number;
+  streak: number; streak_appearance?: StreakAppearanceWire;
+  send_completed: boolean | null; reply_completed: number; reply_total: number;
   achieved: boolean; actionable_complete: boolean; targets: ChatSummary[]; unread_peer_count: number;
 }
 export interface ChatListResult {
@@ -38,6 +42,7 @@ export interface ChatListResult {
 export interface ChatMessagesResult extends ChatPeer {
   revision: number; items: ChatMessage[]; before_cursor: string | null; after_cursor: string | null;
   first_unread_sequence: number | null; latest_sequence: number;
+  streak_appearance?: StreakAppearanceWire;
 }
 export interface ChatUnreadResult { revision: number; items: ChatUnread[]; unread_peer_count: number }
 interface Results {
