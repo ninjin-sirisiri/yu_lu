@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <title>ポップ大騒ぎ — ライト／ダークの成長比較</title>
+  <title>ポップ大騒ぎ — 節目で育つライト／ダーク比較</title>
   <style>
     :root {
       color-scheme: dark;
@@ -46,6 +46,8 @@
     .day-picker { width: min(100%, 240px); }
     .day-picker output { font-size: .8125rem; font-weight: 800; }
     input[type="range"] { width: 100%; min-width: 0; height: 44px; margin: -8px 0; accent-color: var(--focus); }
+    .reset-label { display: flex; align-items: center; gap: var(--s2); min-height: 44px; font-size: .75rem; }
+    input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--focus); }
     .milestone-note { color: var(--board-muted); font-size: .625rem; }
     .utilities { display: flex; flex-wrap: wrap; gap: var(--s2); }
     .utility.highlight { color: #c4ff59; border-color: #7a9c3d; }
@@ -91,10 +93,10 @@
     .record strong { font-size: clamp(2rem, 47cqi, 8.2rem); font-family: "Arial Black", "Helvetica Neue", sans-serif; font-style: italic; font-weight: 950; letter-spacing: -.105em; line-height: 1.05; }
     .record small { font: 850 .7rem/1 ui-monospace, monospace; margin-left: var(--s2); }
     .record-copy { position: relative; z-index: 1; text-align: center; margin-top: var(--s2); font-size: .75rem; font-weight: 800; }
-    .stage-track { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; margin-top: var(--s4); }
+    .stage-track { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: var(--s4); }
     .stage-track i { position: relative; height: 5px; border-radius: 3px; background: color-mix(in oklab, currentColor 15%, transparent); overflow: hidden; }
     .stage-track i::before { content: ''; position: absolute; inset: 0; background: currentColor; transform-origin: left; scale: var(--fill, 0) 1; }
-    .record-foot { position: relative; z-index: 1; display: flex; justify-content: space-between; gap: var(--s2); margin-top: var(--s2); font-size: .5625rem; font-weight: 700; }
+    .record-foot { position: relative; z-index: 1; display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--s2); margin-top: var(--s2); font-size: .5625rem; font-weight: 700; }
     .daily-card { position: relative; z-index: 1; padding: var(--s4); border: 1px solid var(--border); border-radius: 16px; background: var(--panel); color: var(--ink); }
     .card-top { display: flex; justify-content: space-between; align-items: center; gap: var(--s2); font-size: .625rem; color: var(--sub); }
     .complete { font-weight: 800; color: var(--ink); }
@@ -229,14 +231,18 @@
     <p class="eyebrow">DAILY CHAT / B: POP! / LIGHT × DARK / THROWAWAY SPIKE</p>
     <div class="heading-row">
       <h1>育つほど、派手に。<br>ライトは明るく、ダークは暗く。</h1>
-      <p class="intro">採用案B「ポップ大騒ぎ」の明暗比較です。<br>背景の明るさを逆転させず、色・模様・装飾を毎日増やします。同じ日数の両モードを見比べてください。</p>
+      <p class="intro">採用案B「ポップ大騒ぎ」の明暗比較です。<br>色・模様・装飾が変わるのは1・7・30・60・100日。節目の間と100日以降は同じ姿を保ちます。</p>
     </div>
     <div class="workbench" aria-label="比較試作の操作">
       <div class="field day-picker">
-        <label class="control-label" for="days">成長日数（比較用）</label>
-        <output id="day-output" for="days">100日 / いちばん派手な姿</output>
-        <input id="days" type="range" min="0" max="100" step="1" value="100">
-        <span class="milestone-note">毎日変化。1・3・7・14・30・100日は節目。</span>
+        <label class="control-label" for="days">日数（チャット累計／本人の獲得記録）</label>
+        <output id="day-output" for="days" aria-live="off">100日 / 見た目は100日段階・完成形</output>
+        <input id="days" type="range" min="0" max="120" step="1" value="100" aria-describedby="milestone-note">
+        <span class="milestone-note" id="milestone-note">初期0 → 1 → 7 → 30 → 60 → 100日。間の日は数値だけ更新。</span>
+      </div>
+      <div class="field">
+        <label class="reset-label" for="reset-streak"><input id="reset-streak" type="checkbox" aria-describedby="reset-note">本人のストリークを0日に戻す</label>
+        <span class="milestone-note" id="reset-note">比較用。獲得した段階は保持し、チャットには影響しません。</span>
       </div>
       <div class="field"><span class="control-label">確認する画面</span><div class="segmented" role="group" aria-label="確認する画面">
         <button type="button" data-view="home" aria-pressed="true">ホーム</button><button type="button" data-view="chat" aria-pressed="false">チャット</button>
@@ -268,13 +274,13 @@
     </div>
   </main>
   <footer class="board-footer">
-    <p><strong>この試作で確認すること：</strong>Bの成長とライト／ダークの両立。100日後も、ライトは明るく、ダークは暗いままにします。</p>
-    <p>小さな日数見本を押すか、スライダーで1日ずつ比較できます。色は序盤から少しずつ、模様・光・動きは後半ほど豊かにしています。</p>
-    <p>比較のため、チャット成長とストリーク装飾を同じ日数に設定しています。本体では別々に育ちます。演出オフでも成長日数は消えません。</p>
+    <p><strong>この試作で確認すること：</strong>Bの段階的な成長とライト／ダークの両立。100日以降も完成形を保持し、ライトは明るく、ダークは暗いままにします。</p>
+    <p>小さな段階見本を押すか、スライダーで1日ずつ比較できます。1〜6・7〜29・30〜59・60〜99日はそれぞれ同じ装飾で、数値だけが変わります。色は序盤から、模様・光・動きは後半の段階ほど豊かにしています。</p>
+    <p>通常はチャット累計と本人の獲得記録・現在のストリークを同じ日数にしています。本体では別々に育ちます。「0日に戻す」で本人のリセット後を比較でき、29日から戻すと獲得済みは7日段階・次の30日段階まであと30日です。演出オフでも記録は消えません。</p>
     <p>使い捨てのHTML試作です。アプリ本体の実装・ネイティブの描画性能・実機アクセシビリティを検証したものではありません。</p>
   </footer>
   <template id="phone-template">
-    <div class="phone" data-tier="6" data-running="false">
+    <div class="phone" data-tier="5" data-running="false">
       <div class="glass">
         <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="camera"></span><span>5G ▰</span></div>
         <div class="app-header"><span class="wordmark"><i class="brand-symbol" aria-hidden="true"></i>daily chat</span><span class="identity-tag" aria-hidden="true">MAKE SOME NOISE</span></div>
@@ -286,8 +292,8 @@
               <div class="record-overline"><span>YOUR STREAK</span><svg aria-hidden="true"><use href="#bolt"/></svg></div>
               <p class="record"><strong class="days">100</strong><small>DAYS</small></p>
               <p class="record-copy">今日も、つながった。</p>
-              <div class="stage-track" role="img" aria-label="獲得した見た目の段階"><i></i><i></i><i></i><i></i><i></i><i></i></div>
-              <div class="record-foot"><span class="level-label">LEVEL 06 / 06</span><span class="next-label">MAXIMUM!</span></div>
+              <div class="stage-track" role="img" aria-label="獲得した見た目の段階"><i></i><i></i><i></i><i></i><i></i></div>
+              <div class="record-foot"><span class="level-label">獲得済み：100日段階</span><span class="next-label">完成形に到達</span></div>
               <div class="celebration" aria-hidden="true"></div>
             </div>
             <div class="daily-card">
@@ -305,7 +311,7 @@
             <div class="messages">
               <div class="message"><p class="bubble">今日の空、すごい色だった！</p><small>18:42</small></div>
               <div class="message mine"><p class="bubble">こっちも！<br>このチャットみたいな色してた</p><small>18:43 · 送信済み</small></div>
-              <div class="message"><p class="bubble">話すたびに派手になってくの<br>ちょっとおもしろい</p><small>18:44</small></div>
+              <div class="message"><p class="bubble">節目で一気に派手になるの<br>ちょっとおもしろい</p><small>18:44</small></div>
               <div class="message mine"><p class="bubble">次の100日もよろしく。</p><small>18:45 · 送信済み</small></div>
             </div>
             <div class="mock-composer" aria-hidden="true"><span>メッセージ…</span><svg><use href="#send"/></svg></div>
@@ -323,13 +329,15 @@
     const template = document.querySelector('#phone-template');
     const daysControl = document.querySelector('#days');
     const effectControl = document.querySelector('#effect');
+    const resetStreakControl = document.querySelector('#reset-streak');
     const status = document.querySelector('#status');
     const pause = document.querySelector('#pause');
     const replay = document.querySelector('#replay');
     const reduced = matchMedia('(prefers-reduced-motion: reduce)');
-    const milestones = [1, 3, 7, 14, 30, 100];
-    // Exploration parameters, not settled product defaults. Day-to-day appearance
-    // is continuous; milestones now mark celebration moments, not palette jumps.
+    const milestones = [1, 7, 30, 60, 100];
+    const stageForDays = days => milestones.filter(day => days >= day).at(-1) ?? 0;
+    // Keep B's milestone appearances, with no day-to-day decoration interpolation.
+    // Recorded days remain separate from the six possible appearance stages.
     const neutralPalettes = {
       light: { base: '#f3f1f5', chrome: '#ffffff', chromeInk: '#251e30', room: '#f3f1f5', sceneInk: '#251e30', hot: '#35313d', hotInk: '#ffffff', soft: '#eae6ee', hero: '#ffffff', heroInk: '#20182f', line: '#d8d1df' },
       dark: { base: '#211e29', chrome: '#211e29', chromeInk: '#f7f2ff', room: '#211e29', sceneInk: '#f7f2ff', hot: '#eee6f9', hotInk: '#231b30', soft: '#3a3345', hero: '#252132', heroInk: '#fbf7ff', line: '#70607f' },
@@ -345,7 +353,6 @@
     const colorProbe = document.createElement('canvas');
     colorProbe.width = colorProbe.height = 1;
     const colorContext = colorProbe.getContext('2d', { willReadFrequently: true });
-    const clamp = value => Math.min(1, Math.max(0, value));
     const mix = (start, end, amount) => `color-mix(in oklab, ${start} ${(100 * (1 - amount)).toFixed(5)}%, ${end})`;
     function luminance(color) {
       colorContext.clearRect(0, 0, 1, 1);
@@ -386,8 +393,8 @@
       return mix(background, endpoint, upper);
     }
     function growthAppearance(skin, days, scheme, enabled = true) {
-      const dayFraction = enabled ? clamp(days / 100) : 0;
-      const strength = { color: dayFraction ** .72, pattern: dayFraction ** 1.15, glow: dayFraction ** 1.5, extra: dayFraction ** 1.7, motion: dayFraction ** 1.2 };
+      const stageFraction = enabled ? stageForDays(days) / 100 : 0;
+      const strength = { color: stageFraction ** .72, pattern: stageFraction ** 1.15, glow: stageFraction ** 1.5, extra: stageFraction ** 1.7, motion: stageFraction ** 1.2 };
       const neutral = neutralPalettes[scheme];
       const themedEnd = endPalettes[skin][scheme];
       const end = themedEnd ?? endPalettes[skin];
@@ -453,8 +460,8 @@
       const strip = document.createElement('div');
       strip.className = 'growth-strip';
       strip.setAttribute('role', 'group');
-      strip.setAttribute('aria-label', `${concept.querySelector('h2').textContent}：派手設定での成長見本`);
-      [0, 1, 7, 30, 60, 100].forEach(day => {
+      strip.setAttribute('aria-label', `${concept.querySelector('h2').textContent}：派手設定での段階見本`);
+      [0, ...milestones].forEach(day => {
         const button = document.createElement('button');
         button.type = 'button';
         button.dataset.days = String(day);
@@ -486,9 +493,14 @@
       stopCelebration();
       const days = Number(daysControl.value);
       const tier = milestones.filter(day => days >= day).length;
+      const stageDay = stageForDays(days);
+      const currentStreak = resetStreakControl.checked ? 0 : days;
+      const stageLabel = stageDay ? `${stageDay}日段階` : '初期モノクロ';
+      const nextMilestone = milestones[tier];
+      const nextLabel = currentDays => nextMilestone === undefined ? '完成形に到達' : `次の${nextMilestone}日段階まであと${nextMilestone - currentDays}日`;
       root.dataset.effect = effectControl.value;
-      document.querySelector('#day-output').textContent = `${days}日 / ${days === 0 ? '育つ前' : days === 100 ? 'いちばん派手な姿' : '毎日、少しずつ育つ'}`;
-      daysControl.setAttribute('aria-valuetext', `${days}日。見た目は毎日少しずつ変化します。`);
+      document.querySelector('#day-output').textContent = `${days}日 / 見た目は${stageLabel}${stageDay === 100 ? '・完成形' : ''}`;
+      daysControl.setAttribute('aria-valuetext', `${days}日。見た目は${stageLabel}。節目の間は装飾が変わりません。`);
       phones.forEach(phone => {
         const { skin, scheme } = phone.closest('.concept').dataset;
         const appearance = growthAppearance(skin, days, scheme, effectControl.value !== 'off');
@@ -496,31 +508,31 @@
         phone.dataset.tier = String(tier);
         phone.dataset.days = String(days);
         phone.classList.toggle('grown', tier > 0 && effectControl.value !== 'off');
-        phone.querySelectorAll('.days').forEach(number => { number.textContent = String(days); });
+        phone.querySelector('.achievement .days').textContent = String(currentStreak);
+        phone.querySelector('.chat-growth .days').textContent = String(days);
         phone.querySelectorAll('.stage-track i').forEach((segment, i) => {
-          const previous = milestones[i - 1] ?? 0;
-          segment.style.setProperty('--fill', clamp((days - previous) / (milestones[i] - previous)));
+          segment.style.setProperty('--fill', i < tier ? 1 : 0);
         });
-        const nextLabel = tier === 6 ? 'いちばん派手な姿に到達' : `次の節目まであと${milestones[tier] - days}日`;
-        phone.querySelector('.stage-track').setAttribute('aria-label', `成長日数：${days}日。${nextLabel}`);
-        phone.querySelector('.level-label').textContent = '毎日、少しずつ色づく';
-        phone.querySelector('.next-label').textContent = nextLabel;
-        phone.querySelector('.chat-progress').textContent = `ふたりで話した${days}日。${nextLabel}`;
-        phone.querySelector('.record-copy').textContent = days ? '今日も、つながった。' : 'ここから、色づく。';
-        phone.querySelector('.complete').textContent = days ? '今日の達成 ✓' : 'これから';
-        phone.querySelector('.daily-summary').textContent = days ? '送信：完了　／　返信：1 / 1人' : '送信：未完了　／　返信：0 / 1人';
-        phone.querySelector('.friend small').textContent = days ? '今日も、ひとことがつながりました。' : 'まずは、ひとこと話しかけてみよう。';
-        phone.querySelector('.mock-cta span').textContent = days ? '会話を続ける' : '話しかける';
+        phone.querySelector('.stage-track').setAttribute('aria-label', `現在のストリーク：${currentStreak}日。獲得済み：${stageLabel}。${nextLabel(currentStreak)}`);
+        phone.querySelector('.level-label').textContent = `獲得済み：${stageLabel}`;
+        phone.querySelector('.next-label').textContent = nextLabel(currentStreak);
+        phone.querySelector('.chat-progress').textContent = `ふたりで話した${days}日・${stageLabel}。${nextLabel(days)}`;
+        phone.querySelector('.record-copy').textContent = resetStreakControl.checked && days ? '獲得した見た目は、そのまま。' : currentStreak ? '今日も、つながった。' : 'ここから、色づく。';
+        phone.querySelector('.complete').textContent = currentStreak ? '今日の達成 ✓' : 'これから';
+        phone.querySelector('.daily-summary').textContent = currentStreak ? '送信：完了　／　返信：1 / 1人' : '送信：未完了　／　返信：0 / 1人';
+        phone.querySelector('.friend small').textContent = currentStreak ? '今日も、ひとことがつながりました。' : 'まずは、ひとこと話しかけてみよう。';
+        phone.querySelector('.mock-cta span').textContent = currentStreak ? '会話を続ける' : '話しかける';
       });
-      document.querySelectorAll('.growth-strip button').forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.days) === days)));
-      replay.disabled = !milestones.includes(days) || effectControl.value !== 'loud';
-      replay.title = '大きな演出は1・3・7・14・30・100日の節目のみ。日々の変化とは別です。';
+      document.querySelectorAll('.growth-strip button').forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.days) === stageDay)));
+      replay.disabled = !milestones.includes(days) || effectControl.value !== 'loud' || (resetStreakControl.checked && root.dataset.view === 'home');
+      replay.title = '1・7・30・60・100日の段階到達演出の見本です。ストリークのリセットでは新たな達成になりません。';
       syncMotion();
-      if (announce) status.textContent = `${days}日の同じ成長を両モードに表示しています。ライトは明るく、ダークは暗い土台を保ちます。${reduced.matches ? 'OSの動き軽減設定に合わせ、動きを止めています。' : '入力・送信は動作しない見た目の試作です。'}`;
+      if (announce) status.textContent = `両モードの獲得済み見た目は${stageLabel}。チャット累計${days}日、現在のストリーク${currentStreak}日。${nextLabel(currentStreak)}。ライトは明るく、ダークは暗い土台を保ちます。${reduced.matches ? 'OSの動き軽減に合わせて静止表示。' : '入力・送信は動作しない試作です。'}`;
     }
     daysControl.addEventListener('input', () => syncStage(false));
     daysControl.addEventListener('change', () => syncStage());
     effectControl.addEventListener('change', () => syncStage());
+    resetStreakControl.addEventListener('change', () => syncStage());
     document.querySelectorAll('.growth-strip button').forEach(button => button.addEventListener('click', () => {
       daysControl.value = button.dataset.days;
       syncStage();
@@ -532,7 +544,7 @@
         root.setAttribute(`data-${key}`, button.getAttribute(`data-${key}`));
         document.querySelectorAll(`button[data-${key}]`).forEach(peer => peer.setAttribute('aria-pressed', String(peer === button)));
         if (key === 'view') phones.forEach(phone => phone.querySelectorAll('.tab').forEach(tab => tab.classList.toggle('active', tab.dataset.tab === root.dataset.view)));
-        syncMotion();
+        syncStage(false);
       });
     });
     pause.addEventListener('click', () => { paused = !paused; stopCelebration(); syncMotion(); });
