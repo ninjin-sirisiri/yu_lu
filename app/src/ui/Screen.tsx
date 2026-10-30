@@ -10,6 +10,8 @@ import {
 } from 'react-native';
 import { SafeAreaInsetsContext, type EdgeInsets } from 'react-native-safe-area-context';
 
+import { AppearanceDecorations } from '../appearance/AppearanceDecorations';
+import { useAppearanceScope } from '../appearance/provider';
 import { useTheme } from '../theme/provider';
 import { spacing, typography } from '../theme/tokens';
 
@@ -63,36 +65,60 @@ export function Screen({
   scrollViewRef,
 }: ScreenProps) {
   const { tokens } = useTheme();
+  const scope = useAppearanceScope();
+  const visual = scope?.visual ?? null;
+  const decoratedVisual =
+    visual !== null && visual.stage > 0 && visual.vibrancy !== 'off' ? visual : null;
   const insets = useScreenInsets();
   const hasHeader = title !== undefined || subtitle !== undefined || headerAccessory !== undefined;
+  // The decoration is an absolute sibling. The content keeps its own opaque
+  // visual body surface, so body text never sits directly on a moving pattern
+  // (保護された読みやすさ first). No measurement/padding/keyboard changes.
+  const contentBackground = visual ? { backgroundColor: visual.bodySurface } : null;
 
   const content = scroll ? (
     <ScrollView
       ref={scrollViewRef}
-      style={styles.flex}
+      style={[styles.flex, contentBackground]}
       contentContainerStyle={[styles.scrollContent, contentStyle]}
       keyboardShouldPersistTaps="handled"
     >
       {children}
     </ScrollView>
   ) : (
-    <View style={[styles.flex, styles.fixedContent, contentStyle]}>{children}</View>
+    <View style={[styles.flex, styles.fixedContent, contentBackground, contentStyle]}>{children}</View>
   );
 
   return (
     <View
       style={[
         styles.root,
-        { backgroundColor: tokens.surface, paddingTop: insets.top, paddingBottom: insets.bottom },
+        { backgroundColor: visual?.background ?? tokens.surface, paddingTop: insets.top, paddingBottom: insets.bottom },
       ]}
       testID={testID}
     >
+      {decoratedVisual && (
+        <View
+          testID={`${testID ?? 'screen'}-decorations`}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+          accessible={false}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        >
+          <AppearanceDecorations
+            visual={decoratedVisual}
+            active={scope?.active ?? false}
+            reduceMotion={scope?.reduceMotion ?? false}
+          />
+        </View>
+      )}
       {hasHeader && (
         <View style={styles.header}>
           <View style={styles.flex}>
             {title !== undefined && (
               <Text
-                style={[styles.title, { color: tokens.text }]}
+                style={[styles.title, { color: visual?.text ?? tokens.text }]}
                 accessibilityRole="header"
                 allowFontScaling
               >
@@ -100,7 +126,7 @@ export function Screen({
               </Text>
             )}
             {subtitle !== undefined && (
-              <Text style={[styles.subtitle, { color: tokens.muted }]} allowFontScaling>
+              <Text style={[styles.subtitle, { color: visual?.mutedText ?? tokens.muted }]} allowFontScaling>
                 {subtitle}
               </Text>
             )}
@@ -109,7 +135,9 @@ export function Screen({
         </View>
       )}
       {content}
-      {footer !== undefined && <View style={styles.footer}>{footer}</View>}
+      {footer !== undefined && (
+        <View style={[styles.footer, contentBackground]}>{footer}</View>
+      )}
     </View>
   );
 }

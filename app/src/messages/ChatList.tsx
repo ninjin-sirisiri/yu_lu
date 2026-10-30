@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
+import { readChatAppearance } from '../appearance/contracts';
+import { chatProgress } from '../appearance/progress';
 import { scrollRefToTop, subscribeTabReselect } from '../navigation/tabReselect';
 import { useTheme } from '../theme/provider';
 import { radius, spacing, typography } from '../theme/tokens';
@@ -16,10 +18,21 @@ function ChatRow({ row, current, exact, selected, onOpen }: {
   const { tokens } = useTheme();
   const local = row.local;
   const localLabel = local ? [local.draft ? '下書き' : '', ...local.states.map(queueStateLabel)].filter(Boolean).join(' · ') : '';
+  const appearanceRead = readChatAppearance(row.appearance);
+  const growth = appearanceRead.status === 'ready' ? chatProgress(appearanceRead.value.growthDays) : null;
+  const growthStage = growth ? (growth.stage === 0 ? '初期' : `${growth.stage}日段階`) : null;
   return <Pressable testID={`chat-row-${row.peer_id}`} accessibilityRole="button" accessibilityState={{ selected }}
     accessibilityHint="この相手との会話を開きます" onPress={() => onOpen(row.peer_id)}
     style={({ pressed }) => [styles.row, { borderColor: tokens.line, backgroundColor: selected ? tokens.accentSoft : tokens.surface, opacity: pressed ? 0.7 : 1 }]}>
     <Text allowFontScaling style={[styles.name, { color: tokens.text }]}>{row.peer.display_name}</Text>
+    <View style={styles.growth} accessible={false}>
+      <Text testID={`chat-row-growth-${row.peer_id}`} allowFontScaling style={[styles.body, { color: tokens.muted }]}>
+        {growth ? growth.copy.current : '確認中'}
+      </Text>
+      {growthStage !== null && <Text testID={`chat-row-growth-stage-${row.peer_id}`} allowFontScaling style={[styles.body, { color: tokens.muted }]}>
+        {growthStage}
+      </Text>}
+    </View>
     {current && <>
       <Text allowFontScaling style={[styles.body, { color: tokens.muted }]}>{row.roles.send && row.roles.reply ? '送信・返信の対象' : row.roles.reply ? '返信の対象' : '送信の対象'}</Text>
       {row.status && <Text allowFontScaling style={[styles.body, { color: tokens.text }]}>{statusLabels[row.status]}</Text>}
@@ -82,6 +95,7 @@ export function ChatList({ onOpen, onNew, selectedPeerId = null }: {
 const styles = StyleSheet.create({
   content: { gap: spacing.s4 }, section: { gap: spacing.s3 },
   row: { minHeight: 48, borderWidth: 1, borderRadius: radius.md, padding: spacing.s4, gap: spacing.s2 },
+  growth: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.s1 },
   name: { fontSize: typography.sizes.bodyLarge, fontWeight: typography.weights.semibold, lineHeight: typography.sizes.bodyLarge * typography.lineHeightRatio },
   heading: { fontSize: typography.sizes.bodyLarge, fontWeight: typography.weights.semibold, lineHeight: typography.sizes.bodyLarge * typography.lineHeightRatio },
   body: { fontSize: typography.sizes.body, lineHeight: typography.sizes.body * typography.lineHeightRatio },

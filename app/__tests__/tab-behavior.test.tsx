@@ -129,6 +129,8 @@ async function renderApp(initialUrl: string) {
 describe('focused tab re-selection (spec line 32)', () => {
   it('keeps new-chat selection inside the chat stack and pops it on chat tab reselect', async () => {
     const { app } = await renderApp('/chat');
+    // The tab set and its unread label are unchanged by the appearance scope.
+    expect(screen.getByTestId('tab-chat').props.accessibilityLabel).toBe('チャット、未読を確認中');
     await fireEvent.press(screen.getByText('新しいチャット'));
     await waitFor(() => expect(app.getPathname()).toBe('/chat/new'));
     await fireEvent.press(screen.getByTestId('tab-friends'));

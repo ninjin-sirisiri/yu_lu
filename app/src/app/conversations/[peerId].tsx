@@ -2,6 +2,7 @@ import React from 'react';
 import { Redirect, useIsFocused, useLocalSearchParams, useRouter } from 'expo-router';
 import { Text } from 'react-native';
 import { useAuth } from '../../auth/provider';
+import { AppearanceScope } from '../../appearance/provider';
 import { ConversationPanel } from '../../messages/ConversationPanel';
 import { conversationFallback, parseConversationEntry } from '../../navigation/conversationEntry';
 import { Screen } from '../../ui/Screen';
@@ -17,9 +18,11 @@ export default function ConversationRoute() {
   if (auth.registration !== 'registered') return <Redirect href="/register" />;
   const entry = parseConversationEntry(params);
   if (!entry || entry.peerId === auth.accountId) return <Redirect href="/chat" />;
-  return <ConversationPanel key={`${auth.accountId}:${entry.peerId}`} peerId={entry.peerId} active={focused}
-    onOpenSendStatus={() => router.push('/mypage/sync')} onBack={() => {
-    if (router.canGoBack()) router.back();
-    else router.replace(conversationFallback(entry.peerId, entry.origin));
-  }} />;
+  return <AppearanceScope role="conversation" peerId={entry.peerId} active={focused}>
+    <ConversationPanel key={`${auth.accountId}:${entry.peerId}`} peerId={entry.peerId} active={focused}
+      onOpenSendStatus={() => router.push('/mypage/sync')} onBack={() => {
+      if (router.canGoBack()) router.back();
+      else router.replace(conversationFallback(entry.peerId, entry.origin));
+    }} />
+  </AppearanceScope>;
 }

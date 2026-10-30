@@ -5,6 +5,7 @@ import { Dimensions, View } from 'react-native';
 import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
 
 import { AppearancePreferencesProvider } from '../appearance/preferences';
+import { AppearanceProvider } from '../appearance/provider';
 import { AuthProvider } from '../auth/provider';
 import { AvatarProbeHost } from '../media/avatarProbe';
 import { AuthenticatedChatProvider } from '../messages/provider';
@@ -99,7 +100,12 @@ export default function RootLayout() {
                 theme provider (independent state) and above the router, so
                 they never remount the current screen. */}
             <AppearancePreferencesProvider>
-              <ThemedRoot />
+              {/* Task 12: display hierarchy inside the existing chat owner
+                  and theme/preference providers. It decorates nothing by
+                  itself; only explicit authenticated scopes apply a visual. */}
+              <AppearanceProvider>
+                <ThemedRoot />
+              </AppearanceProvider>
             </AppearancePreferencesProvider>
           </ThemeProvider>
         </AuthenticatedChatProvider>

@@ -3,6 +3,7 @@ import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { Link, usePathname } from 'expo-router';
 
 import { useTheme } from '../theme/provider';
+import { useAppearanceScope } from '../appearance/provider';
 import { useScreenInsets } from '../ui/Screen';
 import { radius, spacing, typography } from '../theme/tokens';
 import { useChatUnreadBadge } from '../messages/unreadBadge';
@@ -150,13 +151,19 @@ export function AdaptiveLayout({
   testID = 'adaptive-layout',
 }: AdaptiveLayoutProps) {
   const { tokens } = useTheme();
+  const scope = useAppearanceScope();
   const { mode } = useLayoutMetrics(metrics);
   const { selectedPeerId } = useAdaptiveLayoutState();
+  // The authenticated frame already owns the visual; panes keep the same
+  // opaque body surface so token text stays readable. No decoration is
+  // painted here and no layout/measurement changes.
+  const paneSurface = scope?.visual?.bodySurface ?? tokens.surface;
+  const paneLine = scope?.visual?.border ?? tokens.line;
 
   if (mode === 'split') {
     return (
       <View
-        style={[styles.row, { backgroundColor: tokens.surface }]}
+        style={[styles.row, { backgroundColor: paneSurface }]}
         testID={testID}
         accessibilityLabel="一覧と詳細の2列表示"
       >
@@ -164,14 +171,14 @@ export function AdaptiveLayout({
         <View
           style={[
             styles.listPane,
-            { width: listPaneWidth, borderColor: tokens.line, backgroundColor: tokens.surface },
+            { width: listPaneWidth, borderColor: paneLine, backgroundColor: paneSurface },
           ]}
           testID={`${testID}-list`}
         >
           {list}
         </View>
         <View
-          style={[styles.detailPane, { backgroundColor: tokens.surface }]}
+          style={[styles.detailPane, { backgroundColor: paneSurface }]}
           testID={`${testID}-detail`}
         >
           {selectedPeerId === null ? emptyDetail : detail}
@@ -183,7 +190,7 @@ export function AdaptiveLayout({
   // Single column: one pane at a time; the shared selection decides which.
   return (
     <View
-      style={[styles.column, { backgroundColor: tokens.surface }]}
+      style={[styles.column, { backgroundColor: paneSurface }]}
       testID={testID}
       accessibilityLabel="1列表示"
     >
@@ -231,6 +238,17 @@ export interface LeftNavProps {
 export function LeftNav({ metrics, testID = 'left-nav' }: LeftNavProps) {
   const unread = useChatUnreadBadge();
   const { tokens } = useTheme();
+  const scope = useAppearanceScope();
+  const visual = scope?.role === 'personal' ? scope.visual : null;
+  const navBackground = visual?.secondary ?? tokens.board;
+  const navLine = visual?.border ?? tokens.boardLine;
+  // The rail is part of the authenticated personal frame. These inks are
+  // guaranteed readable on the visual secondary surface; without a scope the
+  // approved board tokens are unchanged.
+  const navInk = visual?.text ?? tokens.boardText;
+  const navMuted = visual?.mutedText ?? tokens.boardMuted;
+  const activeBackground = visual?.bodySurface ?? tokens.accentSoft;
+  const activeBorder = visual?.accent ?? tokens.accent;
   const insets = useScreenInsets();
   const pathname = usePathname();
   const { mode } = useLayoutMetrics(metrics);
@@ -243,7 +261,7 @@ export function LeftNav({ metrics, testID = 'left-nav' }: LeftNavProps) {
       accessibilityLabel="メインナビゲーション"
       style={[
         styles.nav,
-        { backgroundColor: tokens.board, borderRightColor: tokens.boardLine, paddingTop: insets.top + spacing.s4 },
+        { backgroundColor: navBackground, borderRightColor: navLine, paddingTop: insets.top + spacing.s4 },
       ]}
       testID={testID}
     >
@@ -261,15 +279,15 @@ export function LeftNav({ metrics, testID = 'left-nav' }: LeftNavProps) {
             style={[
               styles.navItem,
               {
-                backgroundColor: active ? tokens.accentSoft : 'transparent',
-                borderColor: active ? tokens.accent : 'transparent',
+                backgroundColor: active ? activeBackground : 'transparent',
+                borderColor: active ? activeBorder : 'transparent',
               },
             ]}
           >
             <Text
               style={[
                 styles.navLabel,
-                { color: active ? tokens.accent : tokens.boardMuted },
+                { color: active ? navInk : navMuted },
                 active && styles.navLabelActive,
               ]}
               allowFontScaling

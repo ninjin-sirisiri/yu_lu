@@ -81,6 +81,10 @@ it('shows ALL daily targets, merges mutual roles once, and orders server states 
   expect(rows).toHaveLength(25);
   expect(rows.slice(0, 4).map(r => r.props.testID)).toEqual([`chat-row-${peer(1)}`, `chat-row-${peer(2)}`, `chat-row-${peer(3)}`, `chat-row-${peer(4)}`]);
   expect(within(rows[0]).getByText('送信・返信の対象')).toBeTruthy();
+  // Task 12: the row carries its confirmed shared growth as a small mark; it
+  // neither changes unread meaning/order nor adds a column.
+  expect(within(rows[0]).getByText('累計3日')).toBeTruthy();
+  expect(within(rows[0]).getByText('1日段階')).toBeTruthy();
   expect(await listReadIntents(db, A)).toHaveLength(0);
 });
 

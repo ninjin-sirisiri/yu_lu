@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View, type FlatListProps } from 'react-native';
 import { ChatAppearancePicker } from '../appearance/ChatAppearancePicker';
+import { useAppearanceScope } from '../appearance/provider';
 import { createImageStore, expoFileSystemPort } from '../storage/files';
 import type { OutboxRecord } from '../storage/outbox';
 import { queueStateLabel, formatSyncStamp } from '../sync/SyncStatus';
@@ -100,6 +101,14 @@ export function ConversationPanel(props: ConversationPanelProps) {
 function OwnedConversationPanel({ peerId, active = true, onBack, loadImage: injectedLoader, media, onOpenSendStatus }: ConversationPanelProps) {
   const chat = useChat()!;
   const { tokens } = useTheme();
+  const scope = useAppearanceScope();
+  // A conversation uses ONLY its explicit conversation scope. A surrounding
+  // personal frame is never borrowed for the bubbles or header.
+  const appearance = scope?.role === 'conversation' && scope.peerId === peerId ? scope : null;
+  const visual = appearance?.visual ?? null;
+  const growth = appearance?.conversationProgress ?? null;
+  const ink = visual?.text ?? tokens.text;
+  const mutedInk = visual?.mutedText ?? tokens.muted;
   const insets = useScreenInsets();
   const peer = chat.getConversation(peerId);
   const viewport = useMemo(() => viewportFor(chat.session, peerId), [chat.session, peerId]);
@@ -193,6 +202,21 @@ function OwnedConversationPanel({ peerId, active = true, onBack, loadImage: inje
       target.status === 'achieved' ? '達成済み' : target.status === 'waiting' ? 'メッセージ待ち' : target.status === 'reply_needed' ? '返信が必要'
         : target.status === 'send_needed' ? '送信が必要' : '状態を確認中'].filter(Boolean).join(' · ') : null;
   const historyHeader = <View style={styles.section}>
+      {appearance && <View testID="conversation-growth" style={styles.growth}>
+        {growth ? <>
+          <Text testID="conversation-growth-current" allowFontScaling style={[styles.growthCurrent, { color: visual?.text ?? tokens.text }]}>
+            {growth.copy.current}
+          </Text>
+          <Text testID="conversation-growth-stage" allowFontScaling style={{ color: mutedInk }}>
+            {growth.copy.stage}
+          </Text>
+          <Text testID="conversation-growth-next" allowFontScaling style={{ color: mutedInk }}>
+            {growth.copy.next}
+          </Text>
+        </> : <Text testID="conversation-growth-checking" allowFontScaling style={{ color: mutedInk }}>
+          見た目を確認中
+        </Text>}
+      </View>}
       {(!chat.connected || chat.refreshPending || chat.error || chat.pendingReadSync || chat.home?.unreadCountsExact === false) &&
         <Text allowFontScaling accessibilityLiveRegion="polite" style={{ color: tokens.muted }}>
           同期確認中です。未読件数や履歴は最新でない可能性があります。
@@ -228,20 +252,25 @@ function OwnedConversationPanel({ peerId, active = true, onBack, loadImage: inje
           viewport.following = !metadata?.after_cursor && contentSize.height - layoutMeasurement.height - contentOffset.y < 48;
           if (viewport.following) setArrival(false);
         }} scrollEventThrottle={16}
-        ListEmptyComponent={<Text allowFontScaling style={{ color: tokens.muted }}>まだメッセージはありません</Text>}
+        ListEmptyComponent={<Text allowFontScaling style={{ color: mutedInk }}>まだメッセージはありません</Text>}
         renderItem={({ item, index }) => {
           const day = new Date(item.acceptedAt).toLocaleDateString();
           const showDay = index === 0 || new Date(messages[index - 1].acceptedAt).toLocaleDateString() !== day;
           return <View style={styles.section}>
-            {showDay && <Text allowFontScaling style={{ color: tokens.muted }}>{day}</Text>}
-            {item.sequence === firstUnread && <Text allowFontScaling style={{ color: tokens.muted }}>ここから未読</Text>}
-            <View style={[styles.message, { backgroundColor: item.senderId === chat.accountId ? tokens.accentSoft : tokens.soft }]}>
-              <Text allowFontScaling style={[styles.body, { color: tokens.text }]}>
+            {showDay && <Text allowFontScaling style={{ color: mutedInk }}>{day}</Text>}
+            {item.sequence === firstUnread && <Text allowFontScaling style={{ color: mutedInk }}>ここから未読</Text>}
+            <View testID={`message-bubble-${item.messageId}`}
+              style={[styles.message, {
+                backgroundColor: visual
+                  ? (item.senderId === chat.accountId ? visual.bubbleOut : visual.bubbleIn)
+                  : (item.senderId === chat.accountId ? tokens.accentSoft : tokens.soft),
+              }]}>
+              <Text allowFontScaling style={[styles.body, { color: ink }]}>
                 {item.withdrawn ? 'このメッセージは取り消されています' : item.body}
               </Text>
               {!item.withdrawn && item.imagePaths.map((remotePath, i) => <Button key={remotePath} label={`画像 ${i + 1}を開く`}
                 variant="secondary" onPress={() => setImage({ messageId: item.messageId, remotePath })} />)}
-              <Text allowFontScaling style={{ color: tokens.muted }}>{new Date(item.acceptedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{item.senderId === chat.accountId ? ' · 送信済み' : ''}</Text>
+              <Text allowFontScaling style={{ color: mutedInk }}>{new Date(item.acceptedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{item.senderId === chat.accountId ? ' · 送信済み' : ''}</Text>
             </View>
           </View>;
         }}
@@ -249,7 +278,7 @@ function OwnedConversationPanel({ peerId, active = true, onBack, loadImage: inje
           {snapshot.pending.length > 1 && <Text allowFontScaling style={{ color: tokens.muted }}>同じ相手への送信は順番待ちです · 後続 {snapshot.pending.length - 1}件</Text>}
           {[...snapshot.pending, ...snapshot.cancelled].map(row => <LocalMessage key={row.operationId} row={row}
             canSend={snapshot.canSend} media={media} run={action => void run(action)} />)}
-        </View>} /> : <ScrollView style={styles.flex}>{historyHeader}<Text allowFontScaling style={{ color: tokens.muted }}>履歴を読み込み中…</Text></ScrollView>}
+        </View>} /> : <ScrollView style={styles.flex}>{historyHeader}<Text allowFontScaling style={{ color: mutedInk }}>履歴を読み込み中…</Text></ScrollView>}
       <Button label={arrival ? '新着メッセージへ' : '最新へ'} disabled={busy || !active || !chat.foreground}
         onPress={() => void run(async () => {
           if (await peer.jumpLatest()) {
@@ -278,6 +307,8 @@ const styles = StyleSheet.create({
   flex: { flex: 1 }, actions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.s2 },
   headerActions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.s1, justifyContent: 'flex-end' },
   pickerSlot: { gap: spacing.s1 }, section: { gap: spacing.s2 }, history: { paddingVertical: spacing.s3, gap: spacing.s3 },
+  growth: { gap: spacing.s1 }, growthCurrent: { fontSize: typography.sizes.bodyLarge, fontWeight: typography.weights.semibold,
+    lineHeight: typography.sizes.bodyLarge * typography.lineHeightRatio },
   message: { padding: spacing.s3, gap: spacing.s2 }, local: { borderWidth: 1, padding: spacing.s3, gap: spacing.s2 },
   body: { fontSize: typography.sizes.bodyLarge, lineHeight: typography.sizes.bodyLarge * typography.lineHeightRatio },
   thumbnail: { width: '100%', height: 144 }, composer: { flexGrow: 0, flexShrink: 1, maxHeight: '55%' },

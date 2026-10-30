@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { ChatList } from './ChatList';
 import { ConversationPanel } from './ConversationPanel';
+import { AppearanceScope } from '../appearance/provider';
 import { useChat } from './provider';
 import { useLayoutMetrics } from '../navigation/AdaptiveLayout';
 import { subscribeTabReselect } from '../navigation/tabReselect';
@@ -30,8 +31,10 @@ export function ChatWorkspace({ active, onNew, onOpen, onOpenSendStatus }: {
       }} />
     </View>
     <View style={[styles.flex, !split && !selected ? styles.hidden : null, { borderColor: tokens.line }, split ? styles.detail : null]}>
-      {selected ? <ConversationPanel peerId={selected} active={active} onBack={() => setSelection(null)}
-        onOpenSendStatus={onOpenSendStatus} /> : split ?
+      {selected ? <AppearanceScope role="conversation" peerId={selected} active={active}>
+        <ConversationPanel peerId={selected} active={active} onBack={() => setSelection(null)}
+          onOpenSendStatus={onOpenSendStatus} />
+      </AppearanceScope> : split ?
         <Text allowFontScaling style={[styles.empty, { color: tokens.muted }]}>会話する相手を選んでください</Text> : null}
     </View>
   </View>;

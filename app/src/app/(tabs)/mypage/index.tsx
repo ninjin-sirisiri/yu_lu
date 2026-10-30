@@ -4,6 +4,7 @@ import { StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
 
 import { createDeviceLogoutPorts, performLogout, type UnsentSummary } from '../../../auth/logout';
 import { useAuth } from '../../../auth/provider';
+import { useAppearanceScope } from '../../../appearance/provider';
 import { getOwnPublication, type ProfilePublication } from '../../../backend/profile';
 import { defaultIsOnline } from '../../../discovery/searchController';
 import { subscribeAppResume } from '../../../requests/friendsRepository';
@@ -59,6 +60,9 @@ export default function MypageScreen() {
   const router = useRouter();
   const auth = useAuth();
   const { tokens } = useTheme();
+  const appearance = useAppearanceScope();
+  const personal = appearance?.role === 'personal' ? appearance : null;
+  const appearanceProgress = personal?.personalProgress ?? null;
   const [unfinished, setUnfinished] = useState(0);
   const [profileState, setProfileState] = useState<ProfileLoadState>('loading');
   const [publication, setPublication] = useState<ProfilePublication | null>(null);
@@ -222,6 +226,40 @@ export default function MypageScreen() {
     <Screen scroll testID="mypage-screen" scrollViewRef={scrollRef}>
       <View style={styles.center}>
         <Text style={[styles.title, { color: tokens.text }]}>マイページ</Text>
+
+        {personal && (appearanceProgress ? (
+          <View testID="mypage-personal-growth" style={styles.growth}>
+            <Text
+              testID="mypage-personal-current"
+              allowFontScaling
+              style={[styles.body, { color: personal.visual?.text ?? tokens.text }]}
+            >
+              {appearanceProgress.copy.current}
+            </Text>
+            <Text
+              testID="mypage-personal-stage"
+              allowFontScaling
+              style={[styles.body, { color: personal.visual?.mutedText ?? tokens.muted }]}
+            >
+              {appearanceProgress.copy.stage}
+            </Text>
+            <Text
+              testID="mypage-personal-next"
+              allowFontScaling
+              style={[styles.body, { color: personal.visual?.mutedText ?? tokens.muted }]}
+            >
+              {appearanceProgress.copy.next}
+            </Text>
+          </View>
+        ) : (
+          <Text
+            testID="mypage-personal-checking"
+            allowFontScaling
+            style={[styles.body, { color: personal.visual?.mutedText ?? tokens.muted }]}
+          >
+            見た目を確認中
+          </Text>
+        ))}
 
         {profileState === 'loading' && (
           <Text style={[styles.placeholder, { color: tokens.muted }]} testID="mypage-profile-loading">
@@ -393,6 +431,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.s1,
     paddingHorizontal: spacing.s4,
+  },
+  growth: {
+    alignItems: 'center',
+    gap: spacing.s1,
   },
   name: {
     fontSize: typography.sizes.bodyLarge,

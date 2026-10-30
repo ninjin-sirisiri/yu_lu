@@ -776,6 +776,27 @@ describe('shared UI components', () => {
     expect(style).toContain('34'); // bottom inset
     expect(style).toContain('#ffffff'); // themed surface
   });
+
+  // Task 12: auth screens and any Screen outside an explicit authenticated
+  // appearance scope remain exactly the plain token frame.
+  it('leaves a Screen without an appearance scope undecorated on the token surface', async () => {
+    await render(
+      <ThemeProvider store={memoryStore().store} deviceScheme="light">
+        <Screen title="ログイン" testID="plain-screen">
+          <Text>中身</Text>
+        </Screen>
+      </ThemeProvider>,
+    );
+
+    const style = JSON.stringify(screen.getByTestId('plain-screen').props.style);
+    expect(style).toContain(lightTokens.surface);
+    expect(
+      screen.queryByTestId('plain-screen-decorations', { includeHiddenElements: true }),
+    ).toBeNull();
+    expect(
+      JSON.stringify(screen.getByRole('header', { name: 'ログイン' }).props.style),
+    ).toContain(lightTokens.text);
+  });
 });
 
 // ---------------------------------------------------------------------------

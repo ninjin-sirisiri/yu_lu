@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Image, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
 import { profileImageUrl } from '../backend/profile';
+import { useAppearanceScope } from '../appearance/provider';
 import type { RepositorySession } from '../messages/repository';
 import { useChat } from '../messages/provider';
 import type { ChatListRow } from '../messages/chatListRows';
@@ -73,6 +74,9 @@ export function HomeDashboard({ onOpen, onFriends, onChat }: {
 }) {
   const chat = useChat();
   const { tokens } = useTheme();
+  const appearance = useAppearanceScope();
+  const personal = appearance?.role === 'personal' ? appearance : null;
+  const appearanceProgress = personal?.personalProgress ?? null;
   const { mode } = useLayoutMetrics();
   const scroll = useRef<ScrollViewInstance>(null);
   useEffect(() => subscribeTabReselect('home', () => scrollRefToTop(scroll)), []);
@@ -88,6 +92,19 @@ export function HomeDashboard({ onOpen, onFriends, onChat }: {
   const replies = targets.filter(row => row.roles.reply && !row.roles.send);
   const participation = home?.participation;
   return <Screen title="今日のつながり" scroll scrollViewRef={scroll} testID="home-dashboard" contentStyle={styles.content}>
+    {personal && (appearanceProgress ? <View testID="home-personal-growth" style={styles.growth}>
+      <Text testID="home-personal-current" allowFontScaling style={[styles.body, { color: personal.visual?.text ?? tokens.text }]}>
+        {appearanceProgress.copy.current}
+      </Text>
+      <Text testID="home-personal-stage" allowFontScaling style={[styles.body, { color: personal.visual?.mutedText ?? tokens.muted }]}>
+        {appearanceProgress.copy.stage}
+      </Text>
+      <Text testID="home-personal-next" allowFontScaling style={[styles.body, { color: personal.visual?.mutedText ?? tokens.muted }]}>
+        {appearanceProgress.copy.next}
+      </Text>
+    </View> : <Text testID="home-personal-checking" allowFontScaling style={[styles.body, { color: personal.visual?.mutedText ?? tokens.muted }]}>
+      見た目を確認中
+    </Text>)}
     {home && <>
       <Text allowFontScaling style={[styles.body, { color: tokens.muted }]}>{`対象日：${home.daily_key}（日本時間）`}</Text>
       <View style={[styles.summary, { borderColor: tokens.line }]}>
@@ -139,6 +156,7 @@ export function HomeDashboard({ onOpen, onFriends, onChat }: {
 }
 const styles = StyleSheet.create({
   content: { gap: spacing.s5 }, section: { gap: spacing.s3 }, columns: { gap: spacing.s5, alignItems: 'stretch' },
+  growth: { gap: spacing.s1 },
   column: { gap: spacing.s3, minWidth: 0 }, splitColumn: { flex: 1 },
   identity: { flexDirection: 'row', alignItems: 'center', gap: spacing.s3 }, name: { flexShrink: 1 },
   avatar: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },

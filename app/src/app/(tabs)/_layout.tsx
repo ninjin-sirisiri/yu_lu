@@ -3,6 +3,7 @@ import { Redirect, Tabs } from 'expo-router';
 import { Text, View } from 'react-native';
 
 import { useAuth } from '../../auth/provider';
+import { AppearanceScope } from '../../appearance/provider';
 import { LeftNav, useLayoutMetrics } from '../../navigation/AdaptiveLayout';
 import { emitTabReselect } from '../../navigation/tabReselect';
 import { useTheme } from '../../theme/provider';
@@ -107,16 +108,22 @@ export default function TabLayout() {
 
   if (mode === 'split') {
     return (
-      <View style={{ flex: 1, flexDirection: 'row', backgroundColor: tokens.surface }}>
-        <LeftNav />
-        <View style={{ flex: 1 }}>
-          <Tabs screenListeners={tabScreenListeners} screenOptions={{ tabBarStyle: { display: 'none' } }}>
-            {screens}
-          </Tabs>
+      <AppearanceScope role="personal" active={auth.status === 'ready'}>
+        <View style={{ flex: 1, flexDirection: 'row', backgroundColor: tokens.surface }}>
+          <LeftNav />
+          <View style={{ flex: 1 }}>
+            <Tabs screenListeners={tabScreenListeners} screenOptions={{ tabBarStyle: { display: 'none' } }}>
+              {screens}
+            </Tabs>
+          </View>
         </View>
-      </View>
+      </AppearanceScope>
     );
   }
 
-  return <Tabs screenListeners={tabScreenListeners}>{screens}</Tabs>;
+  return (
+    <AppearanceScope role="personal" active={auth.status === 'ready'}>
+      <Tabs screenListeners={tabScreenListeners}>{screens}</Tabs>
+    </AppearanceScope>
+  );
 }
