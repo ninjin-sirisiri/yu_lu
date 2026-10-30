@@ -24,7 +24,7 @@ import type { ChatImageDeps } from '../src/media/chatImages';
 import { ThemeProvider } from '../src/theme/provider';
 import { listReadIntents, readChatDraft } from '../src/storage/chat';
 import { getOperation, listOperations } from '../src/storage/outbox';
-import { A, B, C, api, home, summary, key, message, page, deferred } from '../src/messages/repositoryTestSupport';
+import { A, B, C, E, api, home, summary, key, message, page, deferred } from '../src/messages/repositoryTestSupport';
 
 let mockAuth: any = { status: 'ready', accountId: A, registration: 'registered' };
 jest.mock('../src/auth/provider', () => ({ useAuth: () => mockAuth }));
@@ -36,6 +36,7 @@ const IMAGE_FIXTURE_CREDENTIAL = 'fixture-token';
 const IMAGE_FIXTURE_KEY = 'public-fixture';
 let db: AppStorage, dir: string, store: ChatStore;
 let client: ReturnType<typeof api>;
+let commandSend: jest.Mock;
 const themeStore = { read: async () => null, write: async () => {} };
 const factory = () => store;
 function Harness({ children }: { children: React.ReactNode }) {
@@ -51,8 +52,9 @@ beforeEach(async () => {
   dir = fs.mkdtempSync(path.join(temporaryRoot, 'conversation-'));
   db = await openAppDatabase({ driver: new NodeSqliteDriver(path.join(dir, 'app.db')) });
   client = api();
+  commandSend = jest.fn(async () => ({ status: 'transient' }));
   store = createChatStore({ storage: db, accountId: A, getAccountId: async () => A, client,
-    commandApi: { send: async () => ({ status: 'transient' }) }, realtime: { subscribe: () => () => {} },
+    commandApi: { send: commandSend }, realtime: { subscribe: () => () => {} },
     appState: null, network: null });
   mockAuth = { status: 'ready', accountId: A, registration: 'registered', storage: db };
 });
@@ -476,4 +478,40 @@ it('does not present a committed enqueue as failed when only snapshot publicatio
     expect((await readChatDraft(db, A, B))?.body).toBe('');
     expect(screen.queryByText('入力を保存できませんでした')).toBeNull();
   } finally { read.mockRestore(); }
+});
+
+it('opens the shared appearance picker without remounting the composer, refetches the confirmed setting, and keeps sending while open', async () => {
+  await panel();
+  await fireEvent.changeText(screen.getByLabelText('メッセージ'), 'picker draft');
+  await waitFor(async () => expect((await readChatDraft(db, A, B))?.body).toBe('picker draft'));
+
+  await fireEvent.press(screen.getByTestId('conversation-appearance-button'));
+  expect(await screen.findByTestId('chat-appearance-picker')).toBeTruthy();
+  await fireEvent.scroll(screen.getByTestId('conversation-history'), { nativeEvent: {
+    layoutMeasurement: { height: 200 }, contentOffset: { y: 10 }, contentSize: { height: 1000 } } });
+  expect(screen.getByText('m2')).toBeTruthy();
+  expect(screen.getByLabelText('メッセージ').props.value).toBe('picker draft');
+
+  commandSend.mockResolvedValue({ status: 'ok' });
+  (client.getMessages as jest.Mock).mockResolvedValue(page(undefined, { appearance: {
+    growth_days: 3, auto_preset_id: 'b-pop', selected_preset_id: 'b-candy', effective_preset_id: 'b-candy',
+    catalog_version: 1, settings_revision: 8, can_change: true,
+  } }));
+
+  await fireEvent.press(screen.getByTestId('appearance-sample-b-candy'));
+  await fireEvent.press(screen.getByTestId('appearance-apply'));
+  await waitFor(() => expect(commandSend).toHaveBeenCalledTimes(1));
+  expect(commandSend.mock.calls[0][0]).toMatchObject({
+    accountId: A, kind: 'set_chat_appearance',
+    payload: { peer_id: B, friendship_epoch: E, preset_id: 'b-candy' },
+  });
+  expect(await screen.findByText(/最後の確定設定: キャンディ/)).toBeTruthy();
+  expect(screen.getByLabelText('メッセージ').props.value).toBe('picker draft');
+
+  await fireEvent.press(screen.getByTestId('appearance-close'));
+  expect(screen.queryByTestId('chat-appearance-picker')).toBeNull();
+  expect(screen.getByLabelText('メッセージ').props.value).toBe('picker draft');
+  await fireEvent.press(screen.getByLabelText('送信'));
+  await waitFor(async () => expect(await listOperations(db, A)).toHaveLength(1));
+  expect(screen.getByText('m2')).toBeTruthy();
 });

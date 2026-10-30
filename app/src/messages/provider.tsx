@@ -15,6 +15,7 @@ import { createChatRealtime, type ChatRealtimePort } from './realtime';
 import { createReadStateRepository } from './readState';
 import { createConversationRepository, createRepositorySession, type ConversationSnapshot } from './repository';
 import { createAppearanceObservationStore } from '../appearance/observations';
+import { createSharedAppearanceSettings } from '../appearance/sharedSettings';
 import type { ChatDraft as StoredChatDraft } from './types';
 import type { ChatArrival } from '../notify/chatArrivals';
 
@@ -34,6 +35,8 @@ export interface ChatStoreDeps {
   /** Wake the EXISTING shared sender, never another worker/FIFO. Not awaited by reads. */
   drainOutbox?(): Promise<unknown>;
   elapsedNow?: () => number; random?: () => number;
+  /** Injected connectivity probe for shared appearance commands. */
+  isOnline?: () => boolean;
 }
 
 /** One irreversible account owner. Platform/transport ports are injected; the
@@ -46,6 +49,11 @@ export function createChatStore(deps: ChatStoreDeps) {
   // previous lifetime fail both the repository token fence and this owner.
   const appearanceObservations = createAppearanceObservationStore({
     accountId: deps.accountId, owner: session.owner, now,
+  });
+  // One command owner per store lifetime. It uses only the normal account
+  // cache and the same repository-session fence as messages/read state.
+  const sharedAppearance = createSharedAppearanceSettings({
+    session, commandApi: deps.commandApi, isOnline: deps.isOnline, random: deps.random,
   });
   let foregroundGeneration = 0;
   let noticeGeneration = 0;
@@ -326,6 +334,7 @@ export function createChatStore(deps: ChatStoreDeps) {
   return {
     session,
     appearanceObservations,
+    sharedAppearance,
     reads: { ...reads, async record(peerId: string, conversationId: string, ids: readonly string[], through: number | null) {
       await reads.record(peerId, conversationId, ids, through);
       if (!stopped) { await publish(); requestReads(); }

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View, type FlatListProps } from 'react-native';
+import { ChatAppearancePicker } from '../appearance/ChatAppearancePicker';
 import { createImageStore, expoFileSystemPort } from '../storage/files';
 import type { OutboxRecord } from '../storage/outbox';
 import { queueStateLabel, formatSyncStamp } from '../sync/SyncStatus';
@@ -107,6 +108,7 @@ function OwnedConversationPanel({ peerId, active = true, onBack, loadImage: inje
   const [image, setImage] = useState<ViewedImage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
   const locked = useRef(false);
   const visible = useRef<AcceptedMessage[]>([]);
   const previousLatest = useRef<number | null>(null);
@@ -205,7 +207,11 @@ function OwnedConversationPanel({ peerId, active = true, onBack, loadImage: inje
     </View>;
   return <KeyboardAvoidingView testID="conversation-keyboard-frame" style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={insets.top}>
     <Screen title={metadata?.peer.display_name || '以前の友達'} subtitle={role ?? undefined} testID="conversation-panel"
-      headerAccessory={onBack && <Button label="戻る" accessibilityLabel="元の画面へ戻る" variant="ghost" onPress={onBack} />}>
+      headerAccessory={<View style={styles.headerActions}>
+        <Button label="チャットの見た目" variant="ghost" testID="conversation-appearance-button"
+          onPress={() => setAppearanceOpen(open => !open)} />
+        {onBack && <Button label="戻る" accessibilityLabel="元の画面へ戻る" variant="ghost" onPress={onBack} />}
+      </View>}>
       {snapshot ? <FlatList ref={list} testID="conversation-history" data={messages} keyExtractor={m => m.messageId}
         style={styles.flex} contentContainerStyle={styles.history} initialNumToRender={50}
         maintainVisibleContentPosition={{ minIndexForVisible: 0 }} keyboardShouldPersistTaps="handled"
@@ -252,6 +258,14 @@ function OwnedConversationPanel({ peerId, active = true, onBack, loadImage: inje
           }
         })} />
       {metadata && !snapshot?.canSend && <Text allowFontScaling style={{ color: tokens.text }}>現在この相手には送信できません</Text>}
+      {/* Always-mounted slot: opening the picker must not shift the composer's
+          sibling position and remount the draft/input subtree. */}
+      <View testID="appearance-picker-slot" style={styles.pickerSlot}>
+        {appearanceOpen && <ChatAppearancePicker peerId={peerId} metadata={metadata ?? null}
+          active={active && chat.foreground && chat.activePeerId === peerId && !chat.stopped}
+          onClose={() => setAppearanceOpen(false)}
+          onRefetch={async () => peer.loadInitial()} />}
+      </View>
       <ScrollView style={styles.composer} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.section}>
         <Composer key={`${chat.accountId}:${peerId}`} peerId={peerId} canSend={snapshot?.canSend === true && active} media={media} />
       </ScrollView>
@@ -262,7 +276,8 @@ function OwnedConversationPanel({ peerId, active = true, onBack, loadImage: inje
 }
 const styles = StyleSheet.create({
   flex: { flex: 1 }, actions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.s2 },
-  section: { gap: spacing.s2 }, history: { paddingVertical: spacing.s3, gap: spacing.s3 },
+  headerActions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.s1, justifyContent: 'flex-end' },
+  pickerSlot: { gap: spacing.s1 }, section: { gap: spacing.s2 }, history: { paddingVertical: spacing.s3, gap: spacing.s3 },
   message: { padding: spacing.s3, gap: spacing.s2 }, local: { borderWidth: 1, padding: spacing.s3, gap: spacing.s2 },
   body: { fontSize: typography.sizes.bodyLarge, lineHeight: typography.sizes.bodyLarge * typography.lineHeightRatio },
   thumbnail: { width: '100%', height: 144 }, composer: { flexGrow: 0, flexShrink: 1, maxHeight: '55%' },
