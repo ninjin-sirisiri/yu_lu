@@ -14,8 +14,16 @@ An asynchronous conversation between friends using text and images; the particip
 
 _Avoid_: live chat, voice call, video call
 
+**Chat Growth**:
+The cumulative number of days on which both participants in a Chat send messages. It is shared by the two participants, is independent of Streak, and is retained through gaps in conversation and the ending or re-establishment of their friendship.
+
+_Avoid_: chat streak, message count
+
 **Streak**:
 A user's consecutive days of fulfilling the daily messaging requirement. Continuation requires sending messages both to the user's Send Target and to all Reply Targets; receiving a message alone does not fulfill the requirement.
+
+**Streak Appearance**:
+The app-wide appearance earned through a user's Streak, based on the greatest day count earned for that appearance. It retains progress between milestones even when the current Streak resets.
 
 **Send Target**:
 The single friend assigned to the user for the day. The user must send a message to this friend for Streak continuation.
