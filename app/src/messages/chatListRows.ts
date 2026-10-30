@@ -68,6 +68,7 @@ export async function localChatRows(session: RepositorySession, server: ChatSumm
         // Display metadata only. ConversationRepository still requires a live
         // confirmed relationship before enqueue; cached rows grant no capability.
         can_send: relationship?.can_send ?? false, friendship_epoch: relationship?.friendship_epoch ?? null,
+        appearance: relationship?.appearance,
         unread_count: counts.get(peerId) ?? 0, latest_sequence: lastMessage?.sequence ?? 0, last_message: lastMessage,
         roles: { send: false, reply: false }, send_completed: null, reply_state: null, status: null };
     } else if (lastMessage && (!row.last_message || lastMessage.sequence > row.last_message.sequence ||

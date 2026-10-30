@@ -11,6 +11,7 @@ import { countUnsentOperations } from '../auth/logout';
 import { createChatSendApi } from '../sync/chatPipeline';
 import { createSyncWorker } from '../sync/worker';
 import { createImageStore } from '../storage/files';
+import { createAppearanceObservationStore, type AppearanceObservation } from '../appearance/observations';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -24,10 +25,14 @@ beforeEach(async () => {
   session = createRepositorySession({ storage: db, accountId: A, getAccountId: async () => account });
 });
 afterEach(async () => { await db.close(); });
-function setup(peerId = B, client = api()) {
+function setup(peerId = B, client = api(), onObservation?: (observation: AppearanceObservation) => void) {
   let id = 90;
   const reads = createReadStateRepository({ session, newId: () => key(id++), commandApi: { send: async () => ({ status: 'unknown' }) } });
-  return { repo: createConversationRepository({ session, peerId, client, reads, now: () => 1000 }), client, reads };
+  return { repo: createConversationRepository({ session, peerId, client, reads, now: () => 1000, onObservation }), client, reads };
+}
+function observed(peerId = B, client = api()) {
+  const observations = createAppearanceObservationStore({ accountId: A, owner: session.owner, now: () => 1000 });
+  return { ...setup(peerId, client, observation => observations.accept(observation)), observations };
 }
 
 it('pages in both directions, deduplicates overlaps and retains server order', async () => {
@@ -243,4 +248,106 @@ it('rejects a revision invalidated during the final cache write', async () => {
   });
   expect(await repo.loadInitial()).toBe(false);
   expect(await listLocalMessages(db, A, B)).toEqual([]);
+});
+
+const appearanceAt = (growthDays: number) => ({
+  growth_days: growthDays, auto_preset_id: 'b-pop' as const, selected_preset_id: null,
+  effective_preset_id: 'b-pop' as const, catalog_version: 1, settings_revision: 0, can_change: true,
+});
+const streakAt = (currentStreak: number) => ({
+  current_streak: currentStreak, earned_days: 29, appearance_version: 1,
+});
+
+it('publishes exactly one conversation observation from a successful detail load, never from snapshot or cache', async () => {
+  const { repo, observations } = observed();
+  expect(observations.list()).toEqual([]);
+  expect(await repo.loadInitial()).toBe(true);
+  const published = observations.latest(`conversation:${B}`);
+  expect(observations.list()).toHaveLength(1);
+  expect(published).toMatchObject({
+    accountId: A, owner: session.owner, source: 'conversation', peerId: B, revision: 1,
+  });
+  expect(published?.personal).toEqual({
+    status: 'ready', value: { currentStreak: 2, earnedDays: 29, appearanceVersion: 1 },
+  });
+  expect(published?.shared).toMatchObject({ status: 'ready', value: { growthDays: 3 } });
+  await repo.snapshot();
+  expect(observations.list()).toEqual([published]);
+
+  // A fresh lifetime replaying the accepted cache is a display cache, not a
+  // canonical observation or a first baseline.
+  const cached = createAppearanceObservationStore({ accountId: A, owner: session.owner, now: () => 1000 });
+  const reopened = setup(B, api(), observation => cached.accept(observation)).repo;
+  expect((await reopened.snapshot()).metadata).not.toBeNull();
+  expect(cached.list()).toEqual([]);
+});
+
+it('publishes no observation when logout rejects the commit during an in-flight detail response', async () => {
+  const { repo, client, observations } = observed();
+  const pending = deferred<ReturnType<typeof page>>();
+  (client.getMessages as jest.Mock).mockReturnValueOnce(pending.promise);
+  const loading = repo.loadInitial();
+  await writeDeviceSetting(db, 'logout.pending', JSON.stringify({ accountId: A }));
+  pending.resolve(page());
+  expect(await loading).toBe(false);
+  expect(observations.list()).toEqual([]);
+});
+
+it('publishes no observation when the account changes or the revision is stale', async () => {
+  const changed = observed();
+  const pending = deferred<ReturnType<typeof page>>();
+  (changed.client.getMessages as jest.Mock).mockReturnValueOnce(pending.promise);
+  const loading = changed.repo.loadInitial();
+  account = C;
+  pending.resolve(page());
+  expect(await loading).toBe(false);
+  expect(changed.observations.list()).toEqual([]);
+
+  account = A;
+  const stale = observed();
+  session.observeRevision(9);
+  expect(await stale.repo.loadInitial()).toBe(false);
+  expect(stale.observations.list()).toEqual([]);
+});
+
+it('never lets an inverted or equal detail response overwrite a newer observation', async () => {
+  const { repo, client, observations } = observed();
+  (client.getMessages as jest.Mock).mockResolvedValueOnce(page([], {
+    revision: 5, appearance: appearanceAt(5), streak_appearance: streakAt(5),
+  }));
+  expect(await repo.loadInitial()).toBe(true);
+  const first = observations.latest(`conversation:${B}`);
+  expect(first).toMatchObject({ revision: 5 });
+  expect(first?.shared).toMatchObject({ status: 'ready', value: { growthDays: 5 } });
+
+  (client.getMessages as jest.Mock).mockResolvedValueOnce(page([], {
+    revision: 4, appearance: appearanceAt(4), streak_appearance: streakAt(4),
+  }));
+  expect(await repo.loadInitial()).toBe(false);
+  expect(observations.latest(`conversation:${B}`)).toBe(first);
+
+  // Equal revisions may commit metadata, but cannot advance the observation.
+  (client.getMessages as jest.Mock).mockResolvedValueOnce(page([], {
+    revision: 5, appearance: appearanceAt(9), streak_appearance: streakAt(9),
+  }));
+  expect(await repo.loadInitial()).toBe(true);
+  expect(observations.latest(`conversation:${B}`)).toBe(first);
+});
+
+it('does not replace the detail pair from before/after metadata at the same revision', async () => {
+  const { repo, client, observations } = observed();
+  await repo.loadInitial();
+  const first = observations.latest(`conversation:${B}`);
+
+  (client.getMessages as jest.Mock).mockResolvedValueOnce(page([], {
+    revision: 1, appearance: appearanceAt(8), streak_appearance: streakAt(8),
+  }));
+  expect(await repo.loadBefore()).toBe(true);
+  expect(observations.latest(`conversation:${B}`)).toBe(first);
+
+  (client.getMessages as jest.Mock).mockResolvedValueOnce(page([], {
+    revision: 1, appearance: appearanceAt(9), streak_appearance: streakAt(9),
+  }));
+  expect(await repo.loadAfter()).toBe(true);
+  expect(observations.latest(`conversation:${B}`)).toBe(first);
 });

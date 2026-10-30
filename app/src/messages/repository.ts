@@ -11,6 +11,9 @@ import { createSyncQueue } from '../sync/queue';
 import { validateChatBody } from './text';
 import type { AcceptedMessage, MessageReceipt } from './types';
 import type { ReadStateRepository } from './readState';
+import { conversationObservation, type AppearanceObservation } from '../appearance/observations';
+
+let nextRepositoryOwner = 0;
 
 /** One instance per authenticated provider lifetime. stop() is irreversible;
  * call it before logout/account switching, before the existing purge lifecycle.
@@ -18,6 +21,7 @@ import type { ReadStateRepository } from './readState';
 export function createRepositorySession(deps: {
   storage: Storage; accountId: string; getAccountId(): Promise<string | null>;
 }) {
+  const owner = ++nextRepositoryOwner;
   let stopped = false;
   let revision = 0;
   let generation = 0;
@@ -28,7 +32,7 @@ export function createRepositorySession(deps: {
     return (pending === null || pending === '') && await deps.getAccountId() === deps.accountId && !stopped;
   }
   return {
-    storage: deps.storage, accountId: deps.accountId, active,
+    storage: deps.storage, accountId: deps.accountId, owner, active,
     stop() { stopped = true; generation++; },
     invalidate() { generation++; },
     token: () => generation,
@@ -65,6 +69,7 @@ export async function stopObsoleteSends(db: Storage, accountId: string, peer: Ch
   await writeCache(db, accountId, `chat.relationship.${peer.peer_id}`, {
     peer_id: peer.peer_id, conversation_id: peer.conversation_id, peer: peer.peer,
     can_send: peer.can_send, friendship_epoch: peer.friendship_epoch,
+    appearance: peer.appearance,
   } satisfies ChatPeer, 0);
   for (const row of await listOperations(db, accountId, { orderingKey: peer.peer_id })) {
     if (row.kind !== 'send_message' || isChatTerminalState(row.state)) continue;
@@ -95,6 +100,8 @@ export interface ConversationSnapshot {
 
 export function createConversationRepository(deps: {
   session: RepositorySession; peerId: string; client: ChatClient; reads: ReadStateRepository; now?: () => number;
+  /** Called only after a live detail response commits. Never from snapshot/cache. */
+  onObservation?(observation: AppearanceObservation): void;
 }) {
   const { session, peerId, client, reads } = deps;
   const now = deps.now ?? Date.now;
@@ -177,7 +184,15 @@ export function createConversationRepository(deps: {
       }
       return true;
     }, () => valid(g));
-    if (applied && valid(g)) { live = true; loadedOnce = true; liveEpoch = result.friendship_epoch; }
+    if (applied === true && valid(g)) {
+      live = true; loadedOnce = true; liveEpoch = result.friendship_epoch;
+      // The detail pair is one snapshot: personal and shared come from this
+      // response's revision, never a home/list read that happened to arrive
+      // first. The observation store independently fences equal/older ones.
+      deps.onObservation?.(conversationObservation(result, {
+        accountId: session.accountId, owner: session.owner, fetchedAt: now(),
+      }));
+    }
     return applied === true;
   }
 

@@ -12,6 +12,7 @@ import { readCache } from '../src/storage/cache';
 import { writeDeviceSetting } from '../src/storage/settings';
 import { performLogout } from '../src/auth/logout';
 import type { CommandApi } from '../src/sync/api';
+import type { ChatListResult, ChatMessagesResult, ChatUnreadResult, HomeResult } from '../src/backend/chat';
 import { A, B, C, CONV, api, home, page, message, key, deferred } from '../src/messages/repositoryTestSupport';
 
 let db: AppStorage;
@@ -361,4 +362,61 @@ it('refetches when PostgreSQL replication becomes live AFTER the channel join, a
   expect(statuses).toEqual(['SUBSCRIBED', 'SUBSCRIBED']);
   stop(); system({ extension: 'postgres_changes', status: 'ok' });
   expect(statuses).toHaveLength(2);
+});
+
+it('treats a realtime revision as a refetch signal, publishes the home revision first and only lets the detail pair advance the conversation', async () => {
+  const { store, client, realtime } = setup(); store.selectPeer(B); store.start(); await settle();
+  const firstHome = store.appearanceObservations.latest('home');
+  const firstConversation = store.appearanceObservations.latest(`conversation:${B}`);
+  expect(firstHome?.revision).toBe(1);
+  expect(firstConversation?.revision).toBe(1);
+
+  const homePending = deferred<HomeResult>();
+  const listPending = deferred<ChatListResult>();
+  const unreadPending = deferred<ChatUnreadResult>();
+  const messagesPending = deferred<ChatMessagesResult>();
+  (client.getHome as jest.Mock).mockReturnValueOnce(homePending.promise);
+  (client.listChats as jest.Mock).mockReturnValueOnce(listPending.promise);
+  (client.getUnread as jest.Mock).mockReturnValueOnce(unreadPending.promise);
+  (client.getMessages as jest.Mock).mockReturnValueOnce(messagesPending.promise);
+
+  realtime.revision(2); await settle();
+  // The notification is only a refetch signal: nothing is created or advanced
+  // before the canonical responses resolve.
+  expect(store.appearanceObservations.latest('home')).toBe(firstHome);
+  expect(store.appearanceObservations.latest(`conversation:${B}`)).toBe(firstConversation);
+
+  homePending.resolve(home({ revision: 2, streak_appearance: { current_streak: 9, earned_days: 29, appearance_version: 1 } }));
+  listPending.resolve({ revision: 2, server_now: home().server_now, daily_key: home().daily_key,
+    targets: [], items: [], next_cursor: null, unread_peer_count: 1 });
+  unreadPending.resolve({ revision: 2, unread_peer_count: 1, items: [] });
+  await settle();
+  expect(store.appearanceObservations.latest('home')?.revision).toBe(2);
+  expect(store.appearanceObservations.latest('home')?.personal).toEqual({
+    status: 'ready', value: { currentStreak: 9, earnedDays: 29, appearanceVersion: 1 },
+  });
+  // Home-first must not advance or populate a conversation celebration pair.
+  expect(store.appearanceObservations.latest(`conversation:${B}`)).toBe(firstConversation);
+
+  messagesPending.resolve(page([message(4)], {
+    revision: 2,
+    appearance: { growth_days: 8, auto_preset_id: 'b-soda', selected_preset_id: null,
+      effective_preset_id: 'b-soda', catalog_version: 1, settings_revision: 1, can_change: true },
+    streak_appearance: { current_streak: 6, earned_days: 29, appearance_version: 1 },
+  }));
+  await settle();
+  const detail = store.appearanceObservations.latest(`conversation:${B}`);
+  expect(detail).toMatchObject({ revision: 2, peerId: B });
+  expect(detail?.personal).toEqual({
+    status: 'ready', value: { currentStreak: 6, earnedDays: 29, appearanceVersion: 1 },
+  });
+  expect(detail?.shared).toMatchObject({ status: 'ready', value: { growthDays: 8, effectivePresetId: 'b-soda' } });
+});
+
+it('does not invent a conversation pair from home targets carrying shared appearance', async () => {
+  const { store, client } = setup(); store.start(); await settle();
+  revision(client, 2); store.refresh(); await settle();
+  expect(store.appearanceObservations.latest('home')?.revision).toBe(2);
+  expect(store.appearanceObservations.list().map(observation => observation.source)).toEqual(['home']);
+  expect(store.appearanceObservations.latest(`conversation:${B}`)).toBeNull();
 });

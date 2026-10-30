@@ -14,6 +14,7 @@ import { registerChatLifetime } from './lifetime';
 import { createChatRealtime, type ChatRealtimePort } from './realtime';
 import { createReadStateRepository } from './readState';
 import { createConversationRepository, createRepositorySession, type ConversationSnapshot } from './repository';
+import { createAppearanceObservationStore } from '../appearance/observations';
 import type { ChatDraft as StoredChatDraft } from './types';
 import type { ChatArrival } from '../notify/chatArrivals';
 
@@ -41,12 +42,17 @@ export function createChatStore(deps: ChatStoreDeps) {
   const session = createRepositorySession(deps);
   const reads = createReadStateRepository({ session, commandApi: deps.commandApi });
   const now = deps.elapsedNow ?? (() => performance.now());
+  // One canonical observation owner per store lifetime. Late responses from a
+  // previous lifetime fail both the repository token fence and this owner.
+  const appearanceObservations = createAppearanceObservationStore({
+    accountId: deps.accountId, owner: session.owner, now,
+  });
   let foregroundGeneration = 0;
   let noticeGeneration = 0;
   let baselineReady = false;
   const homeRepository = createHomeRepository({ session, client: deps.client, reads, now, onArrival(arrival) {
     if (canRun() && noticeGeneration === foregroundGeneration && state.activePeerId !== arrival.peerId) update({ arrival });
-  } });
+  }, onObservation(observation) { appearanceObservations.accept(observation); } });
   const appState = deps.appState === undefined ? AppState : deps.appState;
   const peers = new Map<string, ReturnType<typeof createConversationRepository>>();
   const draftGenerations = new Map<string, number>();
@@ -97,7 +103,8 @@ export function createChatStore(deps: ChatStoreDeps) {
   function rawPeer(peerId: string) {
     let peer = peers.get(peerId);
     if (!peer) {
-      peer = createConversationRepository({ session, peerId, client: deps.client, reads });
+      peer = createConversationRepository({ session, peerId, client: deps.client, reads,
+        onObservation(observation) { appearanceObservations.accept(observation); } });
       if (stopped) peer.dispose();
       peers.set(peerId, peer);
     }
@@ -240,6 +247,7 @@ export function createChatStore(deps: ChatStoreDeps) {
       try { detach(); } catch { /* All remaining callbacks are still revoked. */ }
     }
     homeRepository.dispose(); for (const peer of peers.values()) peer.dispose();
+    appearanceObservations.clear();
     update({ stopped: true, activePeerId: null, home: null, conversation: null, drafts: {},
       connected: false, pendingReadSync: false, refreshPending: false, arrival: null });
   }
@@ -317,6 +325,7 @@ export function createChatStore(deps: ChatStoreDeps) {
   }
   return {
     session,
+    appearanceObservations,
     reads: { ...reads, async record(peerId: string, conversationId: string, ids: readonly string[], through: number | null) {
       await reads.record(peerId, conversationId, ids, through);
       if (!stopped) { await publish(); requestReads(); }

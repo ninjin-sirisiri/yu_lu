@@ -13,7 +13,8 @@ import { openAppDatabase, type AppStorage } from '../src/storage/database';
 import { NodeSqliteDriver } from '../src/storage/testSupport/nodePorts';
 import { readChatDraft } from '../src/storage/chat';
 import { enqueueOperation } from '../src/storage/outbox';
-import { A, B, C, E, api, home, summary, message, key, deferred } from '../src/messages/repositoryTestSupport';
+import { A, B, C, E, api, home, summary, message, page, key, deferred } from '../src/messages/repositoryTestSupport';
+import { displayAppearance } from '../src/appearance/observations';
 import type { HomeResult } from '../src/backend/chat';
 import * as profiles from '../src/backend/profile';
 import { emitTabReselect } from '../src/navigation/tabReselect';
@@ -333,4 +334,91 @@ it('keeps the 04:05 check independent of transient refresh failures and cancels 
   const calls = jest.mocked(client.getHome).mock.calls.length;
   store.stop(); jest.advanceTimersByTime(86_400_000); await settle();
   expect(client.getHome).toHaveBeenCalledTimes(calls);
+});
+
+it('publishes a home observation only after a successful live refresh, never while pending or from cache', async () => {
+  const held = deferred<HomeResult>();
+  data();
+  jest.mocked(client.getHome).mockReturnValueOnce(held.promise);
+  const refreshing = store.homeRepository.refreshHome();
+  await settle();
+  expect(store.appearanceObservations.list()).toEqual([]);
+
+  held.resolve(home());
+  expect(await refreshing).toBe(true);
+  const live = store.appearanceObservations.latest('home');
+  expect(live).toMatchObject({
+    accountId: A, owner: store.appearanceObservations.owner, source: 'home', peerId: null, revision: 1,
+  });
+  expect(live?.personal).toEqual({
+    status: 'ready', value: { currentStreak: 2, earnedDays: 29, appearanceVersion: 1 },
+  });
+  expect(live?.shared).toBeNull();
+
+  // A failed refresh keeps the previous canonical observation; it does not
+  // publish a cache replay or advance the revision.
+  jest.mocked(client.getHome).mockRejectedValueOnce(new Error('offline'));
+  await expect(store.homeRepository.refreshHome()).rejects.toThrow('offline');
+  expect(store.appearanceObservations.latest('home')).toBe(live);
+
+  const cached = createChatStore({ storage: db, accountId: A, getAccountId: async () => A, client,
+    commandApi: { send: async () => ({ status: 'unknown' }) }, realtime: { subscribe: () => () => {} },
+    appState: null, network: null, elapsedNow: () => elapsed, random: () => .5 });
+  try {
+    expect((await cached.homeRepository.snapshot()).home?.revision).toBe(1);
+    expect(cached.appearanceObservations.list()).toEqual([]);
+  } finally { cached.stop(); }
+});
+
+it('keeps an old cache with missing appearance fields checking rather than a confirmed zero', async () => {
+  data({ streak_appearance: undefined });
+  expect(await store.homeRepository.refreshHome()).toBe(true);
+  const live = store.appearanceObservations.latest('home');
+  expect(live?.personal).toEqual({ status: 'unavailable', reason: 'missing' });
+  expect(displayAppearance(live, null)).toEqual({ status: 'checking', value: null });
+  expect(displayAppearance(live, live)).toEqual({ status: 'checking', value: null });
+
+  const cached = createChatStore({ storage: db, accountId: A, getAccountId: async () => A, client,
+    commandApi: { send: async () => ({ status: 'unknown' }) }, realtime: { subscribe: () => () => {} },
+    appState: null, network: null, elapsedNow: () => elapsed, random: () => .5 });
+  try {
+    const snapshot = await cached.homeRepository.snapshot();
+    expect(snapshot.home?.streak).toBe(2);
+    expect(snapshot.home?.streak_appearance).toBeUndefined();
+    expect(cached.appearanceObservations.list()).toEqual([]);
+    expect(displayAppearance(null, cached.appearanceObservations.latest('home')))
+      .toEqual({ status: 'checking', value: null });
+  } finally { cached.stop(); }
+});
+
+it('updates home and detail appearance without remounting the conversation, clearing input or changing selection', async () => {
+  data();
+  const view = await render(<Harness><ConversationPanel peerId={B} /></Harness>);
+  await screen.findByText('m2');
+  await fireEvent.changeText(screen.getByLabelText('メッセージ'), 'keep through appearance');
+  const history = screen.getByTestId('conversation-history');
+
+  jest.mocked(client.getMessages).mockResolvedValue(page([message(2), message(3)], {
+    revision: 2,
+    appearance: { growth_days: 8, auto_preset_id: 'b-candy', selected_preset_id: 'b-candy',
+      effective_preset_id: 'b-candy', catalog_version: 1, settings_revision: 2, can_change: true },
+    streak_appearance: { current_streak: 6, earned_days: 29, appearance_version: 1 },
+  }));
+  data({ revision: 2, streak_appearance: { current_streak: 7, earned_days: 29, appearance_version: 1 } });
+  await act(async () => { store.refresh(); await settle(); });
+
+  expect(store.getSnapshot().activePeerId).toBe(B);
+  expect(screen.getByTestId('conversation-history')).toBe(history);
+  expect(screen.getByLabelText('メッセージ').props.value).toBe('keep through appearance');
+  expect(store.appearanceObservations.latest('home')?.personal).toEqual({
+    status: 'ready', value: { currentStreak: 7, earnedDays: 29, appearanceVersion: 1 },
+  });
+  expect(displayAppearance(store.appearanceObservations.latest(`conversation:${B}`), null)).toMatchObject({
+    status: 'confirmed',
+    value: {
+      personal: { currentStreak: 6, earnedDays: 29, appearanceVersion: 1 },
+      shared: { growthDays: 8, effectivePresetId: 'b-candy' },
+    },
+  });
+  await view.unmount();
 });

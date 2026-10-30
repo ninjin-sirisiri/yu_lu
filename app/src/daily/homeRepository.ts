@@ -5,6 +5,7 @@ import { optimisticUnread, type ReadStateRepository } from '../messages/readStat
 import { stopObsoleteSends, type RepositorySession } from '../messages/repository';
 import { compareChatRows, compareTargets, localChatRows, type ChatListRow } from '../messages/chatListRows';
 import { prepareChatArrivals, type ChatArrival } from '../notify/chatArrivals';
+import { homeObservation, type AppearanceObservation } from '../appearance/observations';
 
 interface SavedHome {
   home: HomeResult; list: ChatListResult; unread: ChatUnreadResult; readVersion: number;
@@ -22,6 +23,8 @@ export interface HomeSnapshot {
 export function createHomeRepository(deps: {
   session: RepositorySession; client: ChatClient; reads: ReadStateRepository; now?: () => number;
   onArrival?(arrival: ChatArrival): void;
+  /** Called only after a live home refresh commits. Never from snapshot/cache. */
+  onObservation?(observation: AppearanceObservation): void;
 }) {
   const { session, client, reads } = deps;
   const now = deps.now ?? (() => performance.now());
@@ -48,9 +51,15 @@ export function createHomeRepository(deps: {
       for (const peer of [...home.targets, ...list.targets, ...list.items]) await stopObsoleteSends(tx, session.accountId, peer);
       return true;
     }, () => valid(g));
-    if (result && valid(g)) {
+    if (result === true && valid(g)) {
       clock = { server: Date.parse(home.server_now), local: started, day: home.daily_key };
       for (const arrival of notices.arrivals) deps.onArrival?.(arrival);
+      // Only the live home response committed above may become a canonical
+      // personal observation. Cache replay and target shared appearance stay
+      // out of it.
+      deps.onObservation?.(homeObservation(home, {
+        accountId: session.accountId, owner: session.owner, fetchedAt: started,
+      }));
     }
     return result === true;
   }

@@ -164,10 +164,15 @@ it('restores account-local draft/image/outbox-only rows with stable local orderi
 });
 
 it('publishes durable draft additions/removal immediately and does not reorder accepted chats by a local edit', async () => {
-  data([], [row(1, { last_message: message(1) }), row(2, { last_message: message(2, { accepted_at: '2026-10-28T00:00:01Z' }) })]);
+  const appearance = { growth_days: 12, auto_preset_id: 'b-candy' as const, selected_preset_id: null,
+    effective_preset_id: 'b-candy' as const, catalog_version: 1, settings_revision: 1, can_change: true };
+  data([], [row(1, { last_message: message(1), appearance }), row(2, { last_message: message(2, { accepted_at: '2026-10-28T00:00:01Z' }) })]);
   await list();
   await act(async () => { await store.setDraft(peer(1), { body: 'new draft', attachments: [] }); await store.setDraft(C, { body: 'local draft', attachments: [] }); });
   expect(screen.getByTestId(`chat-row-${C}`)).toBeTruthy();
+  // A local draft decorates the server row but must not replace its canonical
+  // appearance with an invented local default.
+  expect(store.getSnapshot().home?.others.find(row => row.peer_id === peer(1))?.appearance).toEqual(appearance);
   const ids = within(screen.getByTestId('chat-others')).getAllByRole('button').map(r => r.props.testID);
   expect(ids.indexOf(`chat-row-${peer(2)}`)).toBeLessThan(ids.indexOf(`chat-row-${peer(1)}`));
   await act(async () => { await store.setDraft(C, { body: '', attachments: [] }); });
