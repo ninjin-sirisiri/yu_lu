@@ -30,6 +30,23 @@ export function normalDatabaseDigest(containers, run = stack.command) {
   return hash(run('docker', ['exec', 'supabase_db_daily-chat', 'psql', '-X', '-qAt', '-U', 'postgres', '-d', 'postgres', '-c', sql], backend.REPO_ROOT));
 }
 
+// pgTAP is copied into the owned temporary workdir and executed only there.
+// Tests never run against the normal development project, its database or its
+// Supabase config. Both fs and the CLI command are injectable for Node tests.
+export async function dbSuite(ctx, { command = stack.command, write = text => process.stdout.write(text) } = {}) {
+  const workdir = ctx?.workdir;
+  if (typeof workdir !== 'string' || path.resolve(workdir) === path.resolve(backend.REPO_ROOT)) {
+    throw Error('pgTAP requires an owned dedicated workdir');
+  }
+  const source = path.join(backend.REPO_ROOT, 'supabase', 'tests');
+  await fs.access(source);
+  await fs.cp(source, path.join(workdir, 'supabase', 'tests'), { recursive: true });
+  const output = command('npx', ['supabase', 'test', 'db'], workdir) ?? '';
+  write(output);
+  log('PASS dedicated pgTAP database suite');
+  return output;
+}
+
 async function protectedState() {
   const files = {};
   for (const file of ['app/.env', 'supabase/config.toml']) {
@@ -322,22 +339,31 @@ async function journeySuite(ctx) {
   log('PASS real screen journey and dedicated clients closed');
 }
 
+export const SUITE_NAMES = ['db', 'journey', 'backend'];
+const SUITE_RUNNERS = { db: dbSuite, journey: journeySuite, backend: backendSuite };
+
+// `all` deliberately gives every suite its own withChatTestStack lifetime and
+// continues after a failure so one broken suite cannot hide another. Each
+// lifetime still owns its own collision, cleanup and normal-state contract.
+export async function runSuites(suite, { withStack = stack.withChatTestStack, runners = SUITE_RUNNERS } = {}) {
+  const selected = suite === 'all' ? SUITE_NAMES : [suite];
+  const failures = [];
+  for (const name of selected) {
+    try { await withStack(runners[name]); } catch (error) { failures.push(error); }
+  }
+  if (failures.length) throw new AggregateError(failures, failures.map(error => error.message).join('\n'));
+}
+
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 const suite = process.argv[3];
-if (isMain && (process.argv[2] !== '--suite' || !['backend', 'journey', 'all'].includes(suite) || process.argv.length !== 4)) {
-  console.error('Usage: node scripts/test-chat-backend.mjs --suite backend|journey|all');
+if (isMain && (process.argv[2] !== '--suite' || !['backend', 'journey', 'db', 'all'].includes(suite) || process.argv.length !== 4)) {
+  console.error('Usage: node scripts/test-chat-backend.mjs --suite backend|journey|db|all');
   process.exitCode = 2;
 } else if (isMain) {
   let before;
   try {
     before = await protectedState();
-    // Separate owned lifetimes isolate fixtures; all executes BOTH even if one
-    // fails, while each stack still enforces collision and cleanup safety.
-    const failures = [];
-    for (const run of suite === 'all' ? [journeySuite, backendSuite] : [suite === 'journey' ? journeySuite : backendSuite]) {
-      try { await stack.withChatTestStack(run); } catch (error) { failures.push(error); }
-    }
-    if (failures.length) throw new AggregateError(failures, failures.map(error => error.message).join('\n'));
+    await runSuites(suite);
     log(`PASS dedicated ${suite} suite and fixture/process/stack cleanup`);
   } catch (error) {
     console.error(backend.redact(`FAIL ${error.message}`));

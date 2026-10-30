@@ -3,10 +3,11 @@ import { test } from 'node:test';
 import fs from 'node:fs/promises';
 import net from 'node:net';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import stack from './lib/chat-test-stack.cjs';
 import backend from './lib/local-backend.cjs';
-import { normalDatabaseDigest } from './test-chat-backend.mjs';
+import { normalDatabaseDigest, dbSuite, runSuites } from './test-chat-backend.mjs';
 
 test('copies an isolated stack without seed, local state or app environment', async () => {
   const workdir = await stack.prepareChatTestStack();
@@ -33,6 +34,62 @@ test('dedicated backend audit does not require or start an absent normal databas
   assert.equal(normalDatabaseDigest(noNormalDatabase, () => {
     assert.fail('must not access or start a normal database that is not running');
   }), null);
+});
+
+test('db suite copies pgTAP into the dedicated workdir and runs only there', async () => {
+  const tempRoot = path.join(os.tmpdir(), 'opencode');
+  await fs.mkdir(tempRoot, { recursive: true, mode: 0o700 });
+  const workdir = await fs.mkdtemp(path.join(tempRoot, 'chat-db-suite-'));
+  try {
+    const calls = [];
+    const output = await dbSuite({ workdir }, {
+      command: (program, args, cwd) => { calls.push({ program, args, cwd }); return 'TAP version 13\n'; },
+      write: () => {},
+    });
+    assert.equal(output, 'TAP version 13\n');
+    assert.deepEqual(calls, [{ program: 'npx', args: ['supabase', 'test', 'db'], cwd: workdir }]);
+    assert.notEqual(path.resolve(workdir), path.resolve(backend.REPO_ROOT));
+    const copied = await fs.readdir(path.join(workdir, 'supabase', 'tests', 'database'));
+    const source = await fs.readdir(path.join(backend.REPO_ROOT, 'supabase', 'tests', 'database'));
+    assert.deepEqual(copied.sort(), source.sort());
+    assert.ok(copied.includes('appearance-growth.test.sql'));
+  } finally { await fs.rm(workdir, { recursive: true, force: true }); }
+});
+
+test('db suite propagates pgTAP failure and refuses the normal project', async () => {
+  const tempRoot = path.join(os.tmpdir(), 'opencode');
+  await fs.mkdir(tempRoot, { recursive: true, mode: 0o700 });
+  const workdir = await fs.mkdtemp(path.join(tempRoot, 'chat-db-failure-'));
+  try {
+    let called;
+    await assert.rejects(dbSuite({ workdir }, {
+      command: (program, args, cwd) => { called = { program, args, cwd }; throw Error('pgTAP failed'); },
+      write: () => {},
+    }), /pgTAP failed/);
+    assert.equal(called.cwd, workdir);
+    assert.notEqual(path.resolve(called.cwd), path.resolve(backend.REPO_ROOT));
+    await assert.rejects(dbSuite({ workdir: backend.REPO_ROOT }, {
+      command: () => assert.fail('normal project must never be invoked'),
+      write: () => {},
+    }), /dedicated workdir/);
+  } finally { await fs.rm(workdir, { recursive: true, force: true }); }
+});
+
+test('all runs db, journey and backend in order with a separate lifetime for each failure', async () => {
+  const events = [];
+  const runners = {
+    db: async () => { events.push('db'); throw Error('db failed'); },
+    journey: async () => { events.push('journey'); },
+    backend: async () => { events.push('backend'); },
+  };
+  await assert.rejects(runSuites('all', {
+    withStack: async run => {
+      events.push('own');
+      try { await run({ workdir: '/dedicated' }); } finally { events.push('cleanup'); }
+    },
+    runners,
+  }), /db failed/);
+  assert.deepEqual(events, ['own', 'db', 'cleanup', 'own', 'journey', 'cleanup', 'own', 'backend', 'cleanup']);
 });
 
 test('refuses normal project and modified ports/seed before any CLI action', async () => {
