@@ -18,6 +18,7 @@ import {
 } from './test-local-backend.mjs';
 import {
   SUITE_NAMES,
+  appearanceJourneyEnv,
   legacyJourneyEnv,
   parseSuiteArg,
 } from './test-chat-backend.mjs';
@@ -132,8 +133,8 @@ test('legacy HTTP execution refuses a missing status or unknown suite before any
   ]);
 });
 
-test('--suite accepts legacy and all, rejects unknown or partial arguments', () => {
-  assert.deepEqual(SUITE_NAMES, ['db', 'legacy', 'journey', 'backend']);
+test('--suite accepts legacy, appearance and all, rejects unknown or partial arguments', () => {
+  assert.deepEqual(SUITE_NAMES, ['db', 'legacy', 'journey', 'backend', 'appearance']);
   for (const name of [...SUITE_NAMES, 'all']) {
     assert.equal(parseSuiteArg(['--suite', name]), name);
   }
@@ -205,6 +206,46 @@ test('the legacy journey receives only explicit dedicated configuration', () => 
     }, { env: inherited }),
     /outside the normal checkout/,
   );
+});
+
+test('the appearance journey receives only dedicated project, URL, anon key and actor config', () => {
+  const inherited = {
+    PATH: '/bin',
+    HOME: '/home/test',
+    EXPO_NO_DOTENV: '0',
+    EXPO_PUBLIC_SUPABASE_URL: 'http://127.0.0.1:54321',
+    EXPO_PUBLIC_SUPABASE_ANON_KEY: 'normal-anon-key',
+    SUPABASE_SERVICE_ROLE_KEY: 'normal-service-key',
+    CHAT_JOURNEY_CONFIG: '{"normal":true}',
+    CHAT_APPEARANCE_CONFIG: '{"normal":true}',
+  };
+  const env = appearanceJourneyEnv({
+    status: dedicatedStatus,
+    workdir: dedicatedWorkdir,
+    project: stack.PROJECT_ID,
+  }, { env: inherited });
+  assert.equal(env.EXPO_NO_DOTENV, '1');
+  assert.equal(env.EXPO_PUBLIC_SUPABASE_URL, DEDICATED_API_URL);
+  assert.equal(env.EXPO_PUBLIC_SUPABASE_ANON_KEY, dedicatedStatus.ANON_KEY);
+  assert.equal(env.PATH, '/bin');
+  assert.equal(env.HOME, '/home/test');
+  assert.ok(!Object.keys(env).some(key => key.startsWith('SUPABASE_')));
+  assert.ok(!('CHAT_JOURNEY_CONFIG' in env));
+  assert.ok(!('CHAT_APPEARANCE_CONFIG' in env));
+  assert.ok(!Object.values(env).includes('normal-anon-key'));
+  assert.throws(
+    () => appearanceJourneyEnv({ status: dedicatedStatus, workdir: backend.REPO_ROOT, project: stack.PROJECT_ID }, { env: inherited }),
+    /outside the normal checkout/,
+  );
+  assert.throws(
+    () => appearanceJourneyEnv({ status: dedicatedStatus, workdir: dedicatedWorkdir }, { env: inherited }),
+    /project/,
+  );
+});
+
+test('the appearance fixture action set is closed to the named owner actions', async () => {
+  const fixtures = (await import('./lib/chat-fixtures.cjs')).default;
+  await assert.rejects(fixtures.appearanceFixture({}, 'sql'), /Unknown dedicated appearance fixture action/);
 });
 
 test('localEnv keeps runner values in dedicated mode and never loads app/.env', async () => {

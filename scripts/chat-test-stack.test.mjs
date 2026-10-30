@@ -75,13 +75,14 @@ test('db suite propagates pgTAP failure and refuses the normal project', async (
   } finally { await fs.rm(workdir, { recursive: true, force: true }); }
 });
 
-test('all runs db, legacy, journey and backend in order with a separate lifetime for each failure', async () => {
+test('all runs db, legacy, journey, backend and appearance in order with a separate lifetime for each failure', async () => {
   const events = [];
   const runners = {
     db: async () => { events.push('db'); throw Error('db failed'); },
     legacy: async () => { events.push('legacy'); },
     journey: async () => { events.push('journey'); },
     backend: async () => { events.push('backend'); },
+    appearance: async () => { events.push('appearance'); },
   };
   await assert.rejects(runSuites('all', {
     withStack: async run => {
@@ -90,7 +91,8 @@ test('all runs db, legacy, journey and backend in order with a separate lifetime
     },
     runners,
   }), /db failed/);
-  assert.deepEqual(events, ['own', 'db', 'cleanup', 'own', 'legacy', 'cleanup', 'own', 'journey', 'cleanup', 'own', 'backend', 'cleanup']);
+  assert.deepEqual(events, ['own', 'db', 'cleanup', 'own', 'legacy', 'cleanup',
+    'own', 'journey', 'cleanup', 'own', 'backend', 'cleanup', 'own', 'appearance', 'cleanup']);
 });
 
 test('refuses normal project and modified ports/seed before any CLI action', async () => {

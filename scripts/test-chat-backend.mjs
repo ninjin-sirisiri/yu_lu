@@ -249,6 +249,125 @@ async function backendSuite(ctx) {
     assert.ok(tokens.every(row => row.user_id === third.id));
   });
 
+  await check('one accepted pair-day increments chat growth once and daily rows match the cumulative count', async () => {
+    const [firstA, firstB] = await Promise.all([messages(a, b), messages(b, a)]);
+    assert.equal(firstA.appearance.growth_days, 1);
+    assert.equal(firstB.appearance.growth_days, 1);
+    assert.equal(firstA.appearance.effective_preset_id, firstB.appearance.effective_preset_id);
+    assert.equal(firstA.appearance.auto_preset_id, firstB.appearance.auto_preset_id);
+    // More accepted messages from both people on the SAME 04:00 day must not
+    // add another day. The daily fact table and the cached cumulative count
+    // must agree, not merely both look plausible.
+    await Promise.all([send(a, payload(b, 'growth once a')), send(b, payload(a, 'growth once b')),
+      send(a, payload(b, 'growth once c'))]);
+    const after = await messages(a, b);
+    assert.equal(after.appearance.growth_days, 1);
+    const row = JSON.parse(await f.sql(`select json_build_object(
+      'records',(select count(*) from public.chat_growth_days where conversation_id=${fixtures.uuid(conversation)}),
+      'growth',(select growth_days from public.chat_appearance_state where conversation_id=${fixtures.uuid(conversation)}));`));
+    assert.equal(row.records, row.growth);
+    assert.equal(row.growth, 1);
+  });
+
+  await check('third parties cannot read or change a conversation appearance; denials leak no values', async () => {
+    const deniedRead = await backend.expectJson(await queryResponse(third, 'get_chat_messages',
+      { peer_id: a.id, anchor: 'latest' }), 403, 'third-party appearance read');
+    assert.deepEqual(Object.keys(deniedRead), ['error']);
+    const readText = JSON.stringify(deniedRead);
+    assert.ok(!readText.includes('growth_days'));
+    assert.ok(!/b-(pop|candy|soda)/.test(readText));
+    assert.ok(!readText.includes('selected_preset_id'));
+    const deniedChange = await backend.expectJson(await command(third, 'set_chat_appearance',
+      { peer_id: b.id, friendship_epoch: epoch, preset_id: 'b-candy' }), 403, 'third-party preset change');
+    assert.deepEqual(Object.keys(deniedChange), ['error']);
+    const changeText = JSON.stringify(deniedChange);
+    assert.ok(!changeText.includes('growth_days') && !/b-(pop|candy|soda)/.test(changeText));
+    assert.equal((await messages(a, b)).appearance.selected_preset_id, null);
+  });
+
+  await check('old-client-shaped sends and queries keep working while appearance stays additive', async () => {
+    // The old client sends exactly the pre-appearance key set. Unknown
+    // appearance input is not required for acceptance.
+    const oldShape = payload(b, 'old client shape');
+    assert.deepEqual(Object.keys(oldShape).sort(),
+      ['body', 'client_key', 'friendship_epoch', 'media_ids', 'recipient_id']);
+    const receipt = await send(a, oldShape);
+    assert.equal(typeof receipt.message_id, 'string');
+    // Old query shapes (no appearance arguments) still return every core key.
+    const home = await query(a, 'get_home');
+    for (const key of ['revision', 'server_now', 'daily_key', 'deadline', 'draw_deadline', 'draw_state',
+      'participation', 'streak', 'send_completed', 'reply_completed', 'reply_total', 'achieved',
+      'actionable_complete', 'targets', 'unread_peer_count']) assert.ok(key in home, key);
+    const detail = await messages(a, b);
+    for (const key of ['revision', 'peer_id', 'conversation_id', 'peer', 'can_send', 'friendship_epoch',
+      'items', 'before_cursor', 'after_cursor', 'first_unread_sequence', 'latest_sequence']) assert.ok(key in detail, key);
+    assert.ok(detail.appearance && detail.streak_appearance, 'appearance additions are additive');
+  });
+
+  await check('current friends share one preset; the later server acceptance wins and replays do not advance it', async () => {
+    const operation = randomUUID();
+    const candy = { peer_id: b.id, friendship_epoch: epoch, preset_id: 'b-candy' };
+    const first = await backend.expectJson(await command(a, 'set_chat_appearance', candy, operation), 200, 'set candy');
+    assert.equal(first.status, 'executed');
+    assert.equal(first.result.selected_preset_id, 'b-candy');
+    assert.equal(first.result.effective_preset_id, 'b-candy');
+    const beforeReplay = await messages(a, b);
+    assert.equal(beforeReplay.appearance.selected_preset_id, 'b-candy');
+    assert.equal(beforeReplay.appearance.settings_revision, first.result.settings_revision);
+    const replay = await backend.expectJson(await command(a, 'set_chat_appearance', candy, operation), 200, 'candy replay');
+    assert.equal(replay.status, 'replayed');
+    assert.deepEqual(replay.result, first.result);
+    assert.equal((await messages(b, a)).appearance.settings_revision, first.result.settings_revision);
+    await backend.expectJson(await command(a, 'set_chat_appearance', { ...candy, preset_id: 'b-soda' }, operation), 409, 'operation conflict');
+    assert.equal((await messages(a, b)).appearance.selected_preset_id, 'b-candy');
+    const second = await backend.expectJson(await command(b, 'set_chat_appearance',
+      { peer_id: a.id, friendship_epoch: epoch, preset_id: 'b-soda' }), 200, 'later B change');
+    assert.equal(second.status, 'executed');
+    assert.equal(second.result.settings_revision, first.result.settings_revision + 1);
+    for (const [user, peer] of [[a, b], [b, a]]) {
+      const seen = await messages(user, peer);
+      assert.equal(seen.appearance.selected_preset_id, 'b-soda');
+      assert.equal(seen.appearance.effective_preset_id, 'b-soda');
+      assert.equal(seen.appearance.settings_revision, second.result.settings_revision);
+    }
+  });
+
+  await check('a lost accepted response is recovered by replaying the same operation id with no extra revision', async () => {
+    const operation = randomUUID();
+    const value = { peer_id: b.id, friendship_epoch: epoch, preset_id: 'b-candy' };
+    const accepted = await backend.expectJson(await command(a, 'set_chat_appearance', value, operation), 200, 'accepted before loss');
+    assert.equal(accepted.status, 'executed');
+    const revision = accepted.result.settings_revision;
+    const recovered = await backend.expectJson(await command(a, 'set_chat_appearance', value, operation), 200, 'same-id recovery');
+    assert.equal(recovered.status, 'replayed');
+    assert.deepEqual(recovered.result, accepted.result);
+    const seen = await messages(a, b);
+    assert.equal(seen.appearance.selected_preset_id, 'b-candy');
+    assert.equal(seen.appearance.settings_revision, revision);
+  });
+
+  await check('a settings-only conversation stays out of list/home until the first real send', async () => {
+    const fourth = f.fourth;
+    const hasFourth = rows => rows.some(row => row.peer_id === fourth.id);
+    const beforeList = await query(a, 'list_chats');
+    const beforeHome = await query(a, 'get_home');
+    assert.ok(!hasFourth(beforeList.items)); assert.ok(!hasFourth(beforeList.targets));
+    assert.ok(!hasFourth(beforeHome.targets));
+    const settings = await backend.expectJson(await command(a, 'set_chat_appearance',
+      { peer_id: fourth.id, friendship_epoch: f.fourth_epoch, preset_id: 'b-pop' }), 200, 'settings-only conversation');
+    assert.equal(settings.status, 'executed');
+    assert.equal(typeof settings.result.conversation_id, 'string');
+    // Creating the conversation/state alone must not manufacture a chat row.
+    assert.ok(!hasFourth((await query(a, 'list_chats')).items));
+    assert.ok(!hasFourth((await query(a, 'get_home')).targets));
+    const receipt = await send(a, payload(fourth, 'first settings-only message', randomUUID(), f.fourth_epoch));
+    assert.equal(typeof receipt.message_id, 'string');
+    const afterList = await query(a, 'list_chats');
+    assert.ok(hasFourth(afterList.items));
+    assert.ok(!hasFourth(afterList.targets));
+    assert.equal((await messages(a, fourth)).conversation_id, settings.result.conversation_id);
+  });
+
   await check('unfriend preserves accepted history/media/retry but re-friend rejects stale queued epoch', async () => {
     const pair = `user_a=least(${fixtures.uuid(a.id)},${fixtures.uuid(b.id)}) and user_b=greatest(${fixtures.uuid(a.id)},${fixtures.uuid(b.id)})`;
     const stale = payload(b, 'old offline draft');
@@ -265,6 +384,10 @@ async function backendSuite(ctx) {
     await backend.expectJson(await command(a, 'send_message', stale), 403, 'stale offline epoch');
     const accepted = await send(a, payload(b, 'explicitly confirmed', randomUUID(), renewed.friendship_epoch));
     assert.equal(accepted.conversation_id, conversation);
+    const staleAppearance = await backend.expectJson(await command(a, 'set_chat_appearance',
+      { peer_id: b.id, friendship_epoch: epoch, preset_id: 'b-candy' }), 403, 'stale appearance epoch');
+    assert.deepEqual(Object.keys(staleAppearance), ['error']);
+    assert.ok(!/b-(pop|candy|soda)|growth_days|settings_revision/.test(JSON.stringify(staleAppearance)));
     await f.sql(`begin; set local daily_chat.cycle_apply='on'; insert into public.blocks(user_id,blocked_user_id) values(${fixtures.uuid(b.id)},${fixtures.uuid(a.id)}); commit;`);
     const blocked = await backend.expectJson(await command(a, 'send_message', payload(b, 'blocked', randomUUID(), renewed.friendship_epoch)), 403, 'incoming block');
     assert.equal(blocked.error, '現在この相手には送信できません');
@@ -316,9 +439,75 @@ async function journeySuite(ctx) {
   log('PASS real screen journey and dedicated clients closed');
 }
 
+// Task 16: the appearance journey receives only the explicit dedicated stack
+// config and actors. No normal app/.env, Supabase CLI/config variable or other
+// journey config is ever forwarded.
+export function appearanceJourneyEnv({ status, workdir, project } = {}, { env = process.env } = {}) {
+  if (status === null || typeof status !== 'object' || typeof status.API_URL !== 'string') {
+    throw new Error('appearance journey requires an explicit dedicated status');
+  }
+  if (typeof workdir !== 'string' || workdir.trim() === '') {
+    throw new Error('appearance journey requires a dedicated workdir');
+  }
+  if (project !== stack.PROJECT_ID) {
+    throw new Error(`appearance journey requires project ${stack.PROJECT_ID}`);
+  }
+  if (status.API_URL !== 'http://127.0.0.1:55321') {
+    throw new Error('appearance journey requires the dedicated API URL http://127.0.0.1:55321');
+  }
+  if (typeof status.ANON_KEY !== 'string' || status.ANON_KEY === '') {
+    throw new Error('appearance journey requires the dedicated anon key');
+  }
+  const resolved = path.resolve(workdir);
+  const relative = path.relative(backend.REPO_ROOT, resolved);
+  if (resolved === backend.REPO_ROOT || relative === '' ||
+      (!relative.startsWith('..') && !path.isAbsolute(relative))) {
+    throw new Error('appearance journey workdir must be outside the normal checkout');
+  }
+  const inherited = backend.localCliEnv(resolved, env);
+  for (const key of Object.keys(inherited)) {
+    if (key.startsWith('SUPABASE_') || key.startsWith('EXPO_PUBLIC_SUPABASE_') ||
+        key === 'CHAT_JOURNEY_CONFIG' || key === 'CHAT_APPEARANCE_CONFIG' || key === 'EXPO_NO_DOTENV') {
+      delete inherited[key];
+    }
+  }
+  return {
+    ...inherited,
+    EXPO_NO_DOTENV: '1',
+    EXPO_PUBLIC_SUPABASE_URL: status.API_URL,
+    EXPO_PUBLIC_SUPABASE_ANON_KEY: status.ANON_KEY,
+  };
+}
+
+// Task 16: real HTTP + real SQLite appearance journey. The owner fixture (IPC)
+// only prepares the dedicated conversation's acceptance history and the
+// fixture users' streak values; every received appearance value in the app is
+// from a real Edge query and every preset change is a real app-command.
+async function appearanceSuite(ctx) {
+  const tests = ['__tests__/appearance-journey.test.tsx'];
+  const f = await fixtures.createChatFixtures(ctx);
+  const config = {
+    project: stack.PROJECT_ID, url: ctx.status.API_URL, anonKey: ctx.status.ANON_KEY,
+    a: f.a, b: f.b, fourth: f.fourth,
+  };
+  await runJest(ctx, tests, { ...appearanceJourneyEnv({
+    status: ctx.status, workdir: ctx.workdir, project: stack.PROJECT_ID,
+  }), CHAT_APPEARANCE_CONFIG: JSON.stringify(config) }, {
+    timeoutMs: 600_000,
+    onMessage: async (message, child) => {
+      if (message?.type !== 'appearance-fixture') return;
+      try {
+        const result = await fixtures.appearanceFixture(f, message.action, message);
+        child.send({ id: message.id, ok: true, result });
+      } catch { child.send({ id: message.id, ok: false }); }
+    },
+  });
+  log('PASS real HTTP/SQLite appearance journey and dedicated clients closed');
+}
+
 // Forkjest, redact output and always reap the child. Message handling is
 // serialized so fixture calls never race each other.
-async function runJest(ctx, tests, env, { onMessage = null } = {}) {
+async function runJest(ctx, tests, env, { onMessage = null, timeoutMs = 240_000 } = {}) {
   for (const test of tests) await fs.access(path.join(backend.REPO_ROOT, 'app', test));
   let tail = Promise.resolve();
   await new Promise((resolve, reject) => {
@@ -335,7 +524,7 @@ async function runJest(ctx, tests, env, { onMessage = null } = {}) {
       if (onMessage === null) return;
       tail = tail.then(() => onMessage(message, child));
     });
-    const timeout = setTimeout(() => { child.kill('SIGTERM'); }, 240_000);
+    const timeout = setTimeout(() => { child.kill('SIGTERM'); }, timeoutMs);
     ctx.defer(async () => {
       if (child.exitCode !== null || child.signalCode !== null) return;
       child.kill('SIGTERM');
@@ -406,8 +595,8 @@ async function legacySuite(ctx) {
   log('PASS legacy real-data journey with the caller-owned gateway');
 }
 
-export const SUITE_NAMES = ['db', 'legacy', 'journey', 'backend'];
-const SUITE_RUNNERS = { db: dbSuite, legacy: legacySuite, journey: journeySuite, backend: backendSuite };
+export const SUITE_NAMES = ['db', 'legacy', 'journey', 'backend', 'appearance'];
+const SUITE_RUNNERS = { db: dbSuite, legacy: legacySuite, journey: journeySuite, backend: backendSuite, appearance: appearanceSuite };
 
 /** Parses `--suite <name>`; null means the CLI must print usage and exit 2. */
 export function parseSuiteArg(argv = []) {
@@ -430,7 +619,7 @@ export async function runSuites(suite, { withStack = stack.withChatTestStack, ru
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 const suite = parseSuiteArg(process.argv.slice(2));
 if (isMain && suite === null) {
-  console.error('Usage: node scripts/test-chat-backend.mjs --suite backend|journey|db|legacy|all');
+  console.error('Usage: node scripts/test-chat-backend.mjs --suite backend|journey|db|legacy|appearance|all');
   process.exitCode = 2;
 } else if (isMain) {
   let before;
