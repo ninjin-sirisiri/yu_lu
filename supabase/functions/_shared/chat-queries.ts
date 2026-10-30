@@ -4,12 +4,30 @@ import { UUID_RE } from './commands.ts';
 export const CHAT_QUERY_OPS = ['get_home', 'list_chats', 'get_chat_messages', 'get_chat_unread'] as const;
 export type ChatQueryOp = (typeof CHAT_QUERY_OPS)[number];
 export type ChatAnchor = 'first_unread' | 'latest' | 'before' | 'after';
+export type ChatPresetId = 'b-pop' | 'b-candy' | 'b-soda';
+/** Shared conversation appearance; readable by both participants, never personal. */
+export interface ChatAppearance {
+  growth_days: number;
+  auto_preset_id: ChatPresetId;
+  selected_preset_id: ChatPresetId | null;
+  effective_preset_id: ChatPresetId;
+  catalog_version: number;
+  settings_revision: number;
+  can_change: boolean;
+}
+/** Authenticated actor personal appearance; never returned for a peer. */
+export interface StreakAppearance {
+  current_streak: number;
+  earned_days: number;
+  appearance_version: number;
+}
 export interface ChatPeer {
   peer_id: string;
   conversation_id: string | null;
   peer: { display_name: string; avatar_path: string | null };
   can_send: boolean;
   friendship_epoch: string | null;
+  appearance: ChatAppearance;
 }
 export interface ChatMessage {
   message_id: string;
@@ -50,6 +68,7 @@ export interface HomeResult extends ChatRevision {
   draw_finalized_at: string | null;
   participation: 'checking' | 'draw_failed' | 'no_friends' | 'waiting_next_cycle' | 'eligible';
   streak: number;
+  streak_appearance: StreakAppearance;
   send_completed: boolean | null;
   reply_completed: number;
   reply_total: number;
@@ -72,6 +91,7 @@ export interface ChatMessagesResult extends ChatPeer, ChatRevision {
   after_cursor: string | null;
   first_unread_sequence: number | null;
   latest_sequence: number;
+  streak_appearance: StreakAppearance;
 }
 export interface ChatUnreadResult extends ChatRevision { items: ChatUnread[]; unread_peer_count: number }
 export interface ChatQueryResults {

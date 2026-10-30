@@ -1,6 +1,13 @@
 // Real HTTP/validation flow; only external Auth/RPC I/O is injected.
 import { createQueryHandler, executeQuery, validateQueryPayload } from '../_shared/queries.ts';
 import { requireActor } from '../_shared/auth.ts';
+import type {
+  ChatAppearance,
+  ChatMessagesResult,
+  ChatSummary,
+  HomeResult,
+  StreakAppearance,
+} from '../_shared/chat-queries.ts';
 
 const peer = '88000000-0000-4000-8000-000000000002';
 function eq(actual: unknown, expected: unknown) {
@@ -44,6 +51,89 @@ Deno.test('valid chat query shapes preserve opaque cursor bytes and pass JWT thr
       }) });
     const res = await handler(request(op, payload));
     eq(res.status, 200); eq(await res.json(), { op, result: { items: [] } });
+  }
+});
+
+Deno.test('shared appearance and actor-only streak pass unchanged through the authenticated handler', async () => {
+  const appearance: ChatAppearance = {
+    growth_days: 101,
+    auto_preset_id: 'b-pop',
+    selected_preset_id: 'b-candy',
+    effective_preset_id: 'b-candy',
+    catalog_version: 1,
+    settings_revision: 5,
+    can_change: true,
+  };
+  const streakAppearance: StreakAppearance = {
+    current_streak: 12,
+    earned_days: 34,
+    appearance_version: 1,
+  };
+  const summary: ChatSummary = {
+    peer_id: peer,
+    conversation_id: '88000000-0000-4000-8000-000000000010',
+    peer: { display_name: 'Peer 2', avatar_path: null },
+    can_send: true,
+    friendship_epoch: '88000000-0000-4000-8000-000000000020',
+    appearance,
+    unread_count: 3,
+    latest_sequence: 7,
+    last_message: null,
+    roles: { send: true, reply: false },
+    send_completed: false,
+    reply_state: null,
+    status: 'send_needed',
+  };
+  const home: HomeResult = {
+    server_now: '2099-01-01T00:00:00+00:00',
+    daily_key: '2099-01-01',
+    deadline: '2099-01-01T19:00:00+00:00',
+    draw_deadline: '2099-01-01T00:05:00+00:00',
+    draw_state: 'succeeded',
+    draw_finalized_at: '2098-12-31T19:01:00+00:00',
+    participation: 'eligible',
+    streak: 12,
+    streak_appearance: streakAppearance,
+    send_completed: false,
+    reply_completed: 0,
+    reply_total: 1,
+    achieved: false,
+    actionable_complete: false,
+    targets: [summary],
+    unread_peer_count: 1,
+    revision: 41,
+  };
+  const messages: ChatMessagesResult = {
+    peer_id: peer,
+    conversation_id: summary.conversation_id,
+    peer: summary.peer,
+    can_send: true,
+    friendship_epoch: summary.friendship_epoch,
+    appearance,
+    streak_appearance: streakAppearance,
+    items: [],
+    before_cursor: null,
+    after_cursor: null,
+    first_unread_sequence: null,
+    latest_sequence: 7,
+    revision: 41,
+  };
+  for (const [op, payload, result] of [
+    ['get_home', {}, home],
+    ['get_chat_messages', { peer_id: peer, anchor: 'latest' }, messages],
+  ] as const) {
+    const expected = JSON.parse(JSON.stringify({ op, result }));
+    const handler = createQueryHandler({
+      requireActor: (req) => requireActor(req, async () => peer),
+      executeQuery: (req, auth) => executeQuery(req, auth, (args, jwt) => {
+        eq(jwt, 'Bearer verified');
+        eq(args, { p_op: op, p_payload: payload });
+        return Promise.resolve({ ok: true, data: { op, result: JSON.parse(JSON.stringify(result)) } });
+      }),
+    });
+    const res = await handler(request(op, payload));
+    eq(res.status, 200);
+    eq(await res.json(), expected);
   }
 });
 
