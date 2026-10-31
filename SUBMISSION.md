@@ -73,7 +73,7 @@ npm --prefix app run ios       # または npm --prefix app run android
   `EXPO_PUBLIC_SUPABASE_ANON_KEY` は `npx supabase status` の anon key を使います。
 - 招待機能まで試す場合のみ `EXPO_PUBLIC_INVITE_ORIGIN`（HTTPSのorigin）を設定します。
 - **OAuthの資格情報（Google Client Secret、Appleの秘密鍵など）は本リポジトリ／提出ZIPに含めていません。**
-  `supabase/config.toml` の Google クライアントIDもプレースホルダに置き換えています。
+  提出ZIPでは `supabase/config.toml` の Google クライアントIDもプレースホルダに置き換えています。
   審査環境でログインまで再現する場合は、Google Cloud / Apple Developer で
   ご自身のクライアントを用意し、`supabase/config.toml` の該当箇所とルートの `.env` に
   設定してください。ログインを含む一連の動作は提出動画で確認できます。
