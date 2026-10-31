@@ -33,6 +33,10 @@ yarn-error.*
 # local env files
 .env*.local
 
+# Supabase target env files (real values)
+env/supabase.local.env
+env/supabase.remote.env
+
 # typescript
 *.tsbuildinfo
 
