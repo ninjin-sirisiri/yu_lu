@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Image, StyleSheet, Text, View, type ScrollViewInstance } from 'react-native';
 import { profileImageUrl } from '../backend/profile';
 import { useAppearanceScope } from '../appearance/provider';
+import { useDevPreview } from '../appearance/devPreview';
 import type { RepositorySession } from '../messages/repository';
 import { useChat } from '../messages/provider';
 import type { ChatListRow } from '../messages/chatListRows';
@@ -75,6 +76,7 @@ export function HomeDashboard({ onOpen, onFriends, onChat }: {
   const chat = useChat();
   const { tokens } = useTheme();
   const appearance = useAppearanceScope();
+  const devPreview = useDevPreview();
   const personal = appearance?.role === 'personal' ? appearance : null;
   const appearanceProgress = personal?.personalProgress ?? null;
   const { mode } = useLayoutMetrics();
@@ -91,6 +93,8 @@ export function HomeDashboard({ onOpen, onFriends, onChat }: {
   const send = targets.filter(row => row.roles.send);
   const replies = targets.filter(row => row.roles.reply && !row.roles.send);
   const participation = home?.participation;
+  // Keep the summary consistent with the dev display override (if any).
+  const displayedStreak = devPreview?.streak?.currentStreak ?? home?.streak ?? 0;
   return <Screen title="今日のつながり" scroll scrollViewRef={scroll} testID="home-dashboard" contentStyle={styles.content}>
     {personal && (appearanceProgress ? <View testID="home-personal-growth" style={styles.growth}>
       <Text testID="home-personal-current" allowFontScaling style={[styles.body, { color: personal.visual?.text ?? tokens.text }]}>
@@ -109,7 +113,7 @@ export function HomeDashboard({ onOpen, onFriends, onChat }: {
       <Text allowFontScaling style={[styles.body, { color: tokens.muted }]}>{`対象日：${home.daily_key}（日本時間）`}</Text>
       <View style={[styles.summary, { borderColor: tokens.line }]}>
         <Text allowFontScaling style={[styles.heading, { color: tokens.text }]}>
-          {`${home.streak}日 ${stale ? '前回の記録' : home.streak ? 'つづいています' : 'ここからはじまる'}`}
+          {`${displayedStreak}日 ${stale ? '前回の記録' : displayedStreak ? 'つづいています' : 'ここからはじまる'}`}
         </Text>
         {eligible ? <View style={styles.section}>
           <Text allowFontScaling style={[styles.body, { color: tokens.text }]}>{`送信 ${progress?.send === 'complete' ? '完了' : progress?.send === 'not_applicable' ? '対象なし' : '未完了'}`}</Text>

@@ -7,6 +7,7 @@ import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-c
 import { AppearancePreferencesProvider } from '../appearance/preferences';
 import { AppearanceProvider } from '../appearance/provider';
 import { CelebrationHost } from '../appearance/CelebrationHost';
+import { DevPreviewPanel } from '../appearance/DevPreviewPanel';
 import { VisibilityProvider } from '../appearance/visibility';
 import { AuthProvider } from '../auth/provider';
 import { AvatarProbeHost } from '../media/avatarProbe';
@@ -85,6 +86,8 @@ function ThemedRoot() {
       {/* Task 14: ONE non-modal celebration host. It reads the visibility port
           and the device/appearance providers above; nested hosts render null. */}
       <CelebrationHost />
+      {/* Dev-only: display-only streak/growth switch. Renders null in release. */}
+      <DevPreviewPanel />
     </View>
   );
 }

@@ -13,6 +13,7 @@ import type { ThemeScheme } from '../theme/tokens';
 import { calculateAppearance, type AppearanceVisual } from './calculate';
 import type { AppearanceVibrancy } from './catalog';
 import type { ChatAppearance, StreakAppearance } from './contracts';
+import { useDevPreview, type DevAppearancePreview } from './devPreview';
 import {
   conversationObservation,
   conversationSubject,
@@ -158,6 +159,7 @@ function buildScopeValue(
   role: AppearanceScopeRole,
   peerId: string | null,
   callerActive: boolean,
+  preview: DevAppearancePreview | null,
 ): AppearanceScopeValue {
   const chat = runtime.chat;
   const subject = role === 'conversation'
@@ -167,9 +169,28 @@ function buildScopeValue(
   const cached = chat ? cachedObservation(chat, role, peerId) : null;
   const display = displayAppearance(live, cached);
   const ready = display.status === 'checking' ? null : display.value;
-  const personal = ready?.personal ?? null;
-  const shared = role === 'conversation' ? ready?.shared ?? null : null;
-  const checking = display.status === 'checking';
+  // Dev-only display override (see devPreview.ts). It replaces the values used
+  // to calculate this scope, but never the canonical observation store, so a
+  // server refresh still wins as soon as the override is cleared.
+  const previewPersonal: StreakAppearance | null = preview?.streak ? {
+    currentStreak: preview.streak.currentStreak,
+    earnedDays: preview.streak.earnedDays,
+    appearanceVersion: 1,
+  } : null;
+  const previewGrowthDays = role === 'conversation' ? preview?.growthDays ?? null : null;
+  const previewShared: ChatAppearance | null = previewGrowthDays === null ? null : {
+    growthDays: previewGrowthDays,
+    autoPresetId: 'b-pop',
+    selectedPresetId: null,
+    effectivePresetId: 'b-pop',
+    catalogVersion: 1,
+    settingsRevision: 0,
+    canChange: false,
+  };
+  const personal = previewPersonal ?? ready?.personal ?? null;
+  const shared = role === 'conversation' ? previewShared ?? ready?.shared ?? null : null;
+  const previewApplies = previewPersonal !== null || previewShared !== null;
+  const checking = previewApplies ? false : display.status === 'checking';
 
   const days = role === 'conversation' ? shared?.growthDays ?? 0 : personal?.earnedDays ?? 0;
   const presetId = role === 'conversation' ? shared?.effectivePresetId ?? 'b-pop' : 'b-pop';
@@ -223,9 +244,12 @@ function ScopedAppearance({
   callerActive: boolean;
   children: React.ReactNode;
 }) {
+  // Always subscribed; the store returns null in release builds. Changes
+  // re-render this scope so the dev panel applies immediately.
+  const preview = useDevPreview();
   const value = useMemo(
-    () => buildScopeValue(runtime, role, peerId, callerActive),
-    [runtime, role, peerId, callerActive],
+    () => buildScopeValue(runtime, role, peerId, callerActive, preview),
+    [runtime, role, peerId, callerActive, preview],
   );
   return (
     <AppearanceScopeContext.Provider value={value}>
