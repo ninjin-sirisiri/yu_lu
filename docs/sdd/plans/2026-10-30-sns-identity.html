@@ -321,7 +321,7 @@ node scripts/test-chat-backend.mjs --suite appearance</code></pre>
         <div class="task-rail" aria-hidden="true"><span class="task-number">17</span></div>
         <h2 id="task-17-全回帰移行手順検証記録を揃える">Task 17: 全回帰・移行手順・検証記録を揃える</h2>
         <p><strong>Dependencies:</strong> Task 16。</p>
-        <p><strong>Files:</strong> 追加<code>docs/testing/sns-identity.md</code>、<code>docs/operations/sns-identity.md</code>。変更<code>README.md</code>。必要な回帰修正は失敗した責務のファイルとテストに限定する。</p>
+        <p><strong>Files:</strong> 追加<code>docs/testing/sns-identity.md</code>、<code>docs/operations/sns-identity.md</code>。変更<code>DEVELOPMENT.md</code>。必要な回帰修正は失敗した責務のファイルとテストに限定する。</p>
         <ol>
           <li>全自動回帰を下記の順で実行し、実行時刻・commit・環境・exit code・件数・失敗を記録する。通常Jestから実バックエンドの3journeyだけを除外し、それらは専用runnerの<code>all</code>で必ず実行する。専用stackのコマンドを並列実行しない。</li>
           <li>移行runbookへサーバー/Edge先行→アプリの順、ロックとバックフィル、本人の導入時現在値、再実行の非破壊性、旧cache確認中、初回基準、未知版fallback、演出保存失敗、設定の同ID結果確認を記載する。migration/RLS/通知対象の検査と日別件数対累計の照合SQLをそのまま実行できる形で載せる。</li>

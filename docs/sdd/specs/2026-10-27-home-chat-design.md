@@ -189,7 +189,7 @@
 - app/src/backend/、app/src/storage/、app/src/sync/、app/src/notify/: 認証付き取得、永続保存、会話別送信順序、再試行、本人用イベントとアプリ内バナー。プッシュ受信の無効化は解除しない。
 - supabase/migrations/、supabase/tests/database/: 0014以降の追加変更で会話、閲覧状態、画像検証記録、権限、日次結果と整合性を追加する。
 - `supabase/functions/app-command/`、`supabase/functions/app-query/`、`supabase/functions/_shared/`、`supabase/functions/daily-settlement/`、`supabase/functions/tests/`: 操作と取得の拡張、認証付き画像準備、日次ワーカー、対応テスト。
-- scripts/test-local-backend.mjs、docs/testing/、docs/operations/、README.md: 実バックエンドの検証経路、日次ジョブ設定、運用・起動手順と検証記録。
+- scripts/test-local-backend.mjs、docs/testing/、docs/operations/、DEVELOPMENT.md: 実バックエンドの検証経路、日次ジョブ設定、運用・起動手順と検証記録。
 - [承認済みのホーム・チャット試作](../spikes/2026-10-05-home-chat.html): 使い捨ての見た目・動線検証。人物・会話は仮データであり、本番コードへそのまま移植しない。
 - [既存の日次チャット仕様](2026-09-10-daily-chat-design.md)、[友達登録仕様](2026-09-11-friend-registration-approval-design.md)、[アプリ基盤仕様](2026-09-25-app-foundation-friends-ui-design.md): 本仕様で明示した差分以外を継承する。
 - [Expo SDK 57](https://docs.expo.dev/versions/v57.0.0/)、[Unicode 17.0.0のUAX #29](https://www.unicode.org/reports/tr29/tr29-47.html)、[GraphemeBreakTest](https://www.unicode.org/Public/17.0.0/ucd/auxiliary/GraphemeBreakTest.txt)。

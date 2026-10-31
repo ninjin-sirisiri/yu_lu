@@ -78,7 +78,7 @@
           <li><code>app/src/app/conversations/[peerId].tsx</code>、<code>app/src/app/(tabs)/chat/_layout.tsx</code>、<code>index.tsx</code>、<code>new.tsx</code>、<code>app/src/navigation/conversationEntry.ts</code>: 共通会話ルートと相手選択。既存ホーム、友達プロフィール、ルート・タブレイアウトを接続する。</li>
           <li><code>scripts/data/unicode/17.0.0/</code>、<code>scripts/generate-chat-unicode.mjs</code>、<code>scripts/test-chat-backend.mjs</code>、<code>scripts/lib/chat-test-stack.cjs</code>、<code>scripts/lib/chat-fixtures.cjs</code>: 版固定データ、再生成、専用ローカル検証環境。</li>
           <li><code>supabase/tests/database/chat-*.test.sql</code>、<code>daily-*.test.sql</code>、<code>supabase/functions/tests/chat-*.test.ts</code>、<code>daily-cycle.test.ts</code>、<code>app/__tests__/home-chat-*.test.tsx</code>: 各Taskで追加する具体的なテスト。ルート配下にテストを置かない。</li>
-          <li><code>docs/testing/home-chat.md</code>、<code>docs/operations/home-chat.md</code>、<code>README.md</code>: 検証結果、日次ジョブ設定、起動と制約。既存の基盤検証記録を成功扱いで上書きしない。</li>
+          <li><code>docs/testing/home-chat.md</code>、<code>docs/operations/home-chat.md</code>、<code>DEVELOPMENT.md</code>: 検証結果、日次ジョブ設定、起動と制約。既存の基盤検証記録を成功扱いで上書きしない。</li>
         </ul>
       </section>
       <section aria-labelledby="execution-and-verification-contract">
@@ -306,7 +306,7 @@
       <article class="plan-task" data-task-number="22" aria-labelledby="task-22-全体回帰と実機運用記録">
         <div class="task-rail" aria-hidden="true"><span class="task-number">22</span></div>
         <h2 id="task-22-全体回帰と実機運用記録">Task 22: 全体回帰と実機・運用記録</h2>
-        <p>対象: <code>docs/testing/home-chat.md</code>、<code>docs/operations/home-chat.md</code>、<code>README.md</code>、必要な検証補助。依存: Task 21。</p>
+        <p>対象: <code>docs/testing/home-chat.md</code>、<code>docs/operations/home-chat.md</code>、<code>DEVELOPMENT.md</code>、必要な検証補助。依存: Task 21。</p>
         <ol>
           <li>全体回帰として<code>npm --prefix app run typecheck</code>、<code>npm --prefix app test -- --runInBand --testPathIgnorePatterns home-chat-journey.test.tsx</code>、<code>npx supabase test db</code>、<code>npx deno test --allow-env --allow-net --config supabase/functions/deno.json supabase/functions/tests</code>、<code>node scripts/test-local-backend.mjs --suite all</code>、<code>node scripts/test-chat-backend.mjs --suite all</code>、<code>git diff --check</code>を実行する。専用環境を要する新journeyは通常Jestから分離し、最後のallでbackendとjourneyを必ず実行する。既存journeyは従来環境の接続を確認して実行する。</li>
           <li><code>npm --prefix app run ios</code>と<code>npm --prefix app run android</code>で開発ビルドを確認する。両OSでライブラリのJPEG・PNG透過・HEIC、向き、原寸と縮小、再起動後の下書き・画像、文字200%、小画面・横向き・2列、読み上げ、権限拒否、バックグラウンド復帰を確認する。機材・資格不足は阻害条件として記録する。</li>

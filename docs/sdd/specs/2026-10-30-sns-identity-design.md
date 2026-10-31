@@ -227,6 +227,6 @@
 - アプリの取得と寿命: app/src/backend/chat.ts、app/src/messages/provider.tsx、repository.ts、chatListRows.ts、app/src/daily/homeRepository.ts。新しい見た目・演出のモジュールをこれらの所有者へ接続する。
 - 適用画面: app/src/theme/provider.tsx、tokens.ts、app/src/ui/Screen.tsx、app/src/messages/ConversationPanel.tsx、ChatWorkspace.tsx、app/src/daily/HomeDashboard.tsx、app/src/navigation/AdaptiveLayout.tsx、認証済みタブと独立会話ルート、マイページ。
 - 保存・終了: app/src/storage/migrations.ts、database.ts、settings.ts、app/src/auth/logout.ts。通常のアカウント削除と演出記録の保持例外を明示する。
-- 検証・運用: `app/__tests__`のtheme-layout、home-chat-home、home-chat-realtime、home-chat-journey、supabase/tests、supabase/functions/tests、scripts/test-chat-backend.mjs、scripts/chat-test-stack.test.mjs、docs/testing、docs/operations、README.md。
+- 検証・運用: `app/__tests__`のtheme-layout、home-chat-home、home-chat-realtime、home-chat-journey、supabase/tests、supabase/functions/tests、scripts/test-chat-backend.mjs、scripts/chat-test-stack.test.mjs、docs/testing、docs/operations、DEVELOPMENT.md。
 - ドメイン用語は[CONTEXT.md](../../../CONTEXT.md)を正本とする。対応関係のある用語だけを更新し、保存形式やコーディネーターを用語集へ追加しない。
 - 描画方式の確認資料: [Expo SDK 58](https://docs.expo.dev/versions/v58.0.0/)、[SDK 58のReanimated](https://docs.expo.dev/versions/v58.0.0/sdk/reanimated/)、[SDK 58のSVG](https://docs.expo.dev/versions/v58.0.0/sdk/svg/)、[Reanimatedの動き軽減](https://docs.swmansion.com/react-native-reanimated/docs/device/useReducedMotion/)。実装時もインストール済みの版の資料を確認する。

@@ -311,7 +311,7 @@ node scripts/test-chat-backend.mjs --suite appearance
 
 **Dependencies:** Task 16。
 
-**Files:** 追加`docs/testing/sns-identity.md`、`docs/operations/sns-identity.md`。変更`README.md`。必要な回帰修正は失敗した責務のファイルとテストに限定する。
+**Files:** 追加`docs/testing/sns-identity.md`、`docs/operations/sns-identity.md`。変更`DEVELOPMENT.md`。必要な回帰修正は失敗した責務のファイルとテストに限定する。
 
 1. 全自動回帰を下記の順で実行し、実行時刻・commit・環境・exit code・件数・失敗を記録する。通常Jestから実バックエンドの3journeyだけを除外し、それらは専用runnerの`all`で必ず実行する。専用stackのコマンドを並列実行しない。
 2. 移行runbookへサーバー/Edge先行→アプリの順、ロックとバックフィル、本人の導入時現在値、再実行の非破壊性、旧cache確認中、初回基準、未知版fallback、演出保存失敗、設定の同ID結果確認を記載する。migration/RLS/通知対象の検査と日別件数対累計の照合SQLをそのまま実行できる形で載せる。
