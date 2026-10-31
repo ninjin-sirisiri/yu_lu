@@ -339,6 +339,11 @@ iOS/Androidとも `npm --prefix app run ios` / `run android` の常駐Metroで�
   Total 136 frames / Janky 89.71% / 50th 77ms / 90th 105ms。SwiftShaderのため
   実機性能の合格値には使わない。クラッシュ・操作不能は観測しなかった。
 
+- 演出カードと2択の操作確認では、2秒では画面を撮影・操作しにくいため、検証中だけ
+  `CELEBRATION_DURATION_MS` を12秒へ一時変更した。確認後に2000msへ戻し、
+  `celebrations.test.ts` / `appearance-celebrations.test.tsx` を再実行している。
+  証拠画像はUIの形を示すもので、最終コードの表示時間は約2秒である。
+
 ### 11.3 実施できなかったこと（阻害条件）
 
 - **両OSのVoiceOver／TalkBackの内容**: AndroidはTalkBack有効化とシステムダイアログの
