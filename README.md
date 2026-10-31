@@ -4,6 +4,10 @@
 
 [MBC U-20 NEXT PROGRAMMING CONTEST 2026](https://www.mbc.co.jp/u20nextprocon/) アプリ（ソフトウェア）部門 応募作品。
 
+> **提出時点のコードについて**
+>
+> このリポジトリは今後も変更する可能性があります。提出時点のコードを確認したい場合は、[提出時点のコミット（8f44ed9）](https://github.com/ninjin-sirisiri/yu_lu/tree/8f44ed97b4ba396779219b5179e06fb90bb581ed) を参照してください。
+
 <p align="center">
   <img src="docs/testing/screenshots/sns-identity/ios-login.png" width="240" alt="ログイン画面">
   <img src="docs/testing/screenshots/sns-identity/ios-100.png" width="240" alt="100日段階のホーム画面">
