@@ -5,7 +5,7 @@
 [移行・運用runbook](../operations/sns-identity.md)。
 以前の[ホーム・チャット検証記録](home-chat.md)は別計画の証拠であり、この記録へ流用しない。
 
-**状態: Task 17完了（自動回帰）。Task 18は部分証拠のみ（両OSビルド・ログイン、Android認証済み0/29→0/30/100日）。iOS認証済み画面、両OSのVoiceOver／TalkBack・動き軽減・性能・操作は未確認で、計画全体は未完了。**
+**状態: Task 17完了（自動回帰）。Task 18は部分証拠のみ（両OS認証済み0/29→0/30/100日、iOS明暗・文字200%・演出カード/2択）。両OSのVoiceOver／TalkBack・横向き・2列切替・性能・演出中の入力操作は未確認で、計画全体は未完了。**
 本記録は2026-10-30（JST）に実行した自動回帰の実測であり、設計時点の予定ではない。
 本番デプロイ・本番push・外部ジョブ登録・通常DBのresetは行っていない。
 
@@ -293,8 +293,20 @@ iOS/Androidとも `npm --prefix app run ios` / `run android` の常駐Metroで�
   次の60日段階まであと30日。装飾が0日/7日段階から増えていることの比較用。
 - `screenshots/sns-identity/android-100.png`: Android認証済みホーム。現在100日、獲得済み100日段階、
   最大段階に到達。100日完成形の背景・模様・ステッカーと、Header文字の保護面。
+- `screenshots/sns-identity/ios-0-earned-7.png`: iOS認証済みホーム。現在0日・獲得済み7日段階・
+  次の30日段階まであと30日。
+- `screenshots/sns-identity/ios-30.png`: iOS認証済みホーム。現在30日・獲得済み30日段階。
+- `screenshots/sns-identity/ios-100.png`: iOS認証済みホーム。現在100日・最大段階。
+- `screenshots/sns-identity/ios-100-dark.png`: iOSダークモードの100日。ナビゲーションHeader・
+  タブバー・本文面が暗色で揃い、文字が読める。
+- `screenshots/sns-identity/ios-100-text200.png`: iOS文字サイズ拡大（accessibility-large）の100日。
+  レイアウトが崩れず、横スクロールなしで読める。
+- `screenshots/sns-identity/ios-celebration-card.png`: iOS会話100日の演出カード
+  （会話の節目 / 100日 / 累計100日 / スキップ）。入力欄・送信・履歴は下に残る。
+- `screenshots/sns-identity/ios-celebration-choice.png`: スキップ後の非モーダル2択
+  （今回だけスキップ / 今後の同種類を停止）。
 
-認証済みAndroidでは、上記に加えて次を目視確認した（画面は個人名・本文を含むため保存しない）。
+認証済みAndroid/iOSでは、上記に加えて次を目視確認した（画面は個人名・本文を含むため保存しない）。
 
 - 0日はモノクロで装飾なし。7日段階・30日段階・100日段階で背景色・模様・ステッカー・
   動く背景レイヤーが段階的に増える。
@@ -304,16 +316,26 @@ iOS/Androidとも `npm --prefix app run ios` / `run android` の常駐Metroで�
   `b-candy` の100日背景・吹き出しが表示される。会話ヘッダーの累計/次節目はスクロール位置に
   よって画面上端外になる場合がある。
 - ホームの100日状態で、Headerの装飾がタイトル文字の直下に重ならないよう、Header文字面を
-  不透明な本文面で保護した（`app/src/ui/Screen.tsx`）。
+  不透明な本文面で保護した（`app/src/ui/Screen.tsx`）。ナビゲーションHeaderとタブバーも
+  同じ本人visualに揃えた（`(tabs)/_layout.tsx`）。
+- iOSでも0日・29→0（7日段階）・30日・100日を確認した。ダークモードではナビゲーション
+  Header・タブバー・本文面が暗色で揃い、文字が読める。文字サイズ `accessibility-large`
+  でも主要情報が読め、レイアウトが横にはみ出さない。
+- iOSの会話100日で演出カード（会話の節目 / 100日 / 累計100日 / スキップ）を確認した。
+  カードは非モーダルで、下の入力欄・送信・履歴が残る。スキップ後の2択も非モーダルで表示された。
 
 ### 11.3 実施できなかったこと（阻害条件）
 
-- **iOSの認証済み画面**: Supabase localを起動し、Google OAuthのredirectを
-  `http://127.0.0.1:54321/auth/v1/callback` に切り替えたが、Simulator再起動後に
-  DeviceHubの画面入力が反応しなくなり、利用者によるGoogleログインを完了できなかった。
-  認証迂回・固定セッション注入は行っていない。iOSはログイン画面までで、認証済みの
-  0/1/6/7/29/30/59/60/99/100/101日、両明暗、全preset、共有presetの相手端末反映、
-  VoiceOver、動き軽減、操作・性能は未確認。
+- **両OSのVoiceOver／TalkBack**: 読み上げ順・フォーカス・ラベル・装飾の読み上げ除外は
+  音声では未確認。AndroidのTalkBack、iOSのVoiceOverとも実操作記録がない。
+- **両OSのレイアウト条件**: Androidの文字200%、横向き、safe area、キーボード、2列切替、
+  OS動き軽減の起動中変更は未確認。iOSの横向き、iPad幅の2列切替、キーボード表示中の
+  入力・送信も未確認。899/900幅と倍率1.3/2.0の分岐はJestで確認済みだが、ネイティブの
+  実画面証拠ではない。
+- **演出の実操作**: iOSでカードと2択を確認したが、「今回だけ」「今後の同種類を停止」の
+  選択結果、種類別停止からの再開、再起動後の非再表示は実画面では未確認（自動テストは
+  `celebrations.test.ts` / `appearance-celebrations.test.tsx`）。
+- **性能**: 0日と100日の入力遅延・scroll・再描画・非表示アニメーションのprofilingは未実施。
 - **Androidのアクセシビリティ**: TalkBackの読み上げ順・フォーカス・ラベルは未確認。
   文字200%、横向き、safe area、キーボード、2列切替、OS動き軽減の起動中変更、
   100日＋演出中の入力・送信・scroll、背景化停止、0日と100日の性能比較も未確認。

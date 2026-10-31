@@ -1,9 +1,9 @@
-import type { ComponentProps } from 'react';
+import type { ComponentProps, ReactNode } from 'react';
 import { Redirect, Tabs } from 'expo-router';
 import { Text, View } from 'react-native';
 
 import { useAuth } from '../../auth/provider';
-import { AppearanceScope } from '../../appearance/provider';
+import { AppearanceScope, useAppearanceScope } from '../../appearance/provider';
 import { LeftNav, useLayoutMetrics } from '../../navigation/AdaptiveLayout';
 import { emitTabReselect } from '../../navigation/tabReselect';
 import { useTheme } from '../../theme/provider';
@@ -48,6 +48,40 @@ const tabScreenListeners: TabScreenListeners = ({ route, navigation }) => ({
     }
   },
 });
+
+/**
+ * Tabs render their own navigation header above each Screen. It must follow
+ * the same personal appearance as the screen body; otherwise a dark personal
+ * surface would sit under a plain white navigation bar. The explicit scope is
+ * read here so the header and tab bar use the same confirmed visual.
+ */
+function AppearanceTabs({ screens, split }: { screens: ReactNode; split: boolean }) {
+  const { tokens } = useTheme();
+  const scope = useAppearanceScope();
+  const visual = scope?.visual;
+  const background = visual?.bodySurface ?? tokens.surface;
+  const headerBackground = visual?.background ?? tokens.surface;
+  const ink = visual?.text ?? tokens.text;
+  const muted = visual?.mutedText ?? tokens.muted;
+  return (
+    <Tabs
+      screenListeners={tabScreenListeners}
+      screenOptions={{
+        headerStyle: { backgroundColor: headerBackground },
+        headerTintColor: ink,
+        headerTitleStyle: { color: ink },
+        headerShadowVisible: false,
+        ...(split ? { tabBarStyle: { display: 'none' as const } } : {
+          tabBarStyle: { backgroundColor: background, borderTopColor: visual?.border ?? tokens.line },
+          tabBarActiveTintColor: visual?.accent ?? tokens.accent,
+          tabBarInactiveTintColor: muted,
+        }),
+      }}
+    >
+      {screens}
+    </Tabs>
+  );
+}
 
 export default function TabLayout() {
   const unread = useChatUnreadBadge();
@@ -112,9 +146,7 @@ export default function TabLayout() {
         <View style={{ flex: 1, flexDirection: 'row', backgroundColor: tokens.surface }}>
           <LeftNav />
           <View style={{ flex: 1 }}>
-            <Tabs screenListeners={tabScreenListeners} screenOptions={{ tabBarStyle: { display: 'none' } }}>
-              {screens}
-            </Tabs>
+            <AppearanceTabs screens={screens} split />
           </View>
         </View>
       </AppearanceScope>
@@ -123,7 +155,7 @@ export default function TabLayout() {
 
   return (
     <AppearanceScope role="personal" active={auth.status === 'ready'}>
-      <Tabs screenListeners={tabScreenListeners}>{screens}</Tabs>
+      <AppearanceTabs screens={screens} split={false} />
     </AppearanceScope>
   );
 }
