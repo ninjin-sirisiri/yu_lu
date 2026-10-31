@@ -2,6 +2,9 @@
 
 MBC U-20 NEXT PROGRAMMING CONTEST 2026 / アプリ（ソフトウェア）部門
 
+- GitHub: <https://github.com/ninjin-sirisiri/yu_lu>
+- 提出ZIP: `DailyChat_source_v1.zip`
+
 ## 1. 作品概要
 
 **Daily Chat** は、友達との「毎日の会話のきっかけ」を作るスマートフォンアプリです。
@@ -41,7 +44,7 @@ Streak（連続達成日数）が伸び、2人の会話が積み重なるほど�
 
 ## 4. 審査員の方向け：収録内容と確認方法
 
-このZIPには、アプリ・バックエンド・招待Webの**ソースコードと素材**を収録しています。
+このリポジトリ（および提出ZIP）には、アプリ・バックエンド・招待Webの**ソースコードと素材**を収録しています。
 ビルド済みアプリ（.ipa / .apk / .exe など）や `node_modules`、生成物は含めていません。
 実際の動作は、別途提出する**作品説明動画（実行デモ）**で確認できます。
 
@@ -69,7 +72,7 @@ npm --prefix app run ios       # または npm --prefix app run android
 - `app/.env` の `EXPO_PUBLIC_SUPABASE_URL` は `http://127.0.0.1:54321`、
   `EXPO_PUBLIC_SUPABASE_ANON_KEY` は `npx supabase status` の anon key を使います。
 - 招待機能まで試す場合のみ `EXPO_PUBLIC_INVITE_ORIGIN`（HTTPSのorigin）を設定します。
-- **OAuthの資格情報（Google Client Secret、Appleの秘密鍵など）は本ZIPに含めていません。**
+- **OAuthの資格情報（Google Client Secret、Appleの秘密鍵など）は本リポジトリ／提出ZIPに含めていません。**
   `supabase/config.toml` の Google クライアントIDもプレースホルダに置き換えています。
   審査環境でログインまで再現する場合は、Google Cloud / Apple Developer で
   ご自身のクライアントを用意し、`supabase/config.toml` の該当箇所とルートの `.env` に
@@ -169,4 +172,4 @@ DailyChat/
 ## 10. ライセンス
 
 アプリ本体のライセンスは `app/LICENSE` を参照してください。
-本ZIPはコンテストの審査目的で提出するものです。
+本リポジトリおよび提出ZIPは、コンテストの審査目的で提出するものです。
