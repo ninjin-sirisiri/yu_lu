@@ -8,6 +8,7 @@ import { AppearancePreferencesProvider } from '../appearance/preferences';
 import { AppearanceProvider } from '../appearance/provider';
 import { CelebrationHost } from '../appearance/CelebrationHost';
 import { DevPreviewPanel } from '../appearance/DevPreviewPanel';
+import { DevCaptureObserver } from '../appearance/DevCaptureObserver';
 import { VisibilityProvider } from '../appearance/visibility';
 import { AuthProvider } from '../auth/provider';
 import { AvatarProbeHost } from '../media/avatarProbe';
@@ -67,6 +68,7 @@ function ThemedRoot() {
     <View style={{ flex: 1, backgroundColor: tokens.surface }}>
       <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
       <DestinationRecorder />
+      {__DEV__ && <DevCaptureObserver />}
       {/* Dev-only: renders null unless Documents/avatar-probe.enabled exists
           (see src/media/avatarProbe.tsx, Task 16 device evidence). */}
       <AvatarProbeHost />
