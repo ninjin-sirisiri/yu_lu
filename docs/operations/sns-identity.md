@@ -480,10 +480,12 @@ iOSではダークモード、文字サイズ拡大、会話100日の演出カ�
 
 未確認のため、このrunbookを根拠にネイティブ完了を宣言しない。
 
-- 両OSのVoiceOver／TalkBackの読み上げ順・フォーカス・ラベル
-- Androidの文字200%、横向き、safe area、キーボード、2列切替、OS動き軽減
+- 両OSのVoiceOver／TalkBackの読み上げ順・フォーカス・ラベル（AndroidはTalkBack有効化と
+  システムダイアログのフォーカス枠まで）
+- Androidの横向き（`orientation: portrait` で固定）、safe area、キーボード、OS動き軽減
 - iOSの横向き、iPad幅の2列切替、キーボード表示中の入力・送信
-- 両OSの100日＋演出中の入力・送信・scroll、背景化停止、0日と100日の性能比較
+- 両OSの100日＋演出中の入力・送信・scroll、背景化停止、実機性能
+  （Android EmulatorのgfxinfoはSwiftShaderで参考値のみ）
 - 実端末・ストア配布・本番OAuth・本番通知
 
 移行・適用の順序（サーバー/Edge→アプリ）と停止条件は§2〜§7のまま有効である。

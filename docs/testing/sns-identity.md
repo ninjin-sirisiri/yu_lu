@@ -293,6 +293,14 @@ iOS/Androidとも `npm --prefix app run ios` / `run android` の常駐Metroで�
   次の60日段階まであと30日。装飾が0日/7日段階から増えていることの比較用。
 - `screenshots/sns-identity/android-100.png`: Android認証済みホーム。現在100日、獲得済み100日段階、
   最大段階に到達。100日完成形の背景・模様・ステッカーと、Header文字の保護面。
+- `screenshots/sns-identity/android-100-final.png`: ナビゲーションHeader・タブバーも本人visualに
+  揃えた後のAndroid 100日。
+- `screenshots/sns-identity/android-text200.png`: Android文字サイズ200%の0/7日段階。
+  本文は折り返してスクロールでき、4タブは維持される（一部ラベルは省略表示）。
+- `screenshots/sns-identity/android-split.png`: Androidの論理幅900以上での2列表示。
+  左ナビゲーションと本文が同時に表示され、4タブは増えない。
+- `screenshots/sns-identity/android-talkback.png`: TalkBack有効時のシステム許可ダイアログ。
+  TalkBackのフォーカス枠が出ることを確認した（読み上げ順・ラベルは別途未確認）。
 - `screenshots/sns-identity/ios-0-earned-7.png`: iOS認証済みホーム。現在0日・獲得済み7日段階・
   次の30日段階まであと30日。
 - `screenshots/sns-identity/ios-30.png`: iOS認証済みホーム。現在30日・獲得済み30日段階。
@@ -323,26 +331,30 @@ iOS/Androidとも `npm --prefix app run ios` / `run android` の常駐Metroで�
   でも主要情報が読め、レイアウトが横にはみ出さない。
 - iOSの会話100日で演出カード（会話の節目 / 100日 / 累計100日 / スキップ）を確認した。
   カードは非モーダルで、下の入力欄・送信・履歴が残る。スキップ後の2択も非モーダルで表示された。
+- Androidの文字200%で本文が折り返し・スクロールでき、4タブが維持された。論理幅900以上の
+  2列表示で左ナビゲーションと本文が同時に表示された。TalkBackを有効化してもアプリは
+  起動・表示でき、システム許可ダイアログにフォーカス枠が出た。
+- Android Emulator（software GPU）で `dumpsys gfxinfo` を取得した。0日相当で
+  Total 115 frames / Janky 95.65% / 50th 93ms / 90th 133ms、100日相当で
+  Total 136 frames / Janky 89.71% / 50th 77ms / 90th 105ms。SwiftShaderのため
+  実機性能の合格値には使わない。クラッシュ・操作不能は観測しなかった。
 
 ### 11.3 実施できなかったこと（阻害条件）
 
-- **両OSのVoiceOver／TalkBack**: 読み上げ順・フォーカス・ラベル・装飾の読み上げ除外は
-  音声では未確認。AndroidのTalkBack、iOSのVoiceOverとも実操作記録がない。
-- **両OSのレイアウト条件**: Androidの文字200%、横向き、safe area、キーボード、2列切替、
-  OS動き軽減の起動中変更は未確認。iOSの横向き、iPad幅の2列切替、キーボード表示中の
-  入力・送信も未確認。899/900幅と倍率1.3/2.0の分岐はJestで確認済みだが、ネイティブの
-  実画面証拠ではない。
+- **両OSのVoiceOver／TalkBackの内容**: AndroidはTalkBack有効化とシステムダイアログの
+  フォーカス枠まで、iOSはVoiceOver未確認。読み上げ順・ラベル・装飾の読み上げ除外・
+  フォーカス移動は音声では確認していない。
+- **レイアウト条件**: Androidの文字200%と2列表示は確認した。Androidの横向きは
+  `app.json` の `orientation: portrait` によりポートレート固定で、横向き画面の証拠はない。
+  Androidのsafe area・キーボード表示中、OS動き軽減の起動中変更は未確認。iOSの横向き、
+  iPad幅の2列切替、キーボード表示中の入力・送信も未確認。899/900幅と倍率1.3/2.0の
+  分岐はJestで確認済みだが、ネイティブの実画面証拠ではない。
 - **演出の実操作**: iOSでカードと2択を確認したが、「今回だけ」「今後の同種類を停止」の
   選択結果、種類別停止からの再開、再起動後の非再表示は実画面では未確認（自動テストは
   `celebrations.test.ts` / `appearance-celebrations.test.tsx`）。
-- **性能**: 0日と100日の入力遅延・scroll・再描画・非表示アニメーションのprofilingは未実施。
-- **Androidのアクセシビリティ**: TalkBackの読み上げ順・フォーカス・ラベルは未確認。
-  文字200%、横向き、safe area、キーボード、2列切替、OS動き軽減の起動中変更、
-  100日＋演出中の入力・送信・scroll、背景化停止、0日と100日の性能比較も未確認。
-- **演出の実画面操作**: 認証済みAndroidで演出カードのスキップ2択、種類別停止/再開、
-  再起動後の非再表示を操作では確認していない（自動テストは
-  `celebrations.test.ts` / `appearance-celebrations.test.tsx` で確認済み）。
-- **両OSの実機**: Simulator/Emulatorのみで、実端末・ストア配布・本番OAuth・本番通知は未確認。
+- **性能**: Android Emulatorのgfxinfoは取得したがSwiftShaderで実機性能を代表しない。
+  iOSのprofiling、実端末の入力遅延・scroll・再描画・非表示アニメーションは未実施。
+- **実機**: Simulator/Emulatorのみで、実端末・ストア配布・本番OAuth・本番通知は未確認。
 
 ### 11.4 判定
 
