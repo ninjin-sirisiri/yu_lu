@@ -13,7 +13,7 @@ import { SafeAreaInsetsContext, type EdgeInsets } from 'react-native-safe-area-c
 import { AppearanceDecorations } from '../appearance/AppearanceDecorations';
 import { useAppearanceScope } from '../appearance/provider';
 import { useTheme } from '../theme/provider';
-import { spacing, typography } from '../theme/tokens';
+import { radius, spacing, typography } from '../theme/tokens';
 
 /**
  * Shared screen frame: themed background, safe-area padding, optional
@@ -115,7 +115,17 @@ export function Screen({
       )}
       {hasHeader && (
         <View style={styles.header}>
-          <View style={styles.flex}>
+          <View
+            style={[
+              styles.flex,
+              decoratedVisual && {
+                backgroundColor: visual?.bodySurface,
+                borderRadius: radius.md,
+                paddingHorizontal: spacing.s2,
+                paddingVertical: spacing.s1,
+              },
+            ]}
+          >
             {title !== undefined && (
               <Text
                 style={[styles.title, { color: visual?.text ?? tokens.text }]}

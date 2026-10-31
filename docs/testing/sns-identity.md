@@ -5,7 +5,7 @@
 [移行・運用runbook](../operations/sns-identity.md)。
 以前の[ホーム・チャット検証記録](home-chat.md)は別計画の証拠であり、この記録へ流用しない。
 
-**状態: Task 17完了（自動回帰）。両OSの見た目・レイアウト・VoiceOver／TalkBack・動き軽減・性能はTask 18で未確認。**
+**状態: Task 17完了（自動回帰）。Task 18は部分証拠のみ（両OSビルド・ログイン、Android認証済み0/29→0/30/100日）。iOS認証済み画面、両OSのVoiceOver／TalkBack・動き軽減・性能・操作は未確認で、計画全体は未完了。**
 本記録は2026-10-30（JST）に実行した自動回帰の実測であり、設計時点の予定ではない。
 本番デプロイ・本番push・外部ジョブ登録・通常DBのresetは行っていない。
 
@@ -226,9 +226,9 @@ PASS normal development database, containers, config and app/.env unchanged
 | 実端末のネイティブビルド・インストール・起動 | 未確認 | 未確認 | buildログと端末操作（build成功だけでは不足） |
 | ストア配布・本番OAuth・本番通知 | 未確認 | 未確認 | 別承認の証拠 |
 
-このタスクでは `npm --prefix app run ios` / `npm --prefix app run android` を実行していない。
-スクリーンショット・動画・端末情報も取得していない。HTML試作、renderer、ビルド成功をネイティブ合格の
-代用にしない。
+Task 17時点では `npm --prefix app run ios` / `npm --prefix app run android` を実行していなかった。
+Task 18で両OSの開発ビルドとログイン画面までは取得したが、認証済みの両OS操作・VoiceOver／TalkBack・
+性能は未確認である。HTML試作、renderer、ビルド成功をネイティブ合格の代用にしない。
 
 ## 9. 再現コマンド
 
@@ -256,3 +256,74 @@ git diff --check
 - 自動回帰の成功は、両OSの見た目・操作・アクセシビリティの成功ではない。Task 18の証拠が
   揃うまで、完了条件のうちネイティブ部分は未達である。
 - 本番反映の有無は別の承認事項であり、この記録は本番適用・ジョブ登録の許可ではない。
+
+## 11. Task 18 — 両OSビルドと部分的なネイティブ証拠（未完了）
+
+**状態: Task 18は未完了（BLOCKED）。** 両OSの開発ビルドとログイン画面、Androidの認証済み
+画面の一部は取得した。iOSの認証済み画面、両OSのVoiceOver／TalkBack、文字200%・横向き・
+2列切替・キーボード・safe area、OS動き軽減の起動中変更、節目演出のスキップ／種類別停止、
+100日状態での入力・送信・scroll、0日と100日の性能比較は**未確認**である。
+この節をもってTask 18の完了、まして計画全体の完了とはしない。
+
+### 11.1 ビルド・実行環境（実測）
+
+| 項目 | iOS | Android |
+| --- | --- | --- |
+| 実行日時 | 2026-10-30 23:5x–2026-10-31 00:0x JST | 2026-10-31 00:0x–00:2x JST |
+| 対象 | iPhone 17 Simulator / iOS 27.0 | Pixel_10 AVD / Android API 37（software GPU） |
+| ツール | Xcode 27.1（27A9275）、CocoaPods 1.17.0 | Gradle assembleDebug、JDK 17.0.21 |
+| コマンド | `npx expo run:ios --device "iPhone 17" --no-bundler` | `./gradlew assembleDebug -x lint` |
+| 結果 | **Build Succeeded / 0 errors, 2 warnings**、`com.anonymous.app` を Simulator へインストール | **BUILD SUCCESSFUL in 7m 39s**（733 tasks）、`android/app/build/outputs/apk/debug/app-debug.apk` |
+| 起動 | Expo dev client でログイン画面まで到達 | APK を `adb install` し、dev client でログイン画面・認証済み画面まで到達 |
+| build SHA | 実装branch `3f44856`（Task 17 docs）＋本節のHeader保護修正（未コミット時点） | 同左 |
+
+iOS/Androidとも `npm --prefix app run ios` / `run android` の常駐Metroではなく、
+`--no-bundler` / Gradleでnative buildを分離し、Metroを別プロセスで起動して確認した。
+ビルド成功・起動成功・ログイン画面到達は、認証後の操作成功とは区別する。
+
+### 11.2 取得した証拠
+
+匿名化のため、表示名・会話本文・画像を含む画面は保存していない。保存したのは次だけである。
+
+- `screenshots/sns-identity/ios-login.png`: iOS Simulatorのログイン画面（Apple/Googleボタン）。
+- `screenshots/sns-identity/android-login.png`: Android Emulatorのログイン画面。
+- `screenshots/sns-identity/android-0-earned-7.png`: Android認証済みホーム。現在0日、
+  獲得済み7日段階、次の30日段階まであと30日。**29→0の保持段階表示**の実画面。
+- `screenshots/sns-identity/android-30.png`: Android認証済みホーム。現在30日、獲得済み30日段階、
+  次の60日段階まであと30日。装飾が0日/7日段階から増えていることの比較用。
+- `screenshots/sns-identity/android-100.png`: Android認証済みホーム。現在100日、獲得済み100日段階、
+  最大段階に到達。100日完成形の背景・模様・ステッカーと、Header文字の保護面。
+
+認証済みAndroidでは、上記に加えて次を目視確認した（画面は個人名・本文を含むため保存しない）。
+
+- 0日はモノクロで装飾なし。7日段階・30日段階・100日段階で背景色・模様・ステッカー・
+  動く背景レイヤーが段階的に増える。
+- 現在0日・earned 29日で「獲得済み：7日段階」「次の30日段階まであと30日」となり、
+  「29日段階」「あと1日」と表示しない。
+- チャット一覧の小さな成長表示（累計1日 / 1日段階）と、会話画面で共有preset
+  `b-candy` の100日背景・吹き出しが表示される。会話ヘッダーの累計/次節目はスクロール位置に
+  よって画面上端外になる場合がある。
+- ホームの100日状態で、Headerの装飾がタイトル文字の直下に重ならないよう、Header文字面を
+  不透明な本文面で保護した（`app/src/ui/Screen.tsx`）。
+
+### 11.3 実施できなかったこと（阻害条件）
+
+- **iOSの認証済み画面**: Supabase localを起動し、Google OAuthのredirectを
+  `http://127.0.0.1:54321/auth/v1/callback` に切り替えたが、Simulator再起動後に
+  DeviceHubの画面入力が反応しなくなり、利用者によるGoogleログインを完了できなかった。
+  認証迂回・固定セッション注入は行っていない。iOSはログイン画面までで、認証済みの
+  0/1/6/7/29/30/59/60/99/100/101日、両明暗、全preset、共有presetの相手端末反映、
+  VoiceOver、動き軽減、操作・性能は未確認。
+- **Androidのアクセシビリティ**: TalkBackの読み上げ順・フォーカス・ラベルは未確認。
+  文字200%、横向き、safe area、キーボード、2列切替、OS動き軽減の起動中変更、
+  100日＋演出中の入力・送信・scroll、背景化停止、0日と100日の性能比較も未確認。
+- **演出の実画面操作**: 認証済みAndroidで演出カードのスキップ2択、種類別停止/再開、
+  再起動後の非再表示を操作では確認していない（自動テストは
+  `celebrations.test.ts` / `appearance-celebrations.test.tsx` で確認済み）。
+- **両OSの実機**: Simulator/Emulatorのみで、実端末・ストア配布・本番OAuth・本番通知は未確認。
+
+### 11.4 判定
+
+Task 18の完了条件「両OSの見た目・操作・アクセシビリティの証拠」は満たしていない。
+Androidの部分証拠と両OSのビルド/ログイン証拠は記録するが、計画全体を完了扱いにしない。
+本番反映は別の承認事項である。
