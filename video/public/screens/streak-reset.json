@@ -1,0 +1,7 @@
+{
+  "capturedAt": "2026-10-31T10:31:16.976937+00:00",
+  "device": "B7E7293C-CE05-453D-ADC7-E01BA91A2C3C",
+  "source": "xcrun simctl io screenshot",
+  "note": "Actual home appearance, display-only current streak 0 days with 100 earned days retained; not a real achievement.",
+  "sha256": "2df7e37801852fa989cef673f8f058c36c3b6764f0fcd05fb2c38d4be521a0c5"
+}

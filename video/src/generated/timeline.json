@@ -1,0 +1,1157 @@
+{
+  "fps": 30,
+  "durationInFrames": 7285,
+  "seconds": 242.83333333333334,
+  "voiceCredit": "VOICEVOX:四国めたん",
+  "scenes": [
+    {
+      "id": "opening",
+      "title": "友達に話しかけるきっかけ",
+      "chapter": "01 / きっかけ",
+      "lines": [
+        {
+          "id": "opening-1",
+          "cues": [
+            {
+              "id": "old-friends",
+              "phrase": "サイキンハナシテイナイ"
+            }
+          ],
+          "text": "連絡先は知っているのに、最近話していない友達はいませんか。",
+          "headline": "最近、話していない友達。",
+          "visual": "question",
+          "from": 0,
+          "audioFrom": 3,
+          "audioFrames": 145,
+          "durationInFrames": 153,
+          "audio": "audio/opening-1.wav",
+          "seconds": 4.810666666666667,
+          "captions": [
+            {
+              "text": "連絡先は知っているのに、最近話していない友達はいませんか。",
+              "startMs": 0,
+              "endMs": 4811,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        },
+        {
+          "id": "opening-2",
+          "cues": [
+            {
+              "id": "hesitate",
+              "phrase": "マヨッテシマウ"
+            }
+          ],
+          "text": "話したくないわけではない。でも、何をきっかけに連絡すればいいのか迷ってしまう。",
+          "headline": "何をきっかけに話そう？",
+          "visual": "question",
+          "from": 153,
+          "audioFrom": 3,
+          "audioFrames": 175,
+          "durationInFrames": 183,
+          "audio": "audio/opening-2.wav",
+          "seconds": 5.802666666666667,
+          "captions": [
+            {
+              "text": "話したくないわけではない。でも、何をきっかけに連絡すればいいのか迷ってしまう。",
+              "startMs": 0,
+              "endMs": 5803,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        },
+        {
+          "id": "opening-3",
+          "cues": [
+            {
+              "id": "brand",
+              "phrase": "ユウルワ"
+            }
+          ],
+          "text": "Yu_Luは、そんな友達との会話を始めるきっかけを作る、スマートフォンアプリです。",
+          "speech": "ユールは、そんな友達との会話を始めるきっかけを作る、スマートフォンアプリです。",
+          "headline": "Yu_Lu",
+          "visual": "hero",
+          "from": 336,
+          "audioFrom": 3,
+          "audioFrames": 176,
+          "durationInFrames": 184,
+          "audio": "audio/opening-3.wav",
+          "seconds": 5.866666666666666,
+          "captions": [
+            {
+              "text": "Yu_Luは、そんな友達との会話を始めるきっかけを作る、スマートフォンアプリです。",
+              "startMs": 0,
+              "endMs": 5867,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        }
+      ],
+      "from": 0,
+      "durationInFrames": 520,
+      "cues": [
+        {
+          "id": "old-friends",
+          "frame": 66,
+          "lineId": "opening-1"
+        },
+        {
+          "id": "hesitate",
+          "frame": 301,
+          "lineId": "opening-2"
+        },
+        {
+          "id": "brand",
+          "frame": 342,
+          "lineId": "opening-3"
+        }
+      ]
+    },
+    {
+      "id": "problem",
+      "title": "このアプリが扱う課題",
+      "chapter": "02 / 課題",
+      "lines": [
+        {
+          "id": "problem-1",
+          "text": "このアプリが対象にするのは、すでにつながっている友達との関係です。知らない人と出会うためのアプリではありません。",
+          "headline": "今いる友達と、また話す。",
+          "visual": "relationship",
+          "from": 0,
+          "audioFrom": 3,
+          "audioFrames": 238,
+          "durationInFrames": 246,
+          "audio": "audio/problem-1.wav",
+          "seconds": 7.914666666666666,
+          "captions": [
+            {
+              "text": "このアプリが対象にするのは、すでにつながっている友達との関係です。知らない人と出会うためのアプリではありません。",
+              "startMs": 0,
+              "endMs": 7915,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        },
+        {
+          "id": "problem-2",
+          "cues": [
+            {
+              "id": "select",
+              "phrase": "キョオノアイテオ"
+            }
+          ],
+          "text": "誰に連絡しようかと迷うとき、アプリが今日の相手を選んでくれます。",
+          "headline": "「誰に話そう」を手伝う。",
+          "visual": "relationship",
+          "from": 246,
+          "audioFrom": 3,
+          "audioFrames": 144,
+          "durationInFrames": 152,
+          "audio": "audio/problem-2.wav",
+          "seconds": 4.778666666666667,
+          "captions": [
+            {
+              "text": "誰に連絡しようかと迷うとき、アプリが今日の相手を選んでくれます。",
+              "startMs": 0,
+              "endMs": 4779,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        },
+        {
+          "id": "problem-3",
+          "cues": [
+            {
+              "id": "message",
+              "phrase": "ヒトコトオクル"
+            }
+          ],
+          "text": "大きな用事がなくても、最近あったことをひとこと送る。そのためのきっかけを用意します。",
+          "headline": "用事がなくても、ひとこと。",
+          "visual": "relationship",
+          "from": 398,
+          "audioFrom": 3,
+          "audioFrames": 187,
+          "durationInFrames": 195,
+          "audio": "audio/problem-3.wav",
+          "seconds": 6.229333333333333,
+          "captions": [
+            {
+              "text": "大きな用事がなくても、最近あったことをひとこと送る。そのためのきっかけを用意します。",
+              "startMs": 0,
+              "endMs": 6229,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        }
+      ],
+      "from": 520,
+      "durationInFrames": 593,
+      "cues": [
+        {
+          "id": "select",
+          "frame": 337,
+          "lineId": "problem-2"
+        },
+        {
+          "id": "message",
+          "frame": 491,
+          "lineId": "problem-3"
+        }
+      ]
+    },
+    {
+      "id": "concept",
+      "title": "毎日の相手が決まる仕組み",
+      "chapter": "03 / 仕組み",
+      "lines": [
+        {
+          "id": "concept-1",
+          "cues": [
+            {
+              "id": "approved",
+              "phrase": "ショオニン"
+            },
+            {
+              "id": "outgoing",
+              "phrase": "ハナシカケル"
+            }
+          ],
+          "text": "まず、お互いに承認して友達になります。友達の中から、毎日ひとり、話しかける相手が決まります。",
+          "headline": "友達の中から、毎日ひとり。",
+          "visual": "assignment",
+          "from": 0,
+          "audioFrom": 3,
+          "audioFrames": 236,
+          "durationInFrames": 244,
+          "audio": "audio/concept-1.wav",
+          "seconds": 7.84,
+          "captions": [
+            {
+              "text": "まず、お互いに承認して友達になります。友達の中から、毎日ひとり、話しかける相手が決まります。",
+              "startMs": 0,
+              "endMs": 7840,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        },
+        {
+          "id": "concept-2",
+          "cues": [
+            {
+              "id": "send",
+              "phrase": "ジブンカラ"
+            },
+            {
+              "id": "reply",
+              "phrase": "ジブンガヘンシン"
+            }
+          ],
+          "text": "自分から話しかける相手と、自分が返信する相手は、同じとは限りません。",
+          "headline": "送る相手と、返信する相手。",
+          "visual": "assignment",
+          "from": 244,
+          "audioFrom": 3,
+          "audioFrames": 172,
+          "durationInFrames": 180,
+          "audio": "audio/concept-2.wav",
+          "seconds": 5.706666666666667,
+          "captions": [
+            {
+              "text": "自分から話しかける相手と、自分が返信する相手は、同じとは限りません。",
+              "startMs": 0,
+              "endMs": 5707,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        },
+        {
+          "id": "concept-3",
+          "cues": [
+            {
+              "id": "free",
+              "phrase": "ジユウニ"
+            }
+          ],
+          "text": "相手を選ぶ仕組みは、会話のきっかけです。今日の相手以外の友達とも、自由にやり取りできます。",
+          "headline": "ほかの友達とも自由に話せる。",
+          "visual": "assignment",
+          "from": 424,
+          "audioFrom": 3,
+          "audioFrames": 209,
+          "durationInFrames": 217,
+          "audio": "audio/concept-3.wav",
+          "seconds": 6.944,
+          "captions": [
+            {
+              "text": "相手を選ぶ仕組みは、会話のきっかけです。今日の相手以外の友達とも、自由にやり取りできます。",
+              "startMs": 0,
+              "endMs": 6944,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        }
+      ],
+      "from": 1113,
+      "durationInFrames": 641,
+      "cues": [
+        {
+          "id": "approved",
+          "frame": 42,
+          "lineId": "concept-1"
+        },
+        {
+          "id": "outgoing",
+          "frame": 181,
+          "lineId": "concept-1"
+        },
+        {
+          "id": "send",
+          "frame": 250,
+          "lineId": "concept-2"
+        },
+        {
+          "id": "reply",
+          "frame": 316,
+          "lineId": "concept-2"
+        },
+        {
+          "id": "free",
+          "frame": 589,
+          "lineId": "concept-3"
+        }
+      ]
+    },
+    {
+      "id": "screens",
+      "title": "アプリの画面",
+      "chapter": "04 / 実際の画面",
+      "lines": [
+        {
+          "id": "screens-1",
+          "text": "ここからは、iOSのシミュレーターで動く、開発版の画面を紹介します。",
+          "speech": "ここからは、アイオーエスのシミュレーターで動く、開発版の画面を紹介します。",
+          "headline": "実際のアプリ画面。",
+          "visual": "screen",
+          "screen": "chat",
+          "from": 0,
+          "audioFrom": 3,
+          "audioFrames": 173,
+          "durationInFrames": 181,
+          "audio": "audio/screens-1.wav",
+          "seconds": 5.749333333333333,
+          "captions": [
+            {
+              "text": "ここからは、iOSのシミュレーターで動く、開発版の画面を紹介します。",
+              "startMs": 0,
+              "endMs": 5749,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        },
+        {
+          "id": "screens-4",
+          "text": "友達は、User IDで相手を探して申請します。相手が承認すると、友達として登録されます。",
+          "speech": "友達は、ユーザーアイディーで相手を探して申請します。相手が承認すると、友達として登録されます。",
+          "headline": "お互いの承認で友達になる。",
+          "visual": "screen",
+          "screen": "friends",
+          "from": 181,
+          "audioFrom": 3,
+          "audioFrames": 233,
+          "durationInFrames": 241,
+          "audio": "audio/screens-4.wav",
+          "seconds": 7.744,
+          "captions": [
+            {
+              "text": "友達は、User IDで相手を探して申請します。相手が承認すると、友達として登録されます。",
+              "startMs": 0,
+              "endMs": 7744,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        },
+        {
+          "id": "screens-5",
+          "text": "招待リンクやQRコードからも、相手を見つけられます。リンクを開くだけで、友達になるわけではありません。",
+          "speech": "招待リンクやキューアールコードからも、相手を見つけられます。リンクを開くだけで、友達になるわけではありません。",
+          "headline": "招待と、友達の承認を分ける。",
+          "visual": "screen",
+          "screen": "friends",
+          "from": 422,
+          "audioFrom": 3,
+          "audioFrames": 236,
+          "durationInFrames": 244,
+          "audio": "audio/screens-5.wav",
+          "seconds": 7.84,
+          "captions": [
+            {
+              "text": "招待リンクやQRコードからも、相手を見つけられます。リンクを開くだけで、友達になるわけではありません。",
+              "startMs": 0,
+              "endMs": 7840,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        },
+        {
+          "id": "screens-2",
+          "text": "チャットの一覧から、友達との会話を開きます。会話は文字と画像に対応しています。",
+          "headline": "文字と写真でやり取り。",
+          "visual": "screen",
+          "screen": "conversation",
+          "from": 666,
+          "audioFrom": 3,
+          "audioFrames": 188,
+          "durationInFrames": 196,
+          "audio": "audio/screens-2.wav",
+          "seconds": 6.261333333333333,
+          "captions": [
+            {
+              "text": "チャットの一覧から、友達との会話を開きます。会話は文字と画像に対応しています。",
+              "startMs": 0,
+              "endMs": 6261,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        },
+        {
+          "id": "screens-3",
+          "text": "通話のように、同じ時間にアプリを開いている必要はありません。相手は、自分のタイミングで読んで返信できます。",
+          "headline": "返信は自分のタイミングで。",
+          "visual": "screen",
+          "screen": "conversation",
+          "from": 862,
+          "audioFrom": 3,
+          "audioFrames": 249,
+          "durationInFrames": 257,
+          "audio": "audio/screens-3.wav",
+          "seconds": 8.288,
+          "captions": [
+            {
+              "text": "通話のように、同じ時間にアプリを開いている必要はありません。相手は、自分のタイミングで読んで返信できます。",
+              "startMs": 0,
+              "endMs": 8288,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        }
+      ],
+      "from": 1754,
+      "durationInFrames": 1119,
+      "cues": []
+    },
+    {
+      "id": "growth",
+      "title": "ふたりの会話の積み重ね",
+      "chapter": "05 / 続ける楽しさ",
+      "lines": [
+        {
+          "id": "growth-1",
+          "cues": [
+            {
+              "id": "growth-both",
+              "phrase": "リョオホオガ"
+            }
+          ],
+          "text": "会話を続ける楽しさとして、ふたりでやり取りした日数を記録します。数えるのは、同じ日に両方がメッセージを送った日です。",
+          "headline": "ふたりが送った日を記録。",
+          "visual": "growth",
+          "from": 0,
+          "audioFrom": 3,
+          "audioFrames": 271,
+          "durationInFrames": 279,
+          "audio": "audio/growth-1.wav",
+          "seconds": 9.002666666666666,
+          "captions": [
+            {
+              "text": "会話を続ける楽しさとして、ふたりでやり取りした日数を記録します。数えるのは、同じ日に両方がメッセージを送った日です。",
+              "startMs": 0,
+              "endMs": 9003,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        },
+        {
+          "id": "growth-2",
+          "cues": [
+            {
+              "id": "growth-palette",
+              "phrase": "カイワガメンノ"
+            },
+            {
+              "id": "day-1",
+              "phrase": "イチニチ"
+            },
+            {
+              "id": "day-7",
+              "phrase": "ナノカ"
+            },
+            {
+              "id": "day-30",
+              "phrase": "サンジュウニチ"
+            },
+            {
+              "id": "day-60",
+              "phrase": "ロクジュウニチ"
+            },
+            {
+              "id": "day-100",
+              "phrase": "ヒャクニチ"
+            }
+          ],
+          "text": "累計の日数が節目に達すると、会話画面の色や模様が変わります。節目は、1日、7日、30日、60日、100日です。",
+          "headline": "会話画面の見た目が変わる。",
+          "visual": "growth",
+          "from": 279,
+          "audioFrom": 3,
+          "audioFrames": 339,
+          "durationInFrames": 347,
+          "audio": "audio/growth-2.wav",
+          "seconds": 11.285333333333334,
+          "captions": [
+            {
+              "text": "累計の日数が節目に達すると、会話画面の色や模様が変わります。節目は、1日、7日、30日、60日、100日です。",
+              "startMs": 0,
+              "endMs": 11285,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        },
+        {
+          "id": "growth-3",
+          "cues": [
+            {
+              "id": "growth-kept",
+              "phrase": "トギレテモ"
+            }
+          ],
+          "text": "この日数は、会話が途切れても残ります。毎日続けられなくても、それまでのやり取りは積み重ねとして残ります。",
+          "headline": "間が空いても、累計は残る。",
+          "visual": "growth",
+          "from": 626,
+          "audioFrom": 3,
+          "audioFrames": 242,
+          "durationInFrames": 250,
+          "audio": "audio/growth-3.wav",
+          "seconds": 8.053333333333333,
+          "captions": [
+            {
+              "text": "この日数は、会話が途切れても残ります。毎日続けられなくても、それまでのやり取りは積み重ねとして残ります。",
+              "startMs": 0,
+              "endMs": 8053,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        }
+      ],
+      "from": 2873,
+      "durationInFrames": 876,
+      "cues": [
+        {
+          "id": "growth-both",
+          "frame": 206,
+          "lineId": "growth-1"
+        },
+        {
+          "id": "growth-palette",
+          "frame": 364,
+          "lineId": "growth-2"
+        },
+        {
+          "id": "day-1",
+          "frame": 468,
+          "lineId": "growth-2"
+        },
+        {
+          "id": "day-7",
+          "frame": 496,
+          "lineId": "growth-2"
+        },
+        {
+          "id": "day-30",
+          "frame": 521,
+          "lineId": "growth-2"
+        },
+        {
+          "id": "day-60",
+          "frame": 556,
+          "lineId": "growth-2"
+        },
+        {
+          "id": "day-100",
+          "frame": 593,
+          "lineId": "growth-2"
+        },
+        {
+          "id": "growth-kept",
+          "frame": 682,
+          "lineId": "growth-3"
+        }
+      ]
+    },
+    {
+      "id": "streak",
+      "title": "個人の連続日数",
+      "chapter": "06 / 毎日の記録",
+      "lines": [
+        {
+          "id": "streak-1",
+          "cues": [
+            {
+              "id": "streak-send",
+              "phrase": "ソオシンアイテニ"
+            },
+            {
+              "id": "streak-reply",
+              "phrase": "ヘンシンタイショオノ"
+            },
+            {
+              "id": "streak-done",
+              "phrase": "タッセエ"
+            }
+          ],
+          "text": "ふたりの累計とは別に、自分の連続日数もあります。今日の送信相手に送り、返信対象の友達全員に、受信したあとで返信すると、今日の条件を達成します。",
+          "headline": "個人の連続日数は別の記録。",
+          "visual": "streak",
+          "from": 0,
+          "audioFrom": 3,
+          "audioFrames": 392,
+          "durationInFrames": 400,
+          "audio": "audio/streak-1.wav",
+          "seconds": 13.034666666666666,
+          "captions": [
+            {
+              "text": "ふたりの累計とは別に、自分の連続日数もあります。今日の送信相手に送り、返信対象の友達全員に、受信したあとで返信すると、今日の条件を達成します。",
+              "startMs": 0,
+              "endMs": 13035,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        },
+        {
+          "id": "streak-2",
+          "cues": [
+            {
+              "id": "streak-earned",
+              "phrase": "ダンカイテキニ"
+            },
+            {
+              "id": "streak-reset",
+              "phrase": "トギレテモ"
+            }
+          ],
+          "text": "連続日数でも、アプリの見た目が段階的に変わります。一度獲得した見た目は、連続日数が途切れても残ります。",
+          "headline": "獲得した見た目は残る。",
+          "visual": "streak",
+          "from": 400,
+          "audioFrom": 3,
+          "audioFrames": 256,
+          "durationInFrames": 264,
+          "audio": "audio/streak-2.wav",
+          "seconds": 8.533333333333333,
+          "captions": [
+            {
+              "text": "連続日数でも、アプリの見た目が段階的に変わります。一度獲得した見た目は、連続日数が途切れても残ります。",
+              "startMs": 0,
+              "endMs": 8533,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        }
+      ],
+      "from": 3749,
+      "durationInFrames": 664,
+      "cues": [
+        {
+          "id": "streak-send",
+          "frame": 144,
+          "lineId": "streak-1"
+        },
+        {
+          "id": "streak-reply",
+          "frame": 195,
+          "lineId": "streak-1"
+        },
+        {
+          "id": "streak-done",
+          "frame": 365,
+          "lineId": "streak-1"
+        },
+        {
+          "id": "streak-earned",
+          "frame": 478,
+          "lineId": "streak-2"
+        },
+        {
+          "id": "streak-reset",
+          "frame": 618,
+          "lineId": "streak-2"
+        }
+      ]
+    },
+    {
+      "id": "reliability",
+      "title": "入力や送信を支える工夫",
+      "chapter": "07 / 実装の工夫",
+      "lines": [
+        {
+          "id": "reliability-1",
+          "cues": [
+            {
+              "id": "draft",
+              "phrase": "シタガキト"
+            },
+            {
+              "id": "saved",
+              "phrase": "ホゾン"
+            }
+          ],
+          "text": "日常のやり取りを支えるため、入力途中の下書きと添付画像は、相手ごとに保存する作りにしています。",
+          "headline": "下書きは、相手ごとに保存。",
+          "visual": "reliability",
+          "from": 0,
+          "audioFrom": 3,
+          "audioFrames": 226,
+          "durationInFrames": 234,
+          "audio": "audio/reliability-1.wav",
+          "seconds": 7.52,
+          "captions": [
+            {
+              "text": "日常のやり取りを支えるため、入力途中の下書きと添付画像は、相手ごとに保存する作りにしています。",
+              "startMs": 0,
+              "endMs": 7520,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        },
+        {
+          "id": "reliability-2",
+          "cues": [
+            {
+              "id": "offline",
+              "phrase": "ツウシンデキナイ"
+            },
+            {
+              "id": "queued",
+              "phrase": "ソオシンマチト"
+            },
+            {
+              "id": "reconnect",
+              "phrase": "セツゾクガモドルト"
+            }
+          ],
+          "text": "通信できないときは、メッセージを送信待ちとして保存します。接続が戻ると、その相手への予約順に送信します。",
+          "headline": "通信が戻ったら、予約順に送信。",
+          "visual": "reliability",
+          "from": 234,
+          "audioFrom": 3,
+          "audioFrames": 263,
+          "durationInFrames": 271,
+          "audio": "audio/reliability-2.wav",
+          "seconds": 8.757333333333333,
+          "captions": [
+            {
+              "text": "通信できないときは、メッセージを送信待ちとして保存します。接続が戻ると、その相手への予約順に送信します。",
+              "startMs": 0,
+              "endMs": 8757,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        },
+        {
+          "id": "reliability-3",
+          "cues": [
+            {
+              "id": "confirmed",
+              "phrase": "カクテエ"
+            }
+          ],
+          "text": "送信待ちと、送信が確定した状態は区別します。送信結果が分からないときも、送れたものとして表示しない設計です。",
+          "headline": "送信待ちと、送信済みを区別。",
+          "visual": "reliability",
+          "from": 505,
+          "audioFrom": 3,
+          "audioFrames": 270,
+          "durationInFrames": 278,
+          "audio": "audio/reliability-3.wav",
+          "seconds": 8.970666666666666,
+          "captions": [
+            {
+              "text": "送信待ちと、送信が確定した状態は区別します。送信結果が分からないときも、送れたものとして表示しない設計です。",
+              "startMs": 0,
+              "endMs": 8971,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        }
+      ],
+      "from": 4413,
+      "durationInFrames": 783,
+      "cues": [
+        {
+          "id": "draft",
+          "frame": 105,
+          "lineId": "reliability-1"
+        },
+        {
+          "id": "saved",
+          "frame": 177,
+          "lineId": "reliability-1"
+        },
+        {
+          "id": "offline",
+          "frame": 240,
+          "lineId": "reliability-2"
+        },
+        {
+          "id": "queued",
+          "frame": 311,
+          "lineId": "reliability-2"
+        },
+        {
+          "id": "reconnect",
+          "frame": 375,
+          "lineId": "reliability-2"
+        },
+        {
+          "id": "confirmed",
+          "frame": 565,
+          "lineId": "reliability-3"
+        }
+      ]
+    },
+    {
+      "id": "architecture",
+      "title": "アプリを支える構成",
+      "chapter": "08 / 技術構成",
+      "lines": [
+        {
+          "id": "architecture-1",
+          "text": "アプリは、React NativeとExpoで開発しています。画面だけでなく、端末にデータを保存する処理も組み込んでいます。",
+          "speech": "アプリは、リアクトネイティブとエキスポで開発しています。画面だけでなく、端末にデータを保存する処理も組み込んでいます。",
+          "cues": [
+            {
+              "id": "client",
+              "phrase": "リアクトネイティブト"
+            },
+            {
+              "id": "local",
+              "phrase": "タンマツニ"
+            }
+          ],
+          "headline": "画面と、端末内の保存。",
+          "visual": "architecture",
+          "from": 0,
+          "audioFrom": 3,
+          "audioFrames": 258,
+          "durationInFrames": 266,
+          "audio": "audio/architecture-1.wav",
+          "seconds": 8.576,
+          "captions": [
+            {
+              "text": "アプリは、React NativeとExpoで開発しています。画面だけでなく、端末にデータを保存する処理も組み込んでいます。",
+              "startMs": 0,
+              "endMs": 8576,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        },
+        {
+          "id": "architecture-2",
+          "text": "認証やデータの管理には、Supabaseを使っています。日付や今日の相手の判定は、端末の時計だけに頼らず、サーバー側の情報を使います。",
+          "speech": "認証やデータの管理には、スパベースを使っています。日付や今日の相手の判定は、端末の時計だけに頼らず、サーバー側の情報を使います。",
+          "cues": [
+            {
+              "id": "server",
+              "phrase": "スパベエスオ"
+            },
+            {
+              "id": "server-clock",
+              "phrase": "サアバアガワノ"
+            }
+          ],
+          "headline": "今日の判定はサーバー側で。",
+          "visual": "architecture",
+          "from": 266,
+          "audioFrom": 3,
+          "audioFrames": 320,
+          "durationInFrames": 328,
+          "audio": "audio/architecture-2.wav",
+          "seconds": 10.645333333333333,
+          "captions": [
+            {
+              "text": "認証やデータの管理には、Supabaseを使っています。日付や今日の相手の判定は、端末の時計だけに頼らず、サーバー側の情報を使います。",
+              "startMs": 0,
+              "endMs": 10645,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        },
+        {
+          "id": "architecture-3",
+          "cues": [
+            {
+              "id": "accepted",
+              "phrase": "ウケツケタ"
+            }
+          ],
+          "text": "一日の区切りは、日本時間の朝4時です。送信を予約しただけでは、今日の達成にはなりません。サーバーが受け付けた結果をもとに判定します。",
+          "headline": "予約しただけでは達成にしない。",
+          "visual": "architecture",
+          "from": 594,
+          "audioFrom": 3,
+          "audioFrames": 322,
+          "durationInFrames": 330,
+          "audio": "audio/architecture-3.wav",
+          "seconds": 10.730666666666666,
+          "captions": [
+            {
+              "text": "一日の区切りは、日本時間の朝4時です。送信を予約しただけでは、今日の達成にはなりません。サーバーが受け付けた結果をもとに判定します。",
+              "startMs": 0,
+              "endMs": 10731,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        }
+      ],
+      "from": 5196,
+      "durationInFrames": 924,
+      "cues": [
+        {
+          "id": "client",
+          "frame": 33,
+          "lineId": "architecture-1"
+        },
+        {
+          "id": "local",
+          "frame": 164,
+          "lineId": "architecture-1"
+        },
+        {
+          "id": "server",
+          "frame": 333,
+          "lineId": "architecture-2"
+        },
+        {
+          "id": "server-clock",
+          "frame": 522,
+          "lineId": "architecture-2"
+        },
+        {
+          "id": "accepted",
+          "frame": 850,
+          "lineId": "architecture-3"
+        }
+      ]
+    },
+    {
+      "id": "outlook",
+      "title": "これから確かめたいこと",
+      "chapter": "09 / 今後の検証",
+      "lines": [
+        {
+          "id": "outlook-1",
+          "cues": [
+            {
+              "id": "test-friends",
+              "phrase": "トモダチドオシデ"
+            }
+          ],
+          "text": "今後は、実際に友達同士で使ってもらい、話しかけるきっかけになったかを確かめたいと考えています。",
+          "headline": "本当に、会話のきっかけになるか。",
+          "visual": "outlook",
+          "from": 0,
+          "audioFrom": 3,
+          "audioFrames": 220,
+          "durationInFrames": 228,
+          "audio": "audio/outlook-1.wav",
+          "seconds": 7.328,
+          "captions": [
+            {
+              "text": "今後は、実際に友達同士で使ってもらい、話しかけるきっかけになったかを確かめたいと考えています。",
+              "startMs": 0,
+              "endMs": 7328,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        },
+        {
+          "id": "outlook-2",
+          "cues": [
+            {
+              "id": "enjoy",
+              "phrase": "タノシサニ"
+            },
+            {
+              "id": "burden",
+              "phrase": "フタンニ"
+            }
+          ],
+          "text": "毎日の記録が、楽しさにつながるのか、それとも負担になるのか。使う人の感想をもとに、改善を考えていきます。",
+          "headline": "楽しさと、負担の両方を確かめる。",
+          "visual": "outlook",
+          "from": 228,
+          "audioFrom": 3,
+          "audioFrames": 269,
+          "durationInFrames": 277,
+          "audio": "audio/outlook-2.wav",
+          "seconds": 8.96,
+          "captions": [
+            {
+              "text": "毎日の記録が、楽しさにつながるのか、それとも負担になるのか。使う人の感想をもとに、改善を考えていきます。",
+              "startMs": 0,
+              "endMs": 8960,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        },
+        {
+          "id": "outlook-3",
+          "cues": [
+            {
+              "id": "separate-tests",
+              "phrase": "ベツベツニ"
+            }
+          ],
+          "text": "プログラムが動くことと、使う人の役に立つことは、別々に確かめる必要があります。利用した結果は、今後の検証課題です。",
+          "headline": "動作の確認と、効果の検証。",
+          "visual": "outlook",
+          "from": 505,
+          "audioFrom": 3,
+          "audioFrames": 290,
+          "durationInFrames": 298,
+          "audio": "audio/outlook-3.wav",
+          "seconds": 9.653333333333334,
+          "captions": [
+            {
+              "text": "プログラムが動くことと、使う人の役に立つことは、別々に確かめる必要があります。利用した結果は、今後の検証課題です。",
+              "startMs": 0,
+              "endMs": 9653,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        }
+      ],
+      "from": 6120,
+      "durationInFrames": 803,
+      "cues": [
+        {
+          "id": "test-friends",
+          "frame": 50,
+          "lineId": "outlook-1"
+        },
+        {
+          "id": "enjoy",
+          "frame": 276,
+          "lineId": "outlook-2"
+        },
+        {
+          "id": "burden",
+          "frame": 343,
+          "lineId": "outlook-2"
+        },
+        {
+          "id": "separate-tests",
+          "frame": 624,
+          "lineId": "outlook-3"
+        }
+      ]
+    },
+    {
+      "id": "closing",
+      "title": "Yu_Lu",
+      "chapter": "10 / おわりに",
+      "lines": [
+        {
+          "id": "closing-1",
+          "text": "Yu_Luが目指すのは、友達に話しかけるきっかけを作ることです。",
+          "speech": "ユールが目指すのは、友達に話しかけるきっかけを作ることです。",
+          "headline": "Yu_Lu",
+          "visual": "closing",
+          "from": 0,
+          "audioFrom": 3,
+          "audioFrames": 131,
+          "durationInFrames": 139,
+          "audio": "audio/closing-1.wav",
+          "seconds": 4.352,
+          "captions": [
+            {
+              "text": "Yu_Luが目指すのは、友達に話しかけるきっかけを作ることです。",
+              "startMs": 0,
+              "endMs": 4352,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        },
+        {
+          "id": "closing-2",
+          "cues": [
+            {
+              "id": "last-message",
+              "phrase": "キョオヒトコトオクル"
+            }
+          ],
+          "text": "最近話していない、あの友達へ。今日、ひとこと送る。そのきっかけを、このアプリから。",
+          "headline": "今日、友達にひとこと。",
+          "visual": "closing",
+          "from": 139,
+          "audioFrom": 3,
+          "audioFrames": 215,
+          "durationInFrames": 223,
+          "audio": "audio/closing-2.wav",
+          "seconds": 7.157333333333334,
+          "captions": [
+            {
+              "text": "最近話していない、あの友達へ。今日、ひとこと送る。そのきっかけを、このアプリから。",
+              "startMs": 0,
+              "endMs": 7157,
+              "timestampMs": null,
+              "confidence": null
+            }
+          ]
+        }
+      ],
+      "from": 6923,
+      "durationInFrames": 362,
+      "cues": [
+        {
+          "id": "last-message",
+          "frame": 232,
+          "lineId": "closing-2"
+        }
+      ]
+    }
+  ],
+  "scriptSha256": "e57b73ff521ee9fc0f6864132ba7814a0121ee5fbe6d7c0a978163c6561bac5d"
+}

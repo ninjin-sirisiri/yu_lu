@@ -1,0 +1,12 @@
+node_modules
+dist
+build/
+.DS_Store
+.env
+
+# Ignore the output video from Git but not videos you import into src/.
+out
+__pycache__/
+*.pyc
+public/audio/*.tmp
+public/demo/*.sb-*

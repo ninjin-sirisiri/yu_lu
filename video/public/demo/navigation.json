@@ -1,0 +1,42 @@
+{
+  "available": true,
+  "source": "demo/navigation.mp4",
+  "seconds": 37.806667,
+  "segments": [
+    {
+      "id": "screens-1",
+      "from": 0,
+      "durationInFrames": 181,
+      "screen": "chat"
+    },
+    {
+      "id": "screens-4",
+      "from": 181,
+      "durationInFrames": 241,
+      "screen": "friends"
+    },
+    {
+      "id": "screens-5",
+      "from": 422,
+      "durationInFrames": 244,
+      "screen": "friends"
+    },
+    {
+      "id": "screens-2",
+      "from": 666,
+      "durationInFrames": 196,
+      "screen": "conversation"
+    },
+    {
+      "id": "screens-3",
+      "from": 862,
+      "durationInFrames": 257,
+      "screen": "conversation"
+    }
+  ],
+  "capturedAt": "2026-10-31T11:42:45.591683+00:00",
+  "method": "simctl recordVideo + app deep links; playback speed 1x",
+  "includesMessageSend": false,
+  "includesGrowthChange": false,
+  "sha256": "2936a2bcf264263a60055f326ce44a67b1eee39e0e292c97fe0c573fe451cb80"
+}

@@ -1,0 +1,7 @@
+{
+  "capturedAt": "2026-10-31T10:25:43.675432+00:00",
+  "device": "B7E7293C-CE05-453D-ADC7-E01BA91A2C3C",
+  "source": "xcrun simctl io screenshot",
+  "note": "Actual conversation appearance, display-only 30-day growth preview; no backend changes.",
+  "sha256": "b0b73afbd90b3a9d4fb50b46f039ad292d09e119d66c344f030ed8736232ac8b"
+}

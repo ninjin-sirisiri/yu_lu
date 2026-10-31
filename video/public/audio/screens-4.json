@@ -1,0 +1,17 @@
+{
+  "key": "5ae9b425e30b3f506f366a9fed9ead50be4531b9851ed5fcf5b5b53bcdb681cf",
+  "engineVersion": "0.26.0",
+  "settings": {
+    "speaker": 2,
+    "speedScale": 1.0,
+    "intonationScale": 1.0,
+    "volumeScale": 1.0,
+    "prePhonemeLength": 0.1,
+    "postPhonemeLength": 0.15,
+    "outputSamplingRate": 48000,
+    "outputStereo": false
+  },
+  "text": "友達は、ユーザーアイディーで相手を探して申請します。相手が承認すると、友達として登録されます。",
+  "seconds": 7.744,
+  "audioSha256": "b17271c3330402b0d80f5c1772977f2e5bfd5392ab9b254f0c047b69a134a1f0"
+}

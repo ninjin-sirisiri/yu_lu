@@ -1,0 +1,17 @@
+{
+  "key": "d6de7bd71ec372b8f8cb5adfe1207648401b387d2fe6e60ff68071e1f6e9651e",
+  "engineVersion": "0.26.0",
+  "settings": {
+    "speaker": 2,
+    "speedScale": 1.0,
+    "intonationScale": 1.0,
+    "volumeScale": 1.0,
+    "prePhonemeLength": 0.1,
+    "postPhonemeLength": 0.15,
+    "outputSamplingRate": 48000,
+    "outputStereo": false
+  },
+  "text": "チャットの一覧から、友達との会話を開きます。会話は文字と画像に対応しています。",
+  "seconds": 6.261333333333333,
+  "audioSha256": "8687e9c8e7efa5a942a24dc656f332bb7503cb56d57ef5d92d633cdc0d78b829"
+}

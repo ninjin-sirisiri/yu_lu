@@ -1,0 +1,7 @@
+{
+  "source": "xcrun simctl io screenshot",
+  "device": "iPhone 17 / iOS 27.0",
+  "capturedAtApprox": "2026-10-31T09:43:43.064407+00:00",
+  "note": "Actual simulator conversation with existing test messages; no new messages sent.",
+  "sha256": "b7ccb13e532708444fde77da70024b53699d54849d0e12b2a38f06eadcd47f7d"
+}

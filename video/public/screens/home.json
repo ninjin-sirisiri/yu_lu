@@ -1,0 +1,7 @@
+{
+  "source": "xcrun simctl io screenshot",
+  "device": "iPhone 17 / iOS 27.0",
+  "capturedAtApprox": "2026-10-31T09:39:35.790216+00:00",
+  "note": "Display-only 100-day personal appearance preview; daily assignment is still checking. Not proof of an earned 100-day streak.",
+  "sha256": "9b8d45cc066cfa86041e9fdbdab8e2d53800469a20bd7e8f3d16bbb46b199508"
+}

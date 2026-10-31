@@ -1,0 +1,17 @@
+{
+  "key": "73ef19d1f33adf189700f60c5b0c8e7186f2ed3ed886f9abc7ef9dbab2fef0f7",
+  "engineVersion": "0.26.0",
+  "settings": {
+    "speaker": 2,
+    "speedScale": 1.0,
+    "intonationScale": 1.0,
+    "volumeScale": 1.0,
+    "prePhonemeLength": 0.1,
+    "postPhonemeLength": 0.15,
+    "outputSamplingRate": 48000,
+    "outputStereo": false
+  },
+  "text": "このアプリが対象にするのは、すでにつながっている友達との関係です。知らない人と出会うためのアプリではありません。",
+  "seconds": 7.914666666666666,
+  "audioSha256": "62ad21361d204e87a5e72626ed095271d0b98f1b0959853edccde671c2fad5d6"
+}

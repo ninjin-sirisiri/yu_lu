@@ -1,0 +1,47 @@
+{
+  "name": "video",
+  "version": "1.0.0",
+  "description": "Yu_Lu — MBC U-20 submission video, paced by VOICEVOX audio",
+  "repository": {},
+  "license": "UNLICENSED",
+  "engines": {
+    "node": "^20.19.0 || ^22.13.0 || >=24"
+  },
+  "private": true,
+  "overrides": {
+    "zod": "$zod"
+  },
+  "dependencies": {
+    "@remotion/captions": "4.0.539",
+    "@remotion/cli": "4.0.539",
+    "@remotion/media": "4.0.539",
+    "@remotion/transitions": "4.0.539",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.539",
+    "zod": "4.6.6"
+  },
+  "devDependencies": {
+    "@remotion/eslint-config-flat": "4.0.539",
+    "@types/react": "19.2.7",
+    "@types/web": "0.0.166",
+    "eslint": "10.12.0",
+    "prettier": "3.8.1",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "dev": "remotion studio",
+    "build": "python3 scripts/check_assets.py && remotion bundle",
+    "preflight": "python3 scripts/check_assets.py",
+    "check": "npm test && npm run lint && npm run preflight",
+    "voice": "python3 scripts/prepare.py",
+    "voice:engine": "docker run --rm -p 127.0.0.1:50021:50021 voicevox/voicevox_engine:cpu-latest",
+    "capture": "python3 scripts/capture.py",
+    "test": "python3 -m unittest discover -s tests -v",
+    "upgrade": "remotion upgrade",
+    "lint": "eslint src && tsc"
+  },
+  "allowScripts": {
+    "esbuild": false
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "capturedAt": "2026-10-31T10:30:30.467125+00:00",
+  "device": "B7E7293C-CE05-453D-ADC7-E01BA91A2C3C",
+  "source": "xcrun simctl io screenshot",
+  "note": "Actual home appearance, display-only personal 100-day streak preview; not an earned achievement.",
+  "sha256": "d861c69dfc2b9ef54e0e934043c480f140a8cea6f4bd426771cb79c44276948e"
+}

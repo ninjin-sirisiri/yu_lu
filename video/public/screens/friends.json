@@ -1,0 +1,7 @@
+{
+  "source": "xcrun simctl io screenshot",
+  "device": "iPhone 17 / iOS 27.0",
+  "capturedAtApprox": "2026-10-31T09:40:16.605626+00:00",
+  "note": "Actual simulator friends list; contains only test profile.",
+  "sha256": "0c419accdb8b767ed19905584adecb012598a4ce54e9f250c8badd375152781e"
+}

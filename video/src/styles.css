@@ -1,0 +1,129 @@
+@layer theme, composition;
+
+@layer theme {
+  :root {
+    --paper: #fff9e9;
+    --yellow: #ffe784;
+    --plum: #2c1638;
+    --pink: #c2255c;
+    --muted: #706273;
+    --line: #ded3c7;
+    --white: #ffffff;
+    --font: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+    --space: 24px;
+  }
+}
+
+@layer composition {
+  .film {
+    font-family: var(--font);
+    color: var(--plum);
+    background: var(--paper);
+  }
+  .film h1,
+  .film h2,
+  .film p,
+  .film figure {
+    margin: 0;
+  }
+  .film h1 {
+    font-size: 116px;
+    font-weight: 800;
+    letter-spacing: -5px;
+    line-height: 1.18;
+    text-wrap: balance;
+  }
+  .film h2 {
+    font-size: 76px;
+    font-weight: 750;
+    letter-spacing: -3px;
+    line-height: 1.35;
+    text-wrap: balance;
+  }
+  .film .eyebrow {
+    font-size: 27px;
+    letter-spacing: 3px;
+    font-weight: 700;
+  }
+  .film .support {
+    font-size: 42px;
+    line-height: 1.6;
+    color: var(--muted);
+  }
+  .film .note {
+    font-size: 25px;
+    line-height: 1.5;
+    color: var(--muted);
+  }
+  .film .pill {
+    display: inline-flex;
+    align-items: center;
+    border: 2px solid currentColor;
+    border-radius: 100px;
+    padding: 14px 28px;
+    font-size: 29px;
+    font-weight: 650;
+  }
+  .film .node {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-radius: 40px;
+    gap: 24px;
+  }
+  .film .avatar {
+    display: grid;
+    place-items: center;
+    width: 132px;
+    height: 132px;
+    border-radius: 50%;
+    font-size: 58px;
+    font-weight: 800;
+  }
+  .film .dark {
+    color: var(--paper);
+    background: var(--plum);
+  }
+  .film .dark .support,
+  .film .dark .note {
+    color: #d4c9da;
+  }
+  .film .phone {
+    position: relative;
+    border: 10px solid var(--plum);
+    border-radius: 44px;
+    overflow: hidden;
+    box-shadow: 22px 25px 0 rgb(44 22 56 / 9%);
+    background: var(--paper);
+  }
+  .film .phone img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .film .bubble {
+    padding: 30px 40px;
+    border-radius: 30px 30px 30px 5px;
+    font-size: 40px;
+    line-height: 1.5;
+    background: var(--white);
+    box-shadow: 0 3px 0 rgb(44 22 56 / 8%);
+  }
+  .film .metric {
+    font-size: 120px;
+    font-weight: 800;
+    letter-spacing: -5px;
+    line-height: 1.2;
+  }
+  .film .metric small {
+    font-size: 40px;
+    letter-spacing: 0;
+    margin-left: 12px;
+  }
+  .film .technical {
+    font-family: ui-monospace, "Hiragino Sans", monospace;
+    font-size: 32px;
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "key": "268de2cf4b5eb3ceeaf3f8b9f49ad606ee62e8a24b230ef33a25e2af64660f0c",
+  "engineVersion": "0.26.0",
+  "settings": {
+    "speaker": 2,
+    "speedScale": 1.0,
+    "intonationScale": 1.0,
+    "volumeScale": 1.0,
+    "prePhonemeLength": 0.1,
+    "postPhonemeLength": 0.15,
+    "outputSamplingRate": 48000,
+    "outputStereo": false
+  },
+  "text": "通話のように、同じ時間にアプリを開いている必要はありません。相手は、自分のタイミングで読んで返信できます。",
+  "seconds": 8.288,
+  "audioSha256": "1f33f36c21aff5f6c32e0a7262d5908c91a60cf90901896472bb144108b655d6"
+}

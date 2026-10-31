@@ -1,0 +1,17 @@
+{
+  "key": "b4209c71b0fa96ee9ece4a5e8f083fc881a2630a3b198da0aeedc739364631b0",
+  "engineVersion": "0.26.0",
+  "settings": {
+    "speaker": 2,
+    "speedScale": 1.0,
+    "intonationScale": 1.0,
+    "volumeScale": 1.0,
+    "prePhonemeLength": 0.1,
+    "postPhonemeLength": 0.15,
+    "outputSamplingRate": 48000,
+    "outputStereo": false
+  },
+  "text": "ここからは、アイオーエスのシミュレーターで動く、開発版の画面を紹介します。",
+  "seconds": 5.749333333333333,
+  "audioSha256": "6df6e0d16a8ae9d65a962d1b11bcd2ab77b7ae07b41ec2a5f50a8283b23571de"
+}

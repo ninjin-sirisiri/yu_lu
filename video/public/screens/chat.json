@@ -1,0 +1,7 @@
+{
+  "source": "xcrun simctl io screenshot",
+  "device": "iPhone 17 / iOS 27.0",
+  "capturedAtApprox": "2026-10-31T09:30:28.617755+00:00",
+  "note": "Actual simulator screen; personal appearance preview was active when captured.",
+  "sha256": "17225b81952c991ad22810fd241b4c443c5e995bee45326b6513adb03cc22020"
+}

@@ -1,0 +1,17 @@
+{
+  "key": "22ff455b34237d15dd02bc8e6ded9381ecdb28e3a54f722ecc08cf2f3fa87a88",
+  "engineVersion": "0.26.0",
+  "settings": {
+    "speaker": 2,
+    "speedScale": 1.0,
+    "intonationScale": 1.0,
+    "volumeScale": 1.0,
+    "prePhonemeLength": 0.1,
+    "postPhonemeLength": 0.15,
+    "outputSamplingRate": 48000,
+    "outputStereo": false
+  },
+  "text": "招待リンクやキューアールコードからも、相手を見つけられます。リンクを開くだけで、友達になるわけではありません。",
+  "seconds": 7.84,
+  "audioSha256": "8af29ff0cdb734e7962a8d17cb6c7557498b78f04b0069974660f69e9f8f5cd1"
+}

@@ -1,0 +1,341 @@
+{
+  "title": "Yu_Lu",
+  "fps": 30,
+  "maxSeconds": 300,
+  "leadSeconds": 0.1,
+  "tailSeconds": 0.15,
+  "voiceCredit": "VOICEVOX:四国めたん",
+  "voice": {
+    "speaker": 2,
+    "speedScale": 1.0,
+    "intonationScale": 1.0,
+    "volumeScale": 1.0,
+    "prePhonemeLength": 0.1,
+    "postPhonemeLength": 0.15,
+    "outputSamplingRate": 48000,
+    "outputStereo": false
+  },
+  "scenes": [
+    {
+      "id": "opening",
+      "title": "友達に話しかけるきっかけ",
+      "chapter": "01 / きっかけ",
+      "lines": [
+        {
+          "id": "opening-1",
+          "cues": [{ "id": "old-friends", "phrase": "サイキンハナシテイナイ" }],
+          "text": "連絡先は知っているのに、最近話していない友達はいませんか。",
+          "headline": "最近、話していない友達。",
+          "visual": "question"
+        },
+        {
+          "id": "opening-2",
+          "cues": [{ "id": "hesitate", "phrase": "マヨッテシマウ" }],
+          "text": "話したくないわけではない。でも、何をきっかけに連絡すればいいのか迷ってしまう。",
+          "headline": "何をきっかけに話そう？",
+          "visual": "question"
+        },
+        {
+          "id": "opening-3",
+          "cues": [{ "id": "brand", "phrase": "ユウルワ" }],
+          "text": "Yu_Luは、そんな友達との会話を始めるきっかけを作る、スマートフォンアプリです。",
+          "speech": "ユールは、そんな友達との会話を始めるきっかけを作る、スマートフォンアプリです。",
+          "headline": "Yu_Lu",
+          "visual": "hero"
+        }
+      ]
+    },
+    {
+      "id": "problem",
+      "title": "このアプリが扱う課題",
+      "chapter": "02 / 課題",
+      "lines": [
+        {
+          "id": "problem-1",
+          "text": "このアプリが対象にするのは、すでにつながっている友達との関係です。知らない人と出会うためのアプリではありません。",
+          "headline": "今いる友達と、また話す。",
+          "visual": "relationship"
+        },
+        {
+          "id": "problem-2",
+          "cues": [{ "id": "select", "phrase": "キョオノアイテオ" }],
+          "text": "誰に連絡しようかと迷うとき、アプリが今日の相手を選んでくれます。",
+          "headline": "「誰に話そう」を手伝う。",
+          "visual": "relationship"
+        },
+        {
+          "id": "problem-3",
+          "cues": [{ "id": "message", "phrase": "ヒトコトオクル" }],
+          "text": "大きな用事がなくても、最近あったことをひとこと送る。そのためのきっかけを用意します。",
+          "headline": "用事がなくても、ひとこと。",
+          "visual": "relationship"
+        }
+      ]
+    },
+    {
+      "id": "concept",
+      "title": "毎日の相手が決まる仕組み",
+      "chapter": "03 / 仕組み",
+      "lines": [
+        {
+          "id": "concept-1",
+          "cues": [
+            { "id": "approved", "phrase": "ショオニン" },
+            { "id": "outgoing", "phrase": "ハナシカケル" }
+          ],
+          "text": "まず、お互いに承認して友達になります。友達の中から、毎日ひとり、話しかける相手が決まります。",
+          "headline": "友達の中から、毎日ひとり。",
+          "visual": "assignment"
+        },
+        {
+          "id": "concept-2",
+          "cues": [
+            { "id": "send", "phrase": "ジブンカラ" },
+            { "id": "reply", "phrase": "ジブンガヘンシン" }
+          ],
+          "text": "自分から話しかける相手と、自分が返信する相手は、同じとは限りません。",
+          "headline": "送る相手と、返信する相手。",
+          "visual": "assignment"
+        },
+        {
+          "id": "concept-3",
+          "cues": [{ "id": "free", "phrase": "ジユウニ" }],
+          "text": "相手を選ぶ仕組みは、会話のきっかけです。今日の相手以外の友達とも、自由にやり取りできます。",
+          "headline": "ほかの友達とも自由に話せる。",
+          "visual": "assignment"
+        }
+      ]
+    },
+    {
+      "id": "screens",
+      "title": "アプリの画面",
+      "chapter": "04 / 実際の画面",
+      "lines": [
+        {
+          "id": "screens-1",
+          "text": "ここからは、iOSのシミュレーターで動く、開発版の画面を紹介します。",
+          "speech": "ここからは、アイオーエスのシミュレーターで動く、開発版の画面を紹介します。",
+          "headline": "実際のアプリ画面。",
+          "visual": "screen",
+          "screen": "chat"
+        },
+        {
+          "id": "screens-4",
+          "text": "友達は、User IDで相手を探して申請します。相手が承認すると、友達として登録されます。",
+          "speech": "友達は、ユーザーアイディーで相手を探して申請します。相手が承認すると、友達として登録されます。",
+          "headline": "お互いの承認で友達になる。",
+          "visual": "screen",
+          "screen": "friends"
+        },
+        {
+          "id": "screens-5",
+          "text": "招待リンクやQRコードからも、相手を見つけられます。リンクを開くだけで、友達になるわけではありません。",
+          "speech": "招待リンクやキューアールコードからも、相手を見つけられます。リンクを開くだけで、友達になるわけではありません。",
+          "headline": "招待と、友達の承認を分ける。",
+          "visual": "screen",
+          "screen": "friends"
+        },
+        {
+          "id": "screens-2",
+          "text": "チャットの一覧から、友達との会話を開きます。会話は文字と画像に対応しています。",
+          "headline": "文字と写真でやり取り。",
+          "visual": "screen",
+          "screen": "conversation"
+        },
+        {
+          "id": "screens-3",
+          "text": "通話のように、同じ時間にアプリを開いている必要はありません。相手は、自分のタイミングで読んで返信できます。",
+          "headline": "返信は自分のタイミングで。",
+          "visual": "screen",
+          "screen": "conversation"
+        }
+      ]
+    },
+    {
+      "id": "growth",
+      "title": "ふたりの会話の積み重ね",
+      "chapter": "05 / 続ける楽しさ",
+      "lines": [
+        {
+          "id": "growth-1",
+          "cues": [{ "id": "growth-both", "phrase": "リョオホオガ" }],
+          "text": "会話を続ける楽しさとして、ふたりでやり取りした日数を記録します。数えるのは、同じ日に両方がメッセージを送った日です。",
+          "headline": "ふたりが送った日を記録。",
+          "visual": "growth"
+        },
+        {
+          "id": "growth-2",
+          "cues": [
+            { "id": "growth-palette", "phrase": "カイワガメンノ" },
+            { "id": "day-1", "phrase": "イチニチ" },
+            { "id": "day-7", "phrase": "ナノカ" },
+            { "id": "day-30", "phrase": "サンジュウニチ" },
+            { "id": "day-60", "phrase": "ロクジュウニチ" },
+            { "id": "day-100", "phrase": "ヒャクニチ" }
+          ],
+          "text": "累計の日数が節目に達すると、会話画面の色や模様が変わります。節目は、1日、7日、30日、60日、100日です。",
+          "headline": "会話画面の見た目が変わる。",
+          "visual": "growth"
+        },
+        {
+          "id": "growth-3",
+          "cues": [{ "id": "growth-kept", "phrase": "トギレテモ" }],
+          "text": "この日数は、会話が途切れても残ります。毎日続けられなくても、それまでのやり取りは積み重ねとして残ります。",
+          "headline": "間が空いても、累計は残る。",
+          "visual": "growth"
+        }
+      ]
+    },
+    {
+      "id": "streak",
+      "title": "個人の連続日数",
+      "chapter": "06 / 毎日の記録",
+      "lines": [
+        {
+          "id": "streak-1",
+          "cues": [
+            { "id": "streak-send", "phrase": "ソオシンアイテニ" },
+            { "id": "streak-reply", "phrase": "ヘンシンタイショオノ" },
+            { "id": "streak-done", "phrase": "タッセエ" }
+          ],
+          "text": "ふたりの累計とは別に、自分の連続日数もあります。今日の送信相手に送り、返信対象の友達全員に、受信したあとで返信すると、今日の条件を達成します。",
+          "headline": "個人の連続日数は別の記録。",
+          "visual": "streak"
+        },
+        {
+          "id": "streak-2",
+          "cues": [
+            { "id": "streak-earned", "phrase": "ダンカイテキニ" },
+            { "id": "streak-reset", "phrase": "トギレテモ" }
+          ],
+          "text": "連続日数でも、アプリの見た目が段階的に変わります。一度獲得した見た目は、連続日数が途切れても残ります。",
+          "headline": "獲得した見た目は残る。",
+          "visual": "streak"
+        }
+      ]
+    },
+    {
+      "id": "reliability",
+      "title": "入力や送信を支える工夫",
+      "chapter": "07 / 実装の工夫",
+      "lines": [
+        {
+          "id": "reliability-1",
+          "cues": [
+            { "id": "draft", "phrase": "シタガキト" },
+            { "id": "saved", "phrase": "ホゾン" }
+          ],
+          "text": "日常のやり取りを支えるため、入力途中の下書きと添付画像は、相手ごとに保存する作りにしています。",
+          "headline": "下書きは、相手ごとに保存。",
+          "visual": "reliability"
+        },
+        {
+          "id": "reliability-2",
+          "cues": [
+            { "id": "offline", "phrase": "ツウシンデキナイ" },
+            { "id": "queued", "phrase": "ソオシンマチト" },
+            { "id": "reconnect", "phrase": "セツゾクガモドルト" }
+          ],
+          "text": "通信できないときは、メッセージを送信待ちとして保存します。接続が戻ると、その相手への予約順に送信します。",
+          "headline": "通信が戻ったら、予約順に送信。",
+          "visual": "reliability"
+        },
+        {
+          "id": "reliability-3",
+          "cues": [{ "id": "confirmed", "phrase": "カクテエ" }],
+          "text": "送信待ちと、送信が確定した状態は区別します。送信結果が分からないときも、送れたものとして表示しない設計です。",
+          "headline": "送信待ちと、送信済みを区別。",
+          "visual": "reliability"
+        }
+      ]
+    },
+    {
+      "id": "architecture",
+      "title": "アプリを支える構成",
+      "chapter": "08 / 技術構成",
+      "lines": [
+        {
+          "id": "architecture-1",
+          "text": "アプリは、React NativeとExpoで開発しています。画面だけでなく、端末にデータを保存する処理も組み込んでいます。",
+          "speech": "アプリは、リアクトネイティブとエキスポで開発しています。画面だけでなく、端末にデータを保存する処理も組み込んでいます。",
+          "cues": [
+            { "id": "client", "phrase": "リアクトネイティブト" },
+            { "id": "local", "phrase": "タンマツニ" }
+          ],
+          "headline": "画面と、端末内の保存。",
+          "visual": "architecture"
+        },
+        {
+          "id": "architecture-2",
+          "text": "認証やデータの管理には、Supabaseを使っています。日付や今日の相手の判定は、端末の時計だけに頼らず、サーバー側の情報を使います。",
+          "speech": "認証やデータの管理には、スパベースを使っています。日付や今日の相手の判定は、端末の時計だけに頼らず、サーバー側の情報を使います。",
+          "cues": [
+            { "id": "server", "phrase": "スパベエスオ" },
+            { "id": "server-clock", "phrase": "サアバアガワノ" }
+          ],
+          "headline": "今日の判定はサーバー側で。",
+          "visual": "architecture"
+        },
+        {
+          "id": "architecture-3",
+          "cues": [{ "id": "accepted", "phrase": "ウケツケタ" }],
+          "text": "一日の区切りは、日本時間の朝4時です。送信を予約しただけでは、今日の達成にはなりません。サーバーが受け付けた結果をもとに判定します。",
+          "headline": "予約しただけでは達成にしない。",
+          "visual": "architecture"
+        }
+      ]
+    },
+    {
+      "id": "outlook",
+      "title": "これから確かめたいこと",
+      "chapter": "09 / 今後の検証",
+      "lines": [
+        {
+          "id": "outlook-1",
+          "cues": [{ "id": "test-friends", "phrase": "トモダチドオシデ" }],
+          "text": "今後は、実際に友達同士で使ってもらい、話しかけるきっかけになったかを確かめたいと考えています。",
+          "headline": "本当に、会話のきっかけになるか。",
+          "visual": "outlook"
+        },
+        {
+          "id": "outlook-2",
+          "cues": [
+            { "id": "enjoy", "phrase": "タノシサニ" },
+            { "id": "burden", "phrase": "フタンニ" }
+          ],
+          "text": "毎日の記録が、楽しさにつながるのか、それとも負担になるのか。使う人の感想をもとに、改善を考えていきます。",
+          "headline": "楽しさと、負担の両方を確かめる。",
+          "visual": "outlook"
+        },
+        {
+          "id": "outlook-3",
+          "cues": [{ "id": "separate-tests", "phrase": "ベツベツニ" }],
+          "text": "プログラムが動くことと、使う人の役に立つことは、別々に確かめる必要があります。利用した結果は、今後の検証課題です。",
+          "headline": "動作の確認と、効果の検証。",
+          "visual": "outlook"
+        }
+      ]
+    },
+    {
+      "id": "closing",
+      "title": "Yu_Lu",
+      "chapter": "10 / おわりに",
+      "lines": [
+        {
+          "id": "closing-1",
+          "text": "Yu_Luが目指すのは、友達に話しかけるきっかけを作ることです。",
+          "speech": "ユールが目指すのは、友達に話しかけるきっかけを作ることです。",
+          "headline": "Yu_Lu",
+          "visual": "closing"
+        },
+        {
+          "id": "closing-2",
+          "cues": [{ "id": "last-message", "phrase": "キョオヒトコトオクル" }],
+          "text": "最近話していない、あの友達へ。今日、ひとこと送る。そのきっかけを、このアプリから。",
+          "headline": "今日、友達にひとこと。",
+          "visual": "closing"
+        }
+      ]
+    }
+  ]
+}
